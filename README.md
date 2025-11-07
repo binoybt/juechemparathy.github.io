@@ -1,1 +1,1 @@
-# smash
+# smash signup site
