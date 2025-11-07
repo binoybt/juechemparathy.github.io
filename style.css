@@ -1,0 +1,64 @@
+body {
+  font-family: Arial, sans-serif;
+  background: #f9fafb;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: white;
+  padding: 10px 16px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+main { flex: 1; padding: 16px; }
+
+.slot-card {
+  background: white;
+  border-left: 4px solid #3b82f6;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.slot-header { display: flex; justify-content: space-between; }
+.slot-title { font-weight: bold; font-size: 16px; }
+.slot-meta { font-size: 13px; color: #555; }
+
+.player-list span {
+  background: #e0f2fe;
+  color: #0369a1;
+  padding: 4px 8px;
+  border-radius: 9999px;
+  font-size: 12px;
+  margin-right: 4px;
+  margin-bottom: 4px;
+  display: inline-block;
+}
+
+.button-row { display: flex; justify-content: space-between; margin-top: 10px; }
+button { width: 48%; padding: 8px; border-radius: 6px; cursor: pointer; }
+.join { background: #3b82f6; color: white; border: none; }
+.leave { background: white; border: 1px solid #ccc; }
+
+footer {
+  background: white;
+  border-top: 1px solid #e5e7eb;
+  padding: 8px 0;
+  display: flex;
+  justify-content: space-around;
+  font-size: 13px;
+  color: #555;
+  position: sticky;
+  bottom: 0;
+}
