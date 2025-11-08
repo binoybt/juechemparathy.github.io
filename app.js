@@ -28,6 +28,7 @@ const DEFAULT_CUTOFF_HOUR = 12; // noon of the day
 
 /* Admin emails who can run seed / overrides (edit this) */
 const ADMIN_EMAILS = [
+"jue.george@gmail.com"
   // "you@example.com"
 ];
 
