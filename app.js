@@ -40,14 +40,21 @@ let currentUser = null;
 const userBox = document.getElementById("userBox");
 function renderUser() {
   if (currentUser) {
+    const isAdmin = ADMIN_EMAILS.includes(currentUser.email);
     userBox.innerHTML = `
       <span style="margin-right:8px;">Hi, ${currentUser.displayName}</span>
-      ${ADMIN_EMAILS.includes(currentUser.email) ? `<button id="seedBtn" title="Seed weekly schedule">Seed</button>` : ""}
+      ${isAdmin ? `
+        <button id="seedBtn" title="Seed weekly schedule">Seed</button>
+        <button id="backupBtn" title="Backup and Reset Week">Backup & Reset</button>
+      ` : ""}
       <button id="logoutBtn">Sign out</button>
     `;
     document.getElementById("logoutBtn").onclick = () => auth.signOut();
     const seedBtn = document.getElementById("seedBtn");
     if (seedBtn) seedBtn.onclick = seedWeeklyIfEmpty;
+
+    const backupBtn = document.getElementById("backupBtn");
+    if (backupBtn) backupBtn.onclick = backupAndResetWeekly;
   } else {
     userBox.innerHTML = `<button id="loginBtn">Sign in with Google</button>`;
     document.getElementById("loginBtn").onclick = () => {
@@ -56,6 +63,7 @@ function renderUser() {
     };
   }
 }
+
 
 auth.onAuthStateChanged(u => {
   currentUser = u;
@@ -355,3 +363,54 @@ async function seedWeeklyData() {
   });
   await batch.commit();
 }
+
+async function backupAndResetWeekly() {
+  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) {
+    alert("Admins only.");
+    return;
+  }
+
+  if (!confirm("⚠️ This will back up all current signups and reset for the next week.\nContinue?")) {
+    return;
+  }
+
+  const backupId = new Date().toISOString().split("T")[0];
+  const slotsRef = db.collection("slots");
+  const backupRef = db.collection("slots_backup").doc(backupId);
+
+  try {
+    const snapshot = await slotsRef.get();
+    const slots = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+
+    // 1️⃣ Backup current week
+    await backupRef.set({
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      slots: slots,
+    });
+
+    // 2️⃣ Prepare batch update
+    const batch = db.batch();
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      const cutoff = data.cutoff?.toDate ? data.cutoff.toDate() : new Date(data.cutoff);
+      cutoff.setDate(cutoff.getDate() + 7); // next week
+
+      const ref = slotsRef.doc(doc.id);
+      batch.update(ref, {
+        "p0.players": [],
+        "p1.players": [],
+        activePriority: 0,
+        cutoff: cutoff,
+      });
+    });
+
+    await batch.commit();
+    alert(`✅ Backup saved as "${backupId}" and signups reset for next week!`);
+
+    console.log("Backup & reset complete:", backupId);
+  } catch (error) {
+    console.error("Backup & Reset failed:", error);
+    alert("❌ Backup & Reset failed: " + error.message);
+  }
+}
+
