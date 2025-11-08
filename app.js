@@ -281,22 +281,22 @@ async function seedWeeklyData() {
       "Monday": {
         "6-8":  { p0: "Pickleball", p1: "Open Badminton" },
         "1-5":  { p0: "Open Badminton", p1: "Pickleball" },
-        "8-10": { p0: "Pickleball", p1: "Open Badminton" },
+        "8-10": { p0: "Pickleball", p1: "Open Badminton" }
       },
       "Tuesday": {
         "6-8":  { p0: "Pickleball", p1: "Open Badminton" },
         "1-5":  { p0: "Pickleball", p1: "Open Badminton" },
-        "8-10": { p0: "Open Badminton", p1: "Pickleball" },
+        "8-10": { p0: "Open Badminton", p1: "Pickleball" }
       },
       "Wednesday": {
         "6-8":  { p0: "Open Badminton", p1: "Pickleball" },
         "1-5":  { p0: "Pickleball", p1: "Open Badminton" },
-        "8-10": { p0: "Women’s Badminton", p1: "Open Badminton" },
+        "8-10": { p0: "Women’s Badminton", p1: "Open Badminton" }
       },
       "Thursday": {
         "6-8":  { p0: "Open Badminton", p1: "Pickleball" },
         "1-5":  { p0: "Open Badminton", p1: "Pickleball" },
-        "8-10": { p0: "Pickleball", p1: "Open Badminton" },
+        "8-10": { p0: "Pickleball", p1: "Open Badminton" }
       },
       "Friday": {
         "6-8":  { p0: "Pickleball", p1: "Open Badminton" },
@@ -307,11 +307,11 @@ async function seedWeeklyData() {
       "Saturday": {
         "6-8":  { p0: "Volleyball", p1: "Pickleball" },
         "1-5":  { p0: "Kids Games", p1: "Pickleball" },
-        "6-9":  { p0: "Basketball", p1: "Open Badminton" },
+        "6-9":  { p0: "Basketball", p1: "Open Badminton" }
       },
       "Sunday": {
         "1-5":  { p0: "Volleyball", p1: "Pickleball" },
-        "6-9":  { p0: "Pickleball", p1: "Open Badminton" },
+        "6-9":  { p0: "Pickleball", p1: "Open Badminton" }
       }
     };
 
