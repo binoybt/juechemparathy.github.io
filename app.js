@@ -130,7 +130,7 @@ const today = new Date();
 const todayIndex = today.getDay(); // Sunday = 0
 
 // Calculate the date for each day in the current week
-const diff = (dayIndex - todayIndex + 7) % 7;
+const diff = dayIndex - todayIndex ;
 const date = new Date();
 date.setDate(today.getDate() + diff);
 const dayLabel = `${day} – ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
@@ -347,8 +347,8 @@ async function seedWeeklyData() {
 
       // cutoff = next occurrence of this day at DEFAULT_CUTOFF_HOUR local
       const cutoff = new Date();
-      const todayIndex = (new Date().getDay() + 6) % 7; // make Monday=0
-      const delta = (dayIndex - todayIndex + 7) % 7;
+      const todayIndex = new Date().getDay(); // make Sunday=0
+      const delta = dayIndex - todayIndex;
       cutoff.setDate(cutoff.getDate() + delta);
       cutoff.setHours(DEFAULT_CUTOFF_HOUR, 0, 0, 0);
 
