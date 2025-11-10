@@ -11,6 +11,11 @@ body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-ser
 .title-icon{width:48px;height:48px;border-radius:12px;object-fit:cover;box-shadow:0 6px 12px rgba(0,0,0,.15)}
 .container{padding:12px}
 .legend{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px;color:var(--muted);font-size:14px}
+.filters{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.filter-group{display:flex;flex-direction:column;gap:4px}
+.filter-group label{font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase}
+.filter-group select{padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;font-size:14px;cursor:pointer}
+.filter-clear{padding:6px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-weight:600;color:var(--muted);align-self:flex-end}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:999px;color:#fff;font-weight:600}
 .p0{background:var(--p0)} .p1{background:var(--p1)}
 .active{background:var(--active)}
