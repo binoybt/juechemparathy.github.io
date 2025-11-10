@@ -30,11 +30,13 @@ const DEFAULT_CUTOFF_HOUR = 12; // noon of the day
 /* Admin emails who can run seed / overrides (edit this) */
 const ADMIN_EMAILS = [
   "jue.george@gmail.com",
-  "geojins@gmail.com",
-   "binoybt@gmail.com"
+  "binoybt@gmail.com",
+  "geojins@gmail.com"
+  // "you@example.com"
 ];
 
 let currentUser = null;
+let showAllSignups = true; // Admin toggle state - default to show all sign-ups
 
 /*********************
  * UTILITY FUNCTIONS
@@ -97,12 +99,25 @@ function renderUser() {
     userBox.innerHTML = `
       <span style="margin-right:8px;">Hi, ${toCamelCase(currentUser.displayName)}</span>
       ${isAdmin ? `
+        <button id="toggleViewBtn" class="toggle-btn ${showAllSignups ? 'active' : ''}" title="Toggle between viewing all sign-ups or only upcoming ones">
+          ${showAllSignups ? '📅 Upcoming Only' : '📋 All Sign-ups'}
+        </button>
         <button id="seedBtn" title="Only once, or when adding/removing time slots or changing schedule template ; Creates /slots collection with default structure">Seed</button>
         <button id="backupBtn" title="Every Sunday Night(manual); Clears signups, moves cutoffs, backs up last week's data">Backup & Reset</button>
       ` : ""}
       <button id="logoutBtn">Sign out</button>
     `;
     document.getElementById("logoutBtn").onclick = () => auth.signOut();
+    
+    const toggleViewBtn = document.getElementById("toggleViewBtn");
+    if (toggleViewBtn) {
+      toggleViewBtn.onclick = () => {
+        showAllSignups = !showAllSignups;
+        renderUser();
+        renderTabContent();
+      };
+    }
+    
     const seedBtn = document.getElementById("seedBtn");
     if (seedBtn) seedBtn.onclick = seedWeeklyIfEmpty;
 
@@ -513,8 +528,8 @@ function getDateLabel(dayIndex) {
 }
 
 function isDayInPast(dayIndex) {
-  // Admins can see all days
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email)) {
+  // Admins can see all days when toggle is on
+  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
     return false;
   }
   
@@ -557,8 +572,8 @@ function getBlockEndTime(blockId) {
 }
 
 function isTimeSlotInPast(dayIndex, blockId) {
-  // Admins can see all time slots
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email)) {
+  // Admins can see all time slots when toggle is on
+  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
     return false;
   }
   
