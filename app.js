@@ -416,7 +416,7 @@ function renderAllGamesContent() {
 
 function renderSlotCard(slot, prio) {
   const p = slot[`p${prio}`] || { sport: "No Games", minPlayers: 0, maxPlayers: 0, players: [] };
-  const meta = SPORT_META[p.sport] || { min: 0, max: 0, mainLimit: 0, waitingList: 0 };
+  const meta = SPORT_META[p.sport] || { min: 0, max: 20, mainLimit: 10, waitingList: 10 };
   const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
   const active = computeActivePriority(slot) === prio;
 
@@ -481,7 +481,9 @@ function renderSlotCard(slot, prio) {
   const btnbar = document.createElement("div");
   btnbar.className = "btnbar";
 
-  const canJoin = currentUser && p.sport !== "No Games" && (p.players || []).length < (p.maxPlayers ?? meta.max);
+  // Always use the current metadata max value, ignore stored maxPlayers
+  const maxPlayers = meta.max ? meta.max : 20;
+  const canJoin = currentUser && p.sport !== "No Games" && (p.players || []).length < maxPlayers;
   const isIn = !!currentUser && (p.players || []).some(pl => pl.uid === currentUser.uid);
 
   const joinBtn = document.createElement("button");
@@ -590,7 +592,9 @@ async function updateSignup(slotId, prio, action) {
 
     if (action === "join") {
       if (exists) return;
-      const max = p.maxPlayers ?? (SPORT_META[p.sport]?.max ?? 0);
+      // Always use the current metadata max value, ignore stored maxPlayers
+      const sportMeta = SPORT_META[p.sport] || { max: 20 };
+      const max = sportMeta.max;
       if ((p.players || []).length >= max) throw new Error("Full");
       p.players = [...(p.players || []), me];
     } else {
