@@ -6,72 +6,43 @@
 }
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:var(--bg);color:var(--fg)}
-.topbar{position:sticky;top:0;z-index:5;display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#fff;border-bottom:1px solid var(--border)}
+.topbar{position:sticky;top:0;z-index:5;display:grid;grid-template-columns:auto 1fr auto;align-items:center;padding:10px 14px;background:#fff;border-bottom:1px solid var(--border);gap:12px}
+.brand{display:flex;align-items:center;gap:8px}
+.title-icon{width:48px;height:48px;border-radius:12px;object-fit:cover;box-shadow:0 6px 12px rgba(0,0,0,.15)}
 .container{padding:12px}
 .legend{display:flex;gap:12px;flex-wrap:wrap;margin:8px 0 12px;color:var(--muted);font-size:14px}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:999px;color:#fff;font-weight:600}
 .p0{background:var(--p0)} .p1{background:var(--p1)}
 .active{background:var(--active)}
 
-.grid{display:grid;gap:10px}
-@media(min-width:800px){.grid{grid-template-columns:repeat(3,1fr)}}
+.tabs{display:flex;gap:10px;overflow-x:auto;padding:8px 0}
+.tab{border:1px solid var(--border);border-radius:999px;padding:6px 14px;background:#fff;font-weight:600;color:var(--muted);cursor:pointer;white-space:nowrap}
+.tab.active{background:var(--active);color:#fff;border-color:var(--active)}
 
-.card{background:var(--card);border:1px solid var(--border);border-left-width:6px;border-radius:14px;padding:12px}
-.header{display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
-.day{font-weight:700}
-.slot{font-weight:700;color:var(--timecolor)}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0}
-.badge{font-size:12px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#4338ca}
-.sport{font-weight:700;padding:2px 8px;border-radius:8px;color:#fff}
-.sport.volleyball{background:var(--volleyball)}
-.sport.badminton{background:var(--badminton)}
-.sport.pickleball{background:var(--pickleball)}
-.sport.basketball{background:var(--basketball)}
-.sport.tabletennis{background:var(--tt)}
-.sport.kids{background:var(--kids)}
+.tab-content{display:flex;flex-direction:column;gap:16px}
+.day-section{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px}
+.day-section.today{border-color:var(--active);box-shadow:0 0 0 2px rgba(59,130,246,.2)}
+.day-header{font-weight:600;font-size:1rem;margin-bottom:12px;color:#1e293b;display:flex;justify-content:space-between;align-items:center}
+.day-header .date{text-transform:uppercase;font-size:.85rem;color:var(--muted)}
+
+.slot-track{display:flex;gap:12px;overflow-x:auto;padding-bottom:4px}
+.slot-card{min-width:240px;background:#f8fafc;border:1px solid var(--border);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.slot-card.active{border-color:var(--active)}
+.slot-time{font-weight:700;color:var(--timecolor);display:flex;justify-content:space-between;align-items:center}
+.priority-pill{border-radius:999px;padding:2px 10px;font-size:.75rem;font-weight:600;color:#fff}
+.priority-pill.p0{background:var(--p0)}
+.priority-pill.p1{background:var(--p1)}
+
+.sport-tag{font-weight:700;text-transform:uppercase;font-size:.75rem;color:var(--muted)}
 .players{display:flex;gap:6px;flex-wrap:wrap}
 .player{background:#e0f2fe;color:#0369a1;border-radius:999px;padding:2px 6px;font-size:12px}
-.btnbar{display:flex;gap:8px;margin-top:8px}
-.btn{flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer}
+.btnbar{display:flex;gap:8px}
+.btn{flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;font-weight:600}
 .btn.primary{background:var(--active);color:#fff;border-color:var(--active)}
 .btn:disabled{opacity:.55;cursor:not-allowed}
-.hr{height:1px;background:var(--border);margin:8px 0}
 .empty{color:var(--muted);font-style:italic}
+.metrics{font-size:.85rem;color:var(--muted);display:flex;gap:8px}
 .footer{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:8px;color:var(--muted)}
 #userBox button{padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer}
 
-.hr1 {
-  height: 3px;               /* thicker divider */
-  background: #3b82f6;       /* blue accent for visibility */
-  margin: 12px 0;            /* add spacing between slots */
-  border-radius: 3px;
-  opacity: 0.7;              /* slightly translucent */
-}
-
-.day-header {
-  font-weight: 600;
-  font-size: 1.1rem;
-  margin-bottom: 8px;
-  color: #1e293b;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.day-header span.date {
-  font-weight: 400;
-  color: #64748b;
-  font-size: 0.9rem;
-}
-
-.card:nth-child(odd) {
-  background-color: #ffeedd; /* light blue */
-}
-
-.card:nth-child(even) {
-  background-color: #ffd8be; /* light yellow */
-}
-
-.title-bar {
-  color: #8f2d56;
-}
+.title-bar{text-align:center;margin:0;font-size:clamp(1.2rem,4vw,1.8rem);letter-spacing:.08em;text-transform:uppercase;background:linear-gradient(120deg,#ff8a00,#ff3d7f,#7b2ff7);-webkit-background-clip:text;color:transparent;text-shadow:0 2px 12px rgba(255,61,127,.3)}

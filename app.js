@@ -29,7 +29,8 @@ const DEFAULT_CUTOFF_HOUR = 12; // noon of the day
 
 /* Admin emails who can run seed / overrides (edit this) */
 const ADMIN_EMAILS = [
-"jue.george@gmail.com"
+  "jue.george@gmail.com",
+  "geojins@gmail.com"
   // "you@example.com"
 ];
 
@@ -93,137 +94,164 @@ function computeActivePriority(slot) {
 }
 
 /*********************
- * RENDER WEEK GRID
+ * RENDER TABBED VIEW
  *********************/
-const grid = document.getElementById("weekGrid");
+const tabs = document.getElementById("sportTabs");
+const tabContent = document.getElementById("tabContent");
 let unsubscribe = null;
+let selectedSport = null;
+let latestSlots = [];
 
 function subscribeSchedule() {
   if (unsubscribe) unsubscribe();
 
-  // live query of all slots for the week
   unsubscribe = db.collection("slots")
     .orderBy("dayIndex")
-    .orderBy("blockId")
     .onSnapshot(snap => {
-      const byDay = new Map();
-      DAYS.forEach((d,i)=>byDay.set(i,[]));
+      latestSlots = [];
+      const sportSet = new Set();
+
       snap.forEach(doc => {
-        const data = doc.data();
-        byDay.get(data.dayIndex)?.push({ id: doc.id, ...data });
+        const data = { id: doc.id, ...doc.data() };
+        latestSlots.push(data);
+        const p0Sport = data.p0?.sport;
+        const p1Sport = data.p1?.sport;
+        if (p0Sport && p0Sport !== "No Games") sportSet.add(p0Sport);
+        if (p1Sport && p1Sport !== "No Games") sportSet.add(p1Sport);
       });
-      renderGrid(byDay);
+
+      const sports = Array.from(sportSet).sort();
+      if (!selectedSport || !sports.includes(selectedSport)) {
+        selectedSport = sports[0] || null;
+      }
+
+      renderTabs(sports);
+      renderTabContent();
     }, err => {
       console.error(err);
-      grid.innerHTML = `<div class="empty">Failed to load schedule.</div>`;
+      tabContent.innerHTML = `<div class="empty">Failed to load schedule.</div>`;
     });
 }
 
-function renderGrid(byDay) {
-  grid.innerHTML = "";
+function renderTabs(sports) {
+  tabs.innerHTML = "";
+
+  if (!sports.length) {
+    tabContent.innerHTML = `<div class="empty">No schedule configured.</div>`;
+    return;
+  }
+
+  sports.forEach(sport => {
+    const btn = document.createElement("button");
+    btn.className = `tab ${sport === selectedSport ? "active" : ""}`;
+    btn.textContent = sport;
+    btn.onclick = () => {
+      selectedSport = sport;
+      renderTabs(sports);
+      renderTabContent();
+    };
+    tabs.appendChild(btn);
+  });
+}
+
+function renderTabContent() {
+  tabContent.innerHTML = "";
+
+  if (!selectedSport) {
+    tabContent.innerHTML = `<div class="empty">No games to show.</div>`;
+    return;
+  }
+
+  const todayIndex = new Date().getDay();
+
   DAYS.forEach((day, dayIndex) => {
-    const daySlots = (byDay.get(dayIndex) || []).sort((a,b) =>
-      TIME_BLOCKS.findIndex(t=>t.id===a.blockId) - TIME_BLOCKS.findIndex(t=>t.id===b.blockId)
-    );
-
-// Calculating date
-const today = new Date();
-const todayIndex = today.getDay(); // Sunday = 0
-
-// Calculate the date for each day in the current week
-const diff = dayIndex - todayIndex ;
-const date = new Date();
-date.setDate(today.getDate() + diff);
-const dayLabel = `${day} – ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-
-    const card = document.createElement("div");
-    card.className = "card";
+    const daySection = document.createElement("section");
+    daySection.className = `day-section${dayIndex === todayIndex ? " today" : ""}`;
 
     const header = document.createElement("div");
-    header.className = "header";
-    header.innerHTML = `<div class="day">${dayLabel}</div>`;
-    card.appendChild(header);
+    header.className = "day-header";
+    header.innerHTML = `<span>${day}</span><span class="date">${getDateLabel(dayIndex)}</span>`;
+    daySection.appendChild(header);
 
-    if (daySlots.length === 0) {
+    const matching = latestSlots
+      .filter(slot => slot.dayIndex === dayIndex)
+      .flatMap(slot => {
+        const entries = [];
+        if (slot.p0?.sport === selectedSport) entries.push({ slot, prio: 0 });
+        if (slot.p1?.sport === selectedSport) entries.push({ slot, prio: 1 });
+        return entries;
+      })
+      .sort((a, b) => {
+        const orderA = TIME_BLOCKS.findIndex(t => t.id === a.slot.blockId);
+        const orderB = TIME_BLOCKS.findIndex(t => t.id === b.slot.blockId);
+        return orderA - orderB || a.prio - b.prio;
+      });
+
+    const track = document.createElement("div");
+    track.className = "slot-track";
+
+    if (matching.length === 0) {
       const empty = document.createElement("div");
       empty.className = "empty";
-      empty.textContent = "No slots configured";
-      card.appendChild(empty);
+      empty.textContent = `No ${selectedSport} games.`;
+      track.appendChild(empty);
     } else {
-//      daySlots.forEach(slot => card.appendChild(renderSlot(slot)));
-  daySlots.forEach((slot, index) => {
-  const slotElement = renderSlot(slot);
-  card.appendChild(slotElement);
-
-  // Add divider after each slot except the last one
-  if (index < daySlots.length - 1) {
-    const divider = document.createElement("div");
-    divider.className = "hr1";   // we’ll style this next
-    card.appendChild(divider);
-  }
-});
-
+      matching.forEach(entry => track.appendChild(renderSlotCard(entry.slot, entry.prio)));
     }
 
-    grid.appendChild(card);
+    daySection.appendChild(track);
+    tabContent.appendChild(daySection);
   });
 }
 
-function renderSlot(slot) {
-  const wrap = document.createElement("div");
-  const active = computeActivePriority(slot);
-
-  const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
-  const top = document.createElement("div");
-  top.className = "row";
-  top.innerHTML = `
-    <div class="slot">${block?.label ?? slot.blockId}
-      ${active === 1 ? '<span class="pill active">Active</span>' : ''}
-    </div>
-  `;
-  wrap.appendChild(top);
-
-  // P0 row
-  wrap.appendChild(renderPriorityRow(slot, 0, active === 0));
-  // divider
-  const hr = document.createElement("div"); hr.className = "hr"; wrap.appendChild(hr);
-  // P1 row
-  wrap.appendChild(renderPriorityRow(slot, 1, active === 1));
-
-  return wrap;
-}
-
-function renderPriorityRow(slot, prio, isActive) {
-  const row = document.createElement("div");
-  row.className = "row";
-
+function renderSlotCard(slot, prio) {
   const p = slot[`p${prio}`] || { sport: "No Games", minPlayers: 0, maxPlayers: 0, players: [] };
-  const meta = SPORT_META[p.sport] || { key: "", min: 0, max: 0 };
+  const meta = SPORT_META[p.sport] || { min: 0, max: 0 };
+  const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
+  const active = computeActivePriority(slot) === prio;
 
-  const sportSpan = document.createElement("span");
-  sportSpan.className = `sport ${meta.key}`;
-  sportSpan.textContent = p.sport;
+  const card = document.createElement("div");
+  card.className = `slot-card${active ? " active" : ""}`;
 
-  const tag = document.createElement("span");
-  tag.className = `badge`;
-  tag.innerHTML = `<span class="pill ${prio===0?'p0':'p1'}">${prio===0?'P0':'P1'}</span>
-    Min ${p.minPlayers ?? meta.min} • Max ${p.maxPlayers ?? meta.max}`;
+  const top = document.createElement("div");
+  top.className = "slot-time";
+  top.innerHTML = `
+    <span>${block?.label ?? slot.blockId}</span>
+    <span class="priority-pill ${prio === 0 ? "p0" : "p1"}">${prio === 0 ? "P0" : "P1"}</span>
+  `;
+  card.appendChild(top);
 
-  row.appendChild(sportSpan);
-  row.appendChild(tag);
+  const sportTag = document.createElement("div");
+  sportTag.className = "sport-tag";
+  sportTag.textContent = p.sport;
+  card.appendChild(sportTag);
 
-  // players
+  const metrics = document.createElement("div");
+  metrics.className = "metrics";
+  metrics.innerHTML = `
+    <span>Min ${p.minPlayers ?? meta.min}</span>
+    <span>Max ${p.maxPlayers ?? meta.max}</span>
+    <span>${(p.players || []).length} joined</span>
+  `;
+  card.appendChild(metrics);
+
   const playersList = document.createElement("div");
   playersList.className = "players";
-  (p.players || []).forEach(pl => {
-    const chip = document.createElement("span");
-    chip.className = "player";
-    chip.textContent = pl.name;
-    playersList.appendChild(chip);
-  });
-  row.appendChild(playersList);
+  if ((p.players || []).length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "empty";
+    empty.textContent = "No players yet";
+    playersList.appendChild(empty);
+  } else {
+    (p.players || []).forEach(pl => {
+      const chip = document.createElement("span");
+      chip.className = "player";
+      chip.textContent = pl.name;
+      playersList.appendChild(chip);
+    });
+  }
+  card.appendChild(playersList);
 
-  // buttons (only if signed in and sport != No Games)
   const btnbar = document.createElement("div");
   btnbar.className = "btnbar";
 
@@ -232,7 +260,7 @@ function renderPriorityRow(slot, prio, isActive) {
 
   const joinBtn = document.createElement("button");
   joinBtn.className = "btn primary";
-  joinBtn.textContent = isIn ? "Joined" : `Join ${prio===0?'P0':'P1'}`;
+  joinBtn.textContent = isIn ? "Joined" : "Join";
   joinBtn.disabled = !currentUser || isIn || !canJoin;
   joinBtn.onclick = () => updateSignup(slot.id, prio, "join");
 
@@ -244,10 +272,17 @@ function renderPriorityRow(slot, prio, isActive) {
 
   btnbar.appendChild(joinBtn);
   btnbar.appendChild(leaveBtn);
+  card.appendChild(btnbar);
 
-  row.appendChild(btnbar);
+  return card;
+}
 
-  return row;
+function getDateLabel(dayIndex) {
+  const today = new Date();
+  const diff = dayIndex - today.getDay();
+  const date = new Date(today);
+  date.setDate(today.getDate() + diff);
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 /*********************
@@ -433,4 +468,3 @@ async function backupAndResetWeekly() {
     alert("❌ Backup & Reset failed: " + error.message);
   }
 }
-
