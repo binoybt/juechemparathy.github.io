@@ -70,7 +70,25 @@ function renderUser() {
 auth.onAuthStateChanged(u => {
   currentUser = u;
   renderUser();
-  subscribeSchedule();
+  
+  const legend = document.querySelector(".legend");
+  
+  if (currentUser) {
+    // User logged in - show legend and schedule
+    if (legend) legend.style.display = "flex";
+    subscribeSchedule();
+  } else {
+    // User not logged in - hide legend and clear the schedule
+    if (legend) legend.style.display = "none";
+    if (unsubscribe) unsubscribe();
+    tabs.innerHTML = "";
+    tabContent.innerHTML = `
+      <div class="empty" style="text-align: center; padding: 40px;">
+        <p style="font-size: 18px; margin-bottom: 20px;">Please sign in to view the game schedule</p>
+        <p style="color: #666;">Click the "Sign in with Google" button above to get started</p>
+      </div>
+    `;
+  }
 });
 
 /*********************
@@ -96,6 +114,7 @@ function computeActivePriority(slot) {
 /*********************
  * RENDER TABBED VIEW
  *********************/
+const MY_GAMES_TAB = "My Games";
 const ALL_GAMES_TAB = "All Games";
 const tabs = document.getElementById("sportTabs");
 const tabContent = document.getElementById("tabContent");
@@ -121,9 +140,9 @@ function subscribeSchedule() {
         if (p1Sport && p1Sport !== "No Games") sportSet.add(p1Sport);
       });
 
-      const sports = [ALL_GAMES_TAB, ...Array.from(sportSet).sort()];
+      const sports = [MY_GAMES_TAB, ALL_GAMES_TAB, ...Array.from(sportSet).sort()];
       if (!selectedSport || !sports.includes(selectedSport)) {
-        selectedSport = sports[0] || ALL_GAMES_TAB;
+        selectedSport = sports[0] || MY_GAMES_TAB;
       }
 
       renderTabs(sports);
@@ -158,6 +177,11 @@ function renderTabs(sports) {
 function renderTabContent() {
   tabContent.innerHTML = "";
 
+  if (selectedSport === MY_GAMES_TAB) {
+    renderMyGamesContent();
+    return;
+  }
+
   if (selectedSport === ALL_GAMES_TAB) {
     renderAllGamesContent();
     return;
@@ -175,6 +199,9 @@ function renderSportContent() {
   const todayIndex = new Date().getDay();
 
   DAYS.forEach((day, dayIndex) => {
+    // Skip days that have already passed
+    if (isDayInPast(dayIndex)) return;
+
     const daySection = document.createElement("section");
     daySection.className = `day-section${dayIndex === todayIndex ? " today" : ""}`;
 
@@ -185,6 +212,7 @@ function renderSportContent() {
 
     const matching = latestSlots
       .filter(slot => slot.dayIndex === dayIndex)
+      .filter(slot => !isTimeSlotInPast(slot.dayIndex, slot.blockId))
       .flatMap(slot => {
         const entries = [];
         if (slot.p0?.sport === selectedSport) entries.push({ slot, prio: 0 });
@@ -214,13 +242,78 @@ function renderSportContent() {
   });
 }
 
+function renderMyGamesContent() {
+  if (!currentUser) {
+    tabContent.innerHTML = `<div class="empty">Please sign in to view your games.</div>`;
+    return;
+  }
+
+  const todayIndex = new Date().getDay();
+  let renderedDays = 0;
+
+  DAYS.forEach((day, dayIndex) => {
+    // Skip days that have already passed
+    if (isDayInPast(dayIndex)) return;
+
+    const entries = latestSlots
+      .filter(slot => slot.dayIndex === dayIndex)
+      .filter(slot => !isTimeSlotInPast(slot.dayIndex, slot.blockId))
+      .flatMap(slot => {
+        const result = [];
+        ["p0", "p1"].forEach(key => {
+          const prio = key === "p0" ? 0 : 1;
+          const payload = slot[key];
+          // Only include if user has joined this priority slot
+          if (payload?.sport && payload.sport !== "No Games") {
+            const hasJoined = (payload.players || []).some(pl => pl.uid === currentUser.uid);
+            if (hasJoined) {
+              result.push({ slot, prio });
+            }
+          }
+        });
+        return result;
+      })
+      .sort((a, b) => {
+        const orderA = TIME_BLOCKS.findIndex(t => t.id === a.slot.blockId);
+        const orderB = TIME_BLOCKS.findIndex(t => t.id === b.slot.blockId);
+        return orderA - orderB || a.prio - b.prio;
+      });
+
+    if (!entries.length) return;
+
+    renderedDays += 1;
+    const daySection = document.createElement("section");
+    daySection.className = `day-section${dayIndex === todayIndex ? " today" : ""}`;
+
+    const header = document.createElement("div");
+    header.className = "day-header";
+    header.innerHTML = `<span>${day}</span><span class="date">${getDateLabel(dayIndex)}</span>`;
+    daySection.appendChild(header);
+
+    const track = document.createElement("div");
+    track.className = "slot-track";
+    entries.forEach(entry => track.appendChild(renderSlotCard(entry.slot, entry.prio)));
+
+    daySection.appendChild(track);
+    tabContent.appendChild(daySection);
+  });
+
+  if (!renderedDays) {
+    tabContent.innerHTML = `<div class="empty">You haven't joined any games yet.</div>`;
+  }
+}
+
 function renderAllGamesContent() {
   const todayIndex = new Date().getDay();
   let renderedDays = 0;
 
   DAYS.forEach((day, dayIndex) => {
+    // Skip days that have already passed
+    if (isDayInPast(dayIndex)) return;
+
     const entries = latestSlots
       .filter(slot => slot.dayIndex === dayIndex)
+      .filter(slot => !isTimeSlotInPast(slot.dayIndex, slot.blockId))
       .flatMap(slot => {
         const result = [];
         ["p0", "p1"].forEach(key => {
@@ -341,6 +434,66 @@ function getDateLabel(dayIndex) {
   const date = new Date(today);
   date.setDate(today.getDate() + diff);
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function isDayInPast(dayIndex) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Start of today
+  const diff = dayIndex - today.getDay();
+  const date = new Date(today);
+  date.setDate(today.getDate() + diff);
+  return date < today;
+}
+
+function getBlockEndTime(blockId) {
+  // Parse the block ID to get the end time
+  // Format examples: "6-8" (6-8 AM), "1-5" (1-5 PM), "8-10" (8-10 PM), "8-10TT" (8-10 PM TT Room), "9-11" (9-11 PM)
+  const blockIdClean = blockId.replace("TT", ""); // Remove TT suffix
+  const parts = blockIdClean.split("-");
+  if (parts.length !== 2) return null;
+  
+  const endHour = parseInt(parts[1]);
+  if (isNaN(endHour)) return null;
+  
+  // Determine if it's AM or PM based on the hour
+  // Hours 1-5 are PM (13-17), 6-11 are based on context
+  // 6-8 is AM, 1-5 is PM, 6-9 and up are PM, 8-10 and up are PM, 9-11 is PM
+  const startHour = parseInt(parts[0]);
+  let hour24 = endHour;
+  
+  if (endHour <= 5) {
+    // 1-5 PM range
+    hour24 = endHour + 12;
+  } else if (endHour >= 6 && endHour <= 8 && startHour === 6) {
+    // 6-8 AM
+    hour24 = endHour;
+  } else if (endHour >= 6) {
+    // 6-9 PM, 8-10 PM, 9-11 PM
+    hour24 = endHour + 12;
+  }
+  
+  return hour24;
+}
+
+function isTimeSlotInPast(dayIndex, blockId) {
+  const now = new Date();
+  const todayIndex = now.getDay();
+  
+  // If the day is in the past, the slot is in the past
+  if (isDayInPast(dayIndex)) return true;
+  
+  // If the day is in the future, the slot is not in the past
+  if (dayIndex !== todayIndex) return false;
+  
+  // Same day - check the time
+  const endHour = getBlockEndTime(blockId);
+  if (endHour === null) return false;
+  
+  const currentHour = now.getHours();
+  const currentMinutes = now.getMinutes();
+  const currentTimeIn24 = currentHour + (currentMinutes / 60);
+  
+  return currentTimeIn24 >= endHour;
 }
 
 /*********************
