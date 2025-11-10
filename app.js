@@ -270,6 +270,9 @@ function renderSportContent() {
   DAYS.forEach((day, dayIndex) => {
     // Skip days that have already passed
     if (isDayInPast(dayIndex)) return;
+    
+    // Skip days that don't match the day filter
+    if (filters.day !== "" && dayIndex !== parseInt(filters.day)) return;
 
     const daySection = document.createElement("section");
     daySection.className = `day-section${dayIndex === todayIndex ? " today" : ""}`;
@@ -327,6 +330,9 @@ function renderMyGamesContent() {
   DAYS.forEach((day, dayIndex) => {
     // Skip days that have already passed
     if (isDayInPast(dayIndex)) return;
+    
+    // Skip days that don't match the day filter
+    if (filters.day !== "" && dayIndex !== parseInt(filters.day)) return;
 
     const entries = latestSlots
       .filter(slot => slot.dayIndex === dayIndex)
@@ -383,6 +389,9 @@ function renderAllGamesContent() {
   DAYS.forEach((day, dayIndex) => {
     // Skip days that have already passed
     if (isDayInPast(dayIndex)) return;
+    
+    // Skip days that don't match the day filter
+    if (filters.day !== "" && dayIndex !== parseInt(filters.day)) return;
 
     const entries = latestSlots
       .filter(slot => slot.dayIndex === dayIndex)
