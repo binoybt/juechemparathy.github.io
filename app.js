@@ -13,15 +13,15 @@ const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Satur
 
 /* sport meta for color + min/max defaults (used when seeding and for badges) */
 const SPORT_META = {
-  "Open Badminton":     { key:"badminton", min:4, max:8 },
-  "Women’s Badminton":  { key:"badminton", min:4, max:8 },
-  "Pickleball":         { key:"pickleball", min:4, max:8 },
-  "Women’s Pickleball": { key:"pickleball", min:4, max:8 },
-  "Volleyball":         { key:"volleyball", min:8, max:14 },
-  "Basketball":         { key:"basketball", min:6, max:12 },
-  "Table Tennis":       { key:"tabletennis", min:4, max:8 },
-  "Kids Games":         { key:"kids", min:4, max:12 },
-  "No Games":           { key:"", min:0, max:0 },
+  "Open Badminton":     { key:"badminton", min:4, max:20, mainLimit:10, waitingList:10 },
+  "Women's Badminton":  { key:"badminton", min:4, max:20, mainLimit:10, waitingList:10 },
+  "Pickleball":         { key:"pickleball", min:4, max:20, mainLimit:10, waitingList:10 },
+  "Women's Pickleball": { key:"pickleball", min:4, max:20, mainLimit:10, waitingList:10 },
+  "Volleyball":         { key:"volleyball", min:8, max:25, mainLimit:14, waitingList:11 },
+  "Basketball":         { key:"basketball", min:6, max:20, mainLimit:10, waitingList:10 },
+  "Table Tennis":       { key:"tabletennis", min:4, max:20, mainLimit:10, waitingList:10 },
+  "Kids Games":         { key:"kids", min:4, max:20, mainLimit:10, waitingList:10 },
+  "No Games":           { key:"", min:0, max:0, mainLimit:0, waitingList:0 },
 };
 
 /* cutoff per slot (local time). Adjust as needed. */
@@ -36,6 +36,18 @@ const ADMIN_EMAILS = [
 ];
 
 let currentUser = null;
+
+/*********************
+ * UTILITY FUNCTIONS
+ *********************/
+function toCamelCase(name) {
+  if (!name) return name;
+  return name
+    .toLowerCase()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 /*********************
  * FILTERS
@@ -84,10 +96,10 @@ function renderUser() {
   if (currentUser) {
     const isAdmin = ADMIN_EMAILS.includes(currentUser.email);
     userBox.innerHTML = `
-      <span style="margin-right:8px;">Hi, ${currentUser.displayName}</span>
+      <span style="margin-right:8px;">Hi, ${toCamelCase(currentUser.displayName)}</span>
       ${isAdmin ? `
         <button id="seedBtn" title="Only once, or when adding/removing time slots or changing schedule template ; Creates /slots collection with default structure">Seed</button>
-        <button id="backupBtn" title="Every Sunday Night(manual); Clears signups, moves cutoffs, backs up last week’s data">Backup & Reset</button>
+        <button id="backupBtn" title="Every Sunday Night(manual); Clears signups, moves cutoffs, backs up last week's data">Backup & Reset</button>
       ` : ""}
       <button id="logoutBtn">Sign out</button>
     `;
@@ -404,9 +416,14 @@ function renderAllGamesContent() {
 
 function renderSlotCard(slot, prio) {
   const p = slot[`p${prio}`] || { sport: "No Games", minPlayers: 0, maxPlayers: 0, players: [] };
-  const meta = SPORT_META[p.sport] || { min: 0, max: 0 };
+  const meta = SPORT_META[p.sport] || { min: 0, max: 0, mainLimit: 0, waitingList: 0 };
   const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
   const active = computeActivePriority(slot) === prio;
+
+  const mainLimit = meta.mainLimit || 10;
+  const totalPlayers = (p.players || []).length;
+  const mainPlayers = Math.min(totalPlayers, mainLimit);
+  const waitingPlayers = Math.max(0, totalPlayers - mainLimit);
 
   const card = document.createElement("div");
   card.className = `slot-card${active ? " active" : ""}`;
@@ -426,11 +443,17 @@ function renderSlotCard(slot, prio) {
 
   const metrics = document.createElement("div");
   metrics.className = "metrics";
-  metrics.innerHTML = `
-    <span>Min ${p.minPlayers ?? meta.min}</span>
-    <span>Max ${p.maxPlayers ?? meta.max}</span>
-    <span>${(p.players || []).length} joined</span>
-  `;
+  
+  if (waitingPlayers > 0) {
+    metrics.innerHTML = `
+      <span>${totalPlayers} joined</span>
+      <span class="waiting-count">🟠 Waiting List: ${waitingPlayers}</span>
+    `;
+  } else {
+    metrics.innerHTML = `
+      <span>${totalPlayers} joined</span>
+    `;
+  }
   card.appendChild(metrics);
 
   const playersList = document.createElement("div");
@@ -441,10 +464,15 @@ function renderSlotCard(slot, prio) {
     empty.textContent = "No players yet";
     playersList.appendChild(empty);
   } else {
-    (p.players || []).forEach(pl => {
+    (p.players || []).forEach((pl, index) => {
       const chip = document.createElement("span");
-      chip.className = "player";
-      chip.textContent = pl.name;
+      // Add waiting-list class if player is beyond mainLimit
+      if (index >= mainLimit) {
+        chip.className = "player waiting-list";
+      } else {
+        chip.className = "player";
+      }
+      chip.textContent = toCamelCase(pl.name);
       playersList.appendChild(chip);
     });
   }

@@ -41,12 +41,14 @@ body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-ser
 .sport-tag{font-weight:700;text-transform:uppercase;font-size:.75rem;color:var(--muted)}
 .players{display:flex;gap:6px;flex-wrap:wrap}
 .player{background:#e0f2fe;color:#0369a1;border-radius:999px;padding:2px 6px;font-size:12px}
+.player.waiting-list{background:#fed7aa;color:#9a3412;font-weight:600}
 .btnbar{display:flex;gap:8px}
 .btn{flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;font-weight:600}
 .btn.primary{background:var(--active);color:#fff;border-color:var(--active)}
 .btn:disabled{opacity:.55;cursor:not-allowed}
 .empty{color:var(--muted);font-style:italic}
-.metrics{font-size:.85rem;color:var(--muted);display:flex;gap:8px}
+.metrics{font-size:.85rem;color:var(--muted);display:flex;gap:8px;flex-wrap:wrap}
+.waiting-count{color:#ea580c;font-weight:600}
 .footer{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:8px;color:var(--muted)}
 #userBox button{padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer}
 
