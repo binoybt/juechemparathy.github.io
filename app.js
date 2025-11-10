@@ -30,11 +30,51 @@ const DEFAULT_CUTOFF_HOUR = 12; // noon of the day
 /* Admin emails who can run seed / overrides (edit this) */
 const ADMIN_EMAILS = [
   "jue.george@gmail.com",
-  "geojins@gmail.com"
+  "geojins@gmail.com", 
+  "binoybt@gmail.com"
   // "you@example.com"
 ];
 
 let currentUser = null;
+
+/*********************
+ * FILTERS
+ *********************/
+const filters = {
+  day: ""
+};
+
+function initializeFilters() {
+  const filterDay = document.getElementById("filterDay");
+  const clearFilters = document.getElementById("clearFilters");
+
+  if (filterDay) {
+    filterDay.addEventListener("change", (e) => {
+      filters.day = e.target.value;
+      renderTabContent();
+    });
+  }
+
+  if (clearFilters) {
+    clearFilters.addEventListener("click", () => {
+      filters.day = "";
+      if (filterDay) filterDay.value = "";
+      renderTabContent();
+    });
+  }
+}
+
+function matchesFilters(slot, prio) {
+  // Day filter
+  if (filters.day !== "" && slot.dayIndex !== parseInt(filters.day)) {
+    return false;
+  }
+
+  return true;
+}
+
+// Initialize filters when DOM is ready
+document.addEventListener("DOMContentLoaded", initializeFilters);
 
 /*********************
  * AUTH UI
@@ -72,14 +112,17 @@ auth.onAuthStateChanged(u => {
   renderUser();
   
   const legend = document.querySelector(".legend");
+  const filtersSection = document.getElementById("filtersSection");
   
   if (currentUser) {
-    // User logged in - show legend and schedule
+    // User logged in - show legend, filters and schedule
     if (legend) legend.style.display = "flex";
+    if (filtersSection) filtersSection.style.display = "flex";
     subscribeSchedule();
   } else {
-    // User not logged in - hide legend and clear the schedule
+    // User not logged in - hide legend, filters and clear the schedule
     if (legend) legend.style.display = "none";
+    if (filtersSection) filtersSection.style.display = "none";
     if (unsubscribe) unsubscribe();
     tabs.innerHTML = "";
     tabContent.innerHTML = `
@@ -215,8 +258,12 @@ function renderSportContent() {
       .filter(slot => !isTimeSlotInPast(slot.dayIndex, slot.blockId))
       .flatMap(slot => {
         const entries = [];
-        if (slot.p0?.sport === selectedSport) entries.push({ slot, prio: 0 });
-        if (slot.p1?.sport === selectedSport) entries.push({ slot, prio: 1 });
+        if (slot.p0?.sport === selectedSport && matchesFilters(slot, 0)) {
+          entries.push({ slot, prio: 0 });
+        }
+        if (slot.p1?.sport === selectedSport && matchesFilters(slot, 1)) {
+          entries.push({ slot, prio: 1 });
+        }
         return entries;
       })
       .sort((a, b) => {
@@ -266,7 +313,7 @@ function renderMyGamesContent() {
           // Only include if user has joined this priority slot
           if (payload?.sport && payload.sport !== "No Games") {
             const hasJoined = (payload.players || []).some(pl => pl.uid === currentUser.uid);
-            if (hasJoined) {
+            if (hasJoined && matchesFilters(slot, prio)) {
               result.push({ slot, prio });
             }
           }
@@ -319,7 +366,7 @@ function renderAllGamesContent() {
         ["p0", "p1"].forEach(key => {
           const prio = key === "p0" ? 0 : 1;
           const payload = slot[key];
-          if (payload?.sport && payload.sport !== "No Games") {
+          if (payload?.sport && payload.sport !== "No Games" && matchesFilters(slot, prio)) {
             result.push({ slot, prio });
           }
         });
