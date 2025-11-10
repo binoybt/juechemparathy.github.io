@@ -1,0 +1,28 @@
+name: Weekly Firestore Backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every Saturday at 23:00 UTC (adjust schedule if a different timezone is required)
+    - cron: "0 23 * * 6"
+
+jobs:
+  run-backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run backup script
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: npm run backup
