@@ -7,7 +7,7 @@
   "theme_color": "#3b82f6",
   "icons": [
     {
-      "src": "icons/smash-logo.png",
+      "src": "icons/smash-logo.ico",
       "sizes": "512x512",
       "type": "image/png"
     }
