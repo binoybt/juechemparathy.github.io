@@ -30,9 +30,8 @@ const DEFAULT_CUTOFF_HOUR = 12; // noon of the day
 /* Admin emails who can run seed / overrides (edit this) */
 const ADMIN_EMAILS = [
   "jue.george@gmail.com",
-  "geojins@gmail.com", 
-  "binoybt@gmail.com"
-  // "you@example.com"
+  "geojins@gmail.com",
+   "binoybt@gmail.com"
 ];
 
 let currentUser = null;
@@ -514,6 +513,11 @@ function getDateLabel(dayIndex) {
 }
 
 function isDayInPast(dayIndex) {
+  // Admins can see all days
+  if (currentUser && ADMIN_EMAILS.includes(currentUser.email)) {
+    return false;
+  }
+  
   const today = new Date();
   today.setHours(0, 0, 0, 0); // Start of today
   const diff = dayIndex - today.getDay();
@@ -553,6 +557,11 @@ function getBlockEndTime(blockId) {
 }
 
 function isTimeSlotInPast(dayIndex, blockId) {
+  // Admins can see all time slots
+  if (currentUser && ADMIN_EMAILS.includes(currentUser.email)) {
+    return false;
+  }
+  
   const now = new Date();
   const todayIndex = now.getDay();
   
