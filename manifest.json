@@ -8,6 +8,10 @@
   "icons": [
     {
       "src": "icons/smash-logo.ico",
+      "sizes": "192x192",
+      "type": "image/png"
+    }, {
+      "src": "icons/smash-logo.ico",
       "sizes": "512x512",
       "type": "image/png"
     }
