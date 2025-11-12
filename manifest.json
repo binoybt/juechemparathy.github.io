@@ -1,15 +1,25 @@
 {
   "name": "SMASH Game SignUp",
   "short_name": "SMASH",
-  "start_url": "/index.html",
+  "description": "Sign up for SMASH games at St. Thomas",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
+  "orientation": "portrait-primary",
   "background_color": "#ffffff",
   "theme_color": "#3b82f6",
   "icons": [
     {
-      "src": "icons/smash-logo.ico",
+      "src": "icons/smash-logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/smash-logo.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ]
 }
