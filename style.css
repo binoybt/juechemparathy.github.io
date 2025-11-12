@@ -40,8 +40,11 @@ body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-ser
 
 .sport-tag{font-weight:700;text-transform:uppercase;font-size:.75rem;color:var(--muted)}
 .players{display:flex;gap:6px;flex-wrap:wrap}
+.player-wrapper{display:inline-flex;align-items:center;gap:2px;position:relative}
 .player{background:#e0f2fe;color:#0369a1;border-radius:999px;padding:2px 6px;font-size:12px}
 .player.waiting-list{background:#fed7aa;color:#9a3412;font-weight:600}
+.remove-guest{display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:#ef4444;color:#fff;font-size:14px;font-weight:700;cursor:pointer;line-height:1;margin-left:-2px}
+.remove-guest:hover{background:#dc2626}
 .btnbar{display:flex;gap:8px}
 .btn{flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;font-weight:600}
 .btn.primary{background:var(--active);color:#fff;border-color:var(--active)}
@@ -51,5 +54,18 @@ body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-ser
 .waiting-count{color:#ea580c;font-weight:600}
 .footer{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--border);display:flex;justify-content:space-around;padding:8px;color:var(--muted)}
 #userBox button{padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer}
+#userBox .toggle-btn{background:#f0f9ff;color:#0369a1;border-color:#7dd3fc;font-weight:600}
+#userBox .toggle-btn.active{background:#0369a1;color:#fff;border-color:#0369a1}
 
 .title-bar{text-align:center;margin:0;font-size:clamp(1.2rem,4vw,1.8rem);letter-spacing:.08em;text-transform:uppercase;background:linear-gradient(120deg,#ff8a00,#ff3d7f,#7b2ff7);-webkit-background-clip:text;color:transparent;text-shadow:0 2px 12px rgba(255,61,127,.3)}
+
+.guest-btn{background:#22c55e;color:#fff;border-color:#22c55e}
+.modal{display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.5);align-items:center;justify-content:center}
+.modal-content{background:#fff;padding:24px;border-radius:16px;max-width:400px;width:90%;box-shadow:0 10px 25px rgba(0,0,0,.2)}
+.modal-close{float:right;font-size:28px;font-weight:700;color:#6b7280;cursor:pointer}
+.modal-close:hover{color:#1f2937}
+.modal h2{margin:0 0 20px 0;color:#1f2937}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;margin-bottom:4px;font-weight:600;color:#1f2937;font-size:14px}
+.form-group input{width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px}
+.form-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
