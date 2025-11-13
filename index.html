@@ -94,6 +94,22 @@
     </div>
 </div>
 
+<!-- Preferences Modal -->
+<div id="preferencesModal" class="modal">
+    <div class="modal-content">
+        <span class="modal-close" onclick="closePreferencesModal()">&times;</span>
+        <h2>Sport Preferences</h2>
+        <p style="color:#6b7280;font-size:14px;margin-bottom:16px;">Select the sports you want to see in your schedule. If none are selected, all sports will be shown.</p>
+        <form id="preferencesForm">
+            <div id="sportCheckboxes" class="sport-checkboxes"></div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closePreferencesModal()">Cancel</button>
+                <button type="button" class="btn primary" onclick="savePreferences()">Save Preferences</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Your Firebase config -->
 <script src="firebase-config.js"></script>
 

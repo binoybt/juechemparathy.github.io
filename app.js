@@ -37,6 +37,7 @@ const ADMIN_EMAILS = [
 
 let currentUser = null;
 let showAllSignups = false; // Admin toggle state - default to show upcoming only
+let userPreferences = null; // User's sport preferences
 
 /*********************
  * UTILITY FUNCTIONS
@@ -97,32 +98,49 @@ function renderUser() {
   if (currentUser) {
     const isAdmin = ADMIN_EMAILS.includes(currentUser.email);
     userBox.innerHTML = `
-      <span style="margin-right:8px;">Hi, ${toCamelCase(currentUser.displayName)}</span>
-      ${isAdmin ? `
-        <button id="toggleViewBtn" class="toggle-btn ${showAllSignups ? 'active' : ''}" title="Toggle between viewing all sign-ups or only upcoming ones">
-          ${showAllSignups ? '📅 Upcoming Only' : '📋 All Sign-ups'}
+      <div class="user-menu">
+        <button id="userMenuBtn" class="user-menu-btn">
+          <span>${toCamelCase(currentUser.displayName)}</span>
+          <span class="dropdown-arrow">▼</span>
         </button>
-        <button id="seedBtn" title="Only once, or when adding/removing time slots or changing schedule template ; Creates /slots collection with default structure">Seed</button>
-        <button id="backupBtn" title="Every Sunday Night(manual); Clears signups, moves cutoffs, backs up last week's data">Backup & Reset</button>
-      ` : ""}
-      <button id="logoutBtn">Sign out</button>
+        <div id="userDropdown" class="user-dropdown">
+          <button class="dropdown-item" onclick="openPreferencesModal()">
+            <span>⚙️</span> Sport Preferences
+          </button>
+          ${isAdmin ? `
+            <button class="dropdown-item" onclick="toggleViewMode()">
+              <span>${showAllSignups ? '📅' : '📋'}</span> ${showAllSignups ? 'Upcoming Only' : 'All Sign-ups'}
+            </button>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-item admin-item" onclick="seedWeeklyIfEmpty()">
+              <span>🌱</span> Seed Schedule
+            </button>
+            <button class="dropdown-item admin-item" onclick="backupAndResetWeekly()">
+              <span>💾</span> Backup & Reset
+            </button>
+            <div class="dropdown-divider"></div>
+          ` : ""}
+          <button class="dropdown-item logout-item" onclick="auth.signOut()">
+            <span>🚪</span> Sign Out
+          </button>
+        </div>
+      </div>
     `;
-    document.getElementById("logoutBtn").onclick = () => auth.signOut();
     
-    const toggleViewBtn = document.getElementById("toggleViewBtn");
-    if (toggleViewBtn) {
-      toggleViewBtn.onclick = () => {
-        showAllSignups = !showAllSignups;
-        renderUser();
-        renderTabContent();
-      };
-    }
+    // Toggle dropdown on click
+    document.getElementById("userMenuBtn").onclick = (e) => {
+      e.stopPropagation();
+      const dropdown = document.getElementById("userDropdown");
+      dropdown.classList.toggle("show");
+    };
     
-    const seedBtn = document.getElementById("seedBtn");
-    if (seedBtn) seedBtn.onclick = seedWeeklyIfEmpty;
-
-    const backupBtn = document.getElementById("backupBtn");
-    if (backupBtn) backupBtn.onclick = backupAndResetWeekly;
+    // Close dropdown when clicking outside
+    document.addEventListener("click", (e) => {
+      const dropdown = document.getElementById("userDropdown");
+      if (dropdown && !e.target.closest(".user-menu")) {
+        dropdown.classList.remove("show");
+      }
+    });
   } else {
     userBox.innerHTML = `<button id="loginBtn">Sign in with Google</button>`;
     document.getElementById("loginBtn").onclick = () => {
@@ -130,6 +148,13 @@ function renderUser() {
       auth.signInWithPopup(provider).catch(e => alert("Login failed: " + e.message));
     };
   }
+}
+
+function toggleViewMode() {
+  showAllSignups = !showAllSignups;
+  document.getElementById("userDropdown").classList.remove("show");
+  renderUser();
+  renderTabContent();
 }
 
 
@@ -144,25 +169,126 @@ auth.onAuthStateChanged(u => {
     // User logged in - show legend, filters and schedule
     if (legend) legend.style.display = "flex";
     if (filtersSection) filtersSection.style.display = "flex";
+    loadUserPreferences(); // Load preferences
     subscribeSchedule();
   } else {
     // User not logged in - hide legend, filters and clear the schedule
     if (legend) legend.style.display = "none";
     if (filtersSection) filtersSection.style.display = "none";
     if (unsubscribe) unsubscribe();
+    userPreferences = null;
     tabs.innerHTML = "";
     tabContent.innerHTML = `
-      <div class="title-bar" style="text-align: center; padding: 40px;">
+      <div class="empty" style="text-align: center; padding: 40px;">
         <p style="font-size: 18px; margin-bottom: 20px;">Please sign in to view the game schedule</p>
         <p style="color: #666;">Click the "Sign in with Google" button above to get started</p>
-      </div>
-      <div class="title-bar">
-      <p>SMASH MINISTRY</p>
-      <p>St.Thomas Syro Malabar Catholic Church of San Francisco</p>
       </div>
     `;
   }
 });
+
+/*********************
+ * USER PREFERENCES
+ *********************/
+async function loadUserPreferences() {
+  if (!currentUser) return;
+  
+  try {
+    // Try to load from localStorage first (faster)
+    const cachedPrefs = localStorage.getItem(`prefs_${currentUser.uid}`);
+    if (cachedPrefs) {
+      userPreferences = JSON.parse(cachedPrefs);
+    }
+    
+    // Then load from Firestore (authoritative)
+    const doc = await db.collection("userPreferences").doc(currentUser.uid).get();
+    if (doc.exists) {
+      userPreferences = doc.data();
+      // Update cache
+      localStorage.setItem(`prefs_${currentUser.uid}`, JSON.stringify(userPreferences));
+    } else {
+      // No preferences set - show all sports
+      userPreferences = { selectedSports: [] };
+    }
+  } catch (error) {
+    console.error("Error loading preferences:", error);
+    userPreferences = { selectedSports: [] };
+  }
+}
+
+function openPreferencesModal() {
+  const modal = document.getElementById("preferencesModal");
+  const checkboxContainer = document.getElementById("sportCheckboxes");
+  
+  // Close dropdown
+  document.getElementById("userDropdown").classList.remove("show");
+  
+  // Get all unique sports from SPORT_META
+  const allSports = Object.keys(SPORT_META).filter(sport => sport !== "No Games");
+  
+  // Build checkboxes
+  checkboxContainer.innerHTML = "";
+  allSports.forEach(sport => {
+    const isChecked = userPreferences?.selectedSports?.includes(sport) || false;
+    const checkbox = document.createElement("div");
+    checkbox.className = "sport-checkbox-item";
+    checkbox.innerHTML = `
+      <label>
+        <input type="checkbox" name="sport" value="${sport}" ${isChecked ? 'checked' : ''}>
+        <span>${sport}</span>
+      </label>
+    `;
+    checkboxContainer.appendChild(checkbox);
+  });
+  
+  modal.style.display = "flex";
+}
+
+function closePreferencesModal() {
+  document.getElementById("preferencesModal").style.display = "none";
+}
+
+async function savePreferences() {
+  if (!currentUser) return;
+  
+  const checkboxes = document.querySelectorAll('#sportCheckboxes input[type="checkbox"]');
+  const selectedSports = Array.from(checkboxes)
+    .filter(cb => cb.checked)
+    .map(cb => cb.value);
+  
+  try {
+    const prefsData = {
+      uid: currentUser.uid,
+      selectedSports: selectedSports,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+    
+    await db.collection("userPreferences").doc(currentUser.uid).set(prefsData, { merge: true });
+    
+    // Update local state and cache
+    userPreferences = { selectedSports };
+    localStorage.setItem(`prefs_${currentUser.uid}`, JSON.stringify(userPreferences));
+    
+    closePreferencesModal();
+    
+    // Refresh the schedule to apply filters
+    renderTabContent();
+    
+    alert("✅ Preferences saved successfully!");
+  } catch (error) {
+    console.error("Error saving preferences:", error);
+    alert("❌ Failed to save preferences: " + error.message);
+  }
+}
+
+function shouldShowSport(sport) {
+  // If no preferences or empty array, show all sports
+  if (!userPreferences || !userPreferences.selectedSports || userPreferences.selectedSports.length === 0) {
+    return true;
+  }
+  // Otherwise, only show selected sports
+  return userPreferences.selectedSports.includes(sport);
+}
 
 /*********************
  * ACTIVE PRIORITY LOGIC
@@ -209,8 +335,14 @@ function subscribeSchedule() {
         latestSlots.push(data);
         const p0Sport = data.p0?.sport;
         const p1Sport = data.p1?.sport;
-        if (p0Sport && p0Sport !== "No Games") sportSet.add(p0Sport);
-        if (p1Sport && p1Sport !== "No Games") sportSet.add(p1Sport);
+        
+        // Only add sports that pass the preference filter
+        if (p0Sport && p0Sport !== "No Games" && shouldShowSport(p0Sport)) {
+          sportSet.add(p0Sport);
+        }
+        if (p1Sport && p1Sport !== "No Games" && shouldShowSport(p1Sport)) {
+          sportSet.add(p1Sport);
+        }
       });
 
       const sports = [MY_GAMES_TAB, ALL_GAMES_TAB, ...Array.from(sportSet).sort()];
@@ -291,10 +423,10 @@ function renderSportContent() {
       .filter(slot => !isTimeSlotInPast(slot.dayIndex, slot.blockId))
       .flatMap(slot => {
         const entries = [];
-        if (slot.p0?.sport === selectedSport && matchesFilters(slot, 0)) {
+        if (slot.p0?.sport === selectedSport && matchesFilters(slot, 0) && shouldShowSport(slot.p0.sport)) {
           entries.push({ slot, prio: 0 });
         }
-        if (slot.p1?.sport === selectedSport && matchesFilters(slot, 1)) {
+        if (slot.p1?.sport === selectedSport && matchesFilters(slot, 1) && shouldShowSport(slot.p1.sport)) {
           entries.push({ slot, prio: 1 });
         }
         return entries;
@@ -405,7 +537,7 @@ function renderAllGamesContent() {
         ["p0", "p1"].forEach(key => {
           const prio = key === "p0" ? 0 : 1;
           const payload = slot[key];
-          if (payload?.sport && payload.sport !== "No Games" && matchesFilters(slot, prio)) {
+          if (payload?.sport && payload.sport !== "No Games" && matchesFilters(slot, prio) && shouldShowSport(payload.sport)) {
             result.push({ slot, prio });
           }
         });
