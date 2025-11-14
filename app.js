@@ -731,7 +731,9 @@ function renderSlotCard(slot, prio) {
   // Share button (always visible)
   const shareBtn = document.createElement("button");
   shareBtn.className = "btn share-btn-top";
-  shareBtn.innerHTML = "📤";
+  shareBtn.innerHTML = `
+                         <img src="icons/whatsapp-icon.ico" alt="Share" class="share-icon">
+                       `;
   shareBtn.title = "Share on WhatsApp";
   shareBtn.onclick = () => shareSlotOnWhatsApp(slot, prio, p, block);
   buttonContainer.appendChild(shareBtn);
