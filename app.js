@@ -1207,6 +1207,31 @@ function shareSlotOnWhatsApp(slot, prio, p, block) {
   
   // Open WhatsApp in new window
   window.open(whatsappUrl, '_blank');
+  
+  // Show thank you message after a short delay
+  setTimeout(() => {
+    showShareThankYouModal();
+  }, 500);
+}
+
+function showShareThankYouModal() {
+  const modal = document.getElementById("shareThankYouModal");
+  if (modal) {
+    modal.style.display = "flex";
+    // Close modal when clicking outside the modal content
+    modal.onclick = (e) => {
+      if (e.target === modal) {
+        closeShareThankYouModal();
+      }
+    };
+  }
+}
+
+function closeShareThankYouModal() {
+  const modal = document.getElementById("shareThankYouModal");
+  if (modal) {
+    modal.style.display = "none";
+  }
 }
 
 function handleDeepLink() {
