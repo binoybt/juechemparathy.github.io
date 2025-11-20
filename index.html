@@ -23,7 +23,7 @@
     <link rel="apple-touch-icon" href="icons/smash-logo.png">
 
     <title>SMASH Game Sign Up</title>
-    <link rel="stylesheet" href="style.css?v=5" />
+    <link rel="stylesheet" href="style.css?v=6" />
 
     <!-- Firebase SDKs (Compat builds for simple <script> use) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -119,10 +119,10 @@
 </div>
 
 <!-- Your Firebase config -->
-<script src="firebase-config.js?v=5"></script>
+<script src="firebase-config.js?v=6"></script>
 
 <!-- App logic -->
-<script src="app.js?v=5"></script>
+<script src="app.js?v=6"></script>
 
 <!-- Service Worker Registration for PWA -->
 <script>
@@ -131,6 +131,20 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('/sw.js')
       .then((registration) => {
         console.log('ServiceWorker registered:', registration);
+        
+        // Check for updates every time page loads
+        registration.update();
+        
+        // When a new service worker is found
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
+              console.log('New service worker activated - reloading page');
+              window.location.reload();
+            }
+          });
+        });
       })
       .catch((error) => {
         console.log('ServiceWorker registration failed:', error);
