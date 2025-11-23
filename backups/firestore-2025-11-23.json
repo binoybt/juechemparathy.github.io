@@ -1,0 +1,3935 @@
+{
+  "slots": [
+    {
+      "id": "0_1-5",
+      "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Sunday",
+      "dayIndex": 0,
+      "blockId": "1-5",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Volleyball",
+        "minPlayers": 8,
+        "maxPlayers": 14,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1765742400,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "0_6-9",
+      "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Sunday",
+      "dayIndex": 0,
+      "blockId": "6-9",
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "activePriority": 0,
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 10,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1765742400,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "0_8-10TT",
+      "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Sunday",
+      "dayIndex": 0,
+      "blockId": "8-10TT",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p0": {
+        "sport": "Table Tennis",
+        "minPlayers": 4,
+        "players": [],
+        "maxPlayers": 20
+      },
+      "cutoff": {
+        "_seconds": 1765742400,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "1_1-5",
+      "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Monday",
+      "dayIndex": 1,
+      "blockId": "1-5",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1765915200,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "1_6-8",
+      "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Monday",
+      "dayIndex": 1,
+      "blockId": "6-8",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1765828800,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "1_8-10",
+      "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Monday",
+      "dayIndex": 1,
+      "blockId": "8-10",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "players": [],
+        "maxPlayers": 10
+      },
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766001600,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "1_8-10TT",
+      "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Monday",
+      "dayIndex": 1,
+      "blockId": "8-10TT",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p0": {
+        "sport": "Table Tennis",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766088000,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "2_1-5",
+      "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Tuesday",
+      "dayIndex": 2,
+      "blockId": "1-5",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766088000,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "2_6-8",
+      "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Tuesday",
+      "dayIndex": 2,
+      "blockId": "6-8",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1765915200,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "2_8-10",
+      "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Tuesday",
+      "dayIndex": 2,
+      "blockId": "8-10",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766260800,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "2_8-10TT",
+      "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Tuesday",
+      "dayIndex": 2,
+      "blockId": "8-10TT",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p0": {
+        "sport": "Table Tennis",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766433600,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "3_1-5",
+      "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Wednesday",
+      "dayIndex": 3,
+      "blockId": "1-5",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766260800,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "3_6-8",
+      "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Wednesday",
+      "dayIndex": 3,
+      "blockId": "6-8",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766001600,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "3_8-10",
+      "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Wednesday",
+      "dayIndex": 3,
+      "blockId": "8-10",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "sport": "Women Badminton",
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766520000,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "3_8-10TT",
+      "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Wednesday",
+      "dayIndex": 3,
+      "blockId": "8-10TT",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p0": {
+        "sport": "Table Tennis",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766779200,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "4_1-5",
+      "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Thursday",
+      "dayIndex": 4,
+      "blockId": "1-5",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766433600,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "4_6-8",
+      "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Thursday",
+      "dayIndex": 4,
+      "blockId": "6-8",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766088000,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "4_8-10",
+      "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Thursday",
+      "dayIndex": 4,
+      "blockId": "8-10",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766779200,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "4_8-10TT",
+      "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Thursday",
+      "dayIndex": 4,
+      "blockId": "8-10TT",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p0": {
+        "sport": "Table Tennis",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1767124800,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "5_1-5",
+      "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Friday",
+      "dayIndex": 5,
+      "blockId": "1-5",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766606400,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "5_6-8",
+      "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Friday",
+      "dayIndex": 5,
+      "blockId": "6-8",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766174400,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "5_8-10",
+      "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Friday",
+      "dayIndex": 5,
+      "blockId": "8-10",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p0": {
+        "sport": "Volleyball",
+        "minPlayers": 8,
+        "maxPlayers": 14,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1767038400,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "5_8-10TT",
+      "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Friday",
+      "dayIndex": 5,
+      "blockId": "8-10TT",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p0": {
+        "sport": "Table Tennis",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1767902400,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "6_1-5",
+      "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Saturday",
+      "dayIndex": 6,
+      "blockId": "1-5",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766779200,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "6_6-8",
+      "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Saturday",
+      "dayIndex": 6,
+      "blockId": "6-8",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Volleyball",
+        "minPlayers": 8,
+        "maxPlayers": 14,
+        "players": []
+      },
+      "p1": {
+        "sport": "Pickleball",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1766260800,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "6_6-9",
+      "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Saturday",
+      "dayIndex": 6,
+      "blockId": "6-9",
+      "activePriority": 0,
+      "p1": {
+        "sport": "Open Badminton",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p0": {
+        "sport": "Basketball",
+        "minPlayers": 6,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1767297600,
+        "_nanoseconds": 0
+      }
+    },
+    {
+      "id": "6_8-10TT",
+      "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+      "day": "Saturday",
+      "dayIndex": 6,
+      "blockId": "8-10TT",
+      "activePriority": 0,
+      "p0": {
+        "sport": "Table Tennis",
+        "minPlayers": 4,
+        "maxPlayers": 8,
+        "players": []
+      },
+      "p1": {
+        "sport": "Kids Games",
+        "minPlayers": 4,
+        "maxPlayers": 12,
+        "players": []
+      },
+      "cutoff": {
+        "_seconds": 1767816000,
+        "_nanoseconds": 0
+      }
+    }
+  ],
+  "slots_backup": [
+    {
+      "id": "2025-11-09",
+      "slots": [
+        {
+          "id": "0_1-5_Sun Nov 09 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p1": {
+            "players": [],
+            "minPlayers": 4,
+            "sport": "Pickleball",
+            "maxPlayers": 12
+          },
+          "p0": {
+            "sport": "Volleyball",
+            "players": [],
+            "maxPlayers": 14,
+            "minPlayers": 8
+          },
+          "dayIndex": 0,
+          "activePriority": 0,
+          "day": "Sunday",
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1763928000,
+            "_nanoseconds": 0
+          },
+          "dayDate": "Sun Nov 09 2025 00:29:44 GMT-0800 (Pacific Standard Time)"
+        },
+        {
+          "id": "0_6-9_Sun Nov 09 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "cutoff": {
+            "_seconds": 1763928000,
+            "_nanoseconds": 0
+          },
+          "p1": {
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": [],
+            "sport": "Open Badminton"
+          },
+          "activePriority": 0,
+          "p0": {
+            "maxPlayers": 12,
+            "players": [],
+            "minPlayers": 4,
+            "sport": "Pickleball"
+          },
+          "dayDate": "Sun Nov 09 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "blockId": "6-9",
+          "dayIndex": 0
+        },
+        {
+          "id": "1_1-5_Mon Nov 10 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "dayDate": "Mon Nov 10 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "p0": {
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "sport": "Open Badminton",
+            "players": []
+          },
+          "activePriority": 0,
+          "dayIndex": 1,
+          "p1": {
+            "maxPlayers": 12,
+            "players": [],
+            "minPlayers": 4,
+            "sport": "Pickleball"
+          },
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1764100800,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "1_6-8_Mon Nov 10 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "cutoff": {
+            "_seconds": 1764014400,
+            "_nanoseconds": 0
+          },
+          "dayDate": "Mon Nov 10 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "p1": {
+            "sport": "Open Badminton",
+            "maxPlayers": 12,
+            "players": [],
+            "minPlayers": 4
+          },
+          "blockId": "6-8",
+          "p0": {
+            "minPlayers": 4,
+            "sport": "Pickleball",
+            "players": [],
+            "maxPlayers": 12
+          },
+          "dayIndex": 1,
+          "activePriority": 0
+        },
+        {
+          "id": "1_8-10_Mon Nov 10 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 12
+          },
+          "p1": {
+            "maxPlayers": 12,
+            "players": [],
+            "sport": "Open Badminton",
+            "minPlayers": 4
+          },
+          "dayDate": "Mon Nov 10 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "blockId": "8-10",
+          "cutoff": {
+            "_seconds": 1764187200,
+            "_nanoseconds": 0
+          },
+          "dayIndex": 1,
+          "day": "Monday",
+          "activePriority": 0
+        },
+        {
+          "id": "2_1-5_Tue Nov 11 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 12
+          },
+          "cutoff": {
+            "_seconds": 1764273600,
+            "_nanoseconds": 0
+          },
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 12
+          },
+          "dayDate": "Tue Nov 11 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "blockId": "1-5",
+          "activePriority": 0
+        },
+        {
+          "id": "2_6-8_Tue Nov 11 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "cutoff": {
+            "_seconds": 1764100800,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "maxPlayers": 12,
+            "sport": "Pickleball",
+            "players": [],
+            "minPlayers": 4
+          },
+          "p1": {
+            "maxPlayers": 12,
+            "players": [],
+            "sport": "Open Badminton",
+            "minPlayers": 4
+          },
+          "day": "Tuesday",
+          "dayDate": "Tue Nov 11 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "activePriority": 0,
+          "blockId": "6-8",
+          "dayIndex": 2
+        },
+        {
+          "id": "2_8-10_Tue Nov 11 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "minPlayers": 4,
+            "players": [
+              {
+                "name": "Jue Chemparathy",
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13"
+              }
+            ],
+            "maxPlayers": 12,
+            "sport": "Open Badminton"
+          },
+          "dayDate": "Tue Nov 11 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p1": {
+            "sport": "Pickleball",
+            "players": [
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              }
+            ],
+            "minPlayers": 4,
+            "maxPlayers": 12
+          },
+          "activePriority": 0,
+          "blockId": "8-10",
+          "day": "Tuesday",
+          "cutoff": {
+            "_seconds": 1764446400,
+            "_nanoseconds": 0
+          },
+          "dayIndex": 2
+        },
+        {
+          "id": "3_1-5_Wed Nov 12 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "sport": "Pickleball",
+            "players": []
+          },
+          "blockId": "1-5",
+          "day": "Wednesday",
+          "activePriority": 0,
+          "p1": {
+            "maxPlayers": 12,
+            "sport": "Open Badminton",
+            "players": [],
+            "minPlayers": 4
+          },
+          "cutoff": {
+            "_seconds": 1764446400,
+            "_nanoseconds": 0
+          },
+          "dayDate": "Wed Nov 12 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "dayIndex": 3
+        },
+        {
+          "id": "3_6-8_Wed Nov 12 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1764187200,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "maxPlayers": 12,
+            "players": [],
+            "minPlayers": 4,
+            "sport": "Open Badminton"
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "maxPlayers": 12,
+            "minPlayers": 4,
+            "players": []
+          },
+          "activePriority": 0,
+          "dayIndex": 3,
+          "dayDate": "Wed Nov 12 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday"
+        },
+        {
+          "id": "3_8-10_Wed Nov 12 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "cutoff": {
+            "_seconds": 1764705600,
+            "_nanoseconds": 0
+          },
+          "dayDate": "Wed Nov 12 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "activePriority": 0,
+          "p0": {
+            "players": [],
+            "maxPlayers": 12,
+            "sport": "Women’s Badminton",
+            "minPlayers": 4
+          },
+          "blockId": "8-10",
+          "dayIndex": 3,
+          "p1": {
+            "players": [],
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "sport": "Open Badminton"
+          }
+        },
+        {
+          "id": "4_1-5_Thu Nov 13 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "dayIndex": 4,
+          "cutoff": {
+            "_seconds": 1764619200,
+            "_nanoseconds": 0
+          },
+          "blockId": "1-5",
+          "day": "Thursday",
+          "dayDate": "Thu Nov 13 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "minPlayers": 4,
+            "sport": "Open Badminton",
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p1": {
+            "minPlayers": 4,
+            "players": [],
+            "sport": "Pickleball",
+            "maxPlayers": 12
+          },
+          "activePriority": 0
+        },
+        {
+          "id": "4_6-8_Thu Nov 13 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 12,
+            "sport": "Open Badminton"
+          },
+          "day": "Thursday",
+          "dayDate": "Thu Nov 13 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1764273600,
+            "_nanoseconds": 0
+          },
+          "dayIndex": 4,
+          "p1": {
+            "sport": "Pickleball",
+            "maxPlayers": 12,
+            "minPlayers": 4,
+            "players": []
+          },
+          "activePriority": 0
+        },
+        {
+          "id": "4_8-10_Thu Nov 13 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p1": {
+            "players": [],
+            "minPlayers": 4,
+            "sport": "Open Badminton",
+            "maxPlayers": 12
+          },
+          "activePriority": 0,
+          "day": "Thursday",
+          "p0": {
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 12,
+            "sport": "Pickleball"
+          },
+          "dayDate": "Thu Nov 13 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "blockId": "8-10",
+          "cutoff": {
+            "_seconds": 1764964800,
+            "_nanoseconds": 0
+          },
+          "dayIndex": 4
+        },
+        {
+          "id": "5_1-5_Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "players": [],
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 12
+          },
+          "blockId": "1-5",
+          "p1": {
+            "minPlayers": 4,
+            "sport": "Open Badminton",
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764792000,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "dayIndex": 5,
+          "dayDate": "Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday"
+        },
+        {
+          "id": "5_6-8_Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "dayIndex": 5,
+          "blockId": "6-8",
+          "p0": {
+            "players": [
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              }
+            ],
+            "sport": "Pickleball",
+            "maxPlayers": 12,
+            "minPlayers": 4
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": [
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              }
+            ]
+          },
+          "dayDate": "Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "cutoff": {
+            "_seconds": 1764360000,
+            "_nanoseconds": 0
+          },
+          "day": "Friday",
+          "activePriority": 0
+        },
+        {
+          "id": "5_8-10_Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "cutoff": {
+            "_seconds": 1765224000,
+            "_nanoseconds": 0
+          },
+          "dayDate": "Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "activePriority": 0,
+          "dayIndex": 5,
+          "p1": {
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "sport": "Kids Games",
+            "players": []
+          },
+          "blockId": "8-10",
+          "p0": {
+            "minPlayers": 8,
+            "sport": "Volleyball",
+            "players": [],
+            "maxPlayers": 14
+          }
+        },
+        {
+          "id": "5_9-11_Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayDate": "Fri Nov 14 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "blockId": "9-11",
+          "dayIndex": 5,
+          "p0": {
+            "minPlayers": 8,
+            "sport": "Volleyball",
+            "players": [],
+            "maxPlayers": 14
+          },
+          "activePriority": 0,
+          "cutoff": {
+            "_seconds": 1765656000,
+            "_nanoseconds": 0
+          },
+          "p1": {
+            "maxPlayers": 12,
+            "minPlayers": 4,
+            "sport": "Kids Games",
+            "players": []
+          }
+        },
+        {
+          "id": "6_1-5_Sat Nov 15 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "cutoff": {
+            "_seconds": 1764964800,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "sport": "Kids Games",
+            "players": []
+          },
+          "dayIndex": 6,
+          "day": "Saturday",
+          "p1": {
+            "minPlayers": 4,
+            "players": [],
+            "sport": "Pickleball",
+            "maxPlayers": 12
+          },
+          "activePriority": 0,
+          "blockId": "1-5",
+          "dayDate": "Sat Nov 15 2025 00:29:44 GMT-0800 (Pacific Standard Time)"
+        },
+        {
+          "id": "6_6-8_Sat Nov 15 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p0": {
+            "maxPlayers": 14,
+            "players": [],
+            "sport": "Volleyball",
+            "minPlayers": 8
+          },
+          "cutoff": {
+            "_seconds": 1764446400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "dayIndex": 6,
+          "dayDate": "Sat Nov 15 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "p1": {
+            "minPlayers": 4,
+            "players": [],
+            "sport": "Pickleball",
+            "maxPlayers": 12
+          },
+          "day": "Saturday",
+          "blockId": "6-8"
+        },
+        {
+          "id": "6_6-9_Sat Nov 15 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "activePriority": 0,
+          "cutoff": {
+            "_seconds": 1765483200,
+            "_nanoseconds": 0
+          },
+          "dayDate": "Sat Nov 15 2025 00:29:44 GMT-0800 (Pacific Standard Time)",
+          "blockId": "6-9",
+          "p0": {
+            "minPlayers": 6,
+            "sport": "Basketball",
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p1": {
+            "players": [],
+            "maxPlayers": 12,
+            "minPlayers": 4,
+            "sport": "Open Badminton"
+          },
+          "dayIndex": 6
+        }
+      ],
+      "createdAt": {
+        "_seconds": 1762677166,
+        "_nanoseconds": 58000000
+      }
+    },
+    {
+      "id": "2025-11-15",
+      "slots": [
+        {
+          "id": "0_1-5",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1762718400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": [
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              },
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              },
+              {
+                "uid": "sWMUkTANTGfF2Q4z1N3jOoK6pyv1",
+                "name": "Binu Jose"
+              },
+              {
+                "uid": "TKE4cab5DOZe11HGlCB66ol000y2",
+                "name": "subhash scaria"
+              },
+              {
+                "uid": "4CFUKzjcIxcsfHYn0cJKzWWR0IG2",
+                "name": "Praveen George"
+              },
+              {
+                "uid": "aKFBYqdqeOPmj9gH8uLYNaJ9Zxl2",
+                "name": "Miano Sebastian"
+              },
+              {
+                "uid": "6URsSPMcpFWAtJLkJ4A9k0cYQQu1",
+                "name": "Justine Antony Joseph"
+              },
+              {
+                "uid": "nigpY0YJHFNFyFesaYQMGmbhj3d2",
+                "name": "Anila baby"
+              }
+            ]
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "sWMUkTANTGfF2Q4z1N3jOoK6pyv1",
+                "name": "Binu Jose"
+              },
+              {
+                "uid": "TKE4cab5DOZe11HGlCB66ol000y2",
+                "name": "subhash scaria"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              },
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              }
+            ]
+          }
+        },
+        {
+          "id": "0_6-9",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "6-9",
+          "cutoff": {
+            "_seconds": 1762718400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "players": [
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              },
+              {
+                "uid": "wD4yQi0KbaNvMpyO7J8mUC8MLw63",
+                "name": "Kiran Joseph"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              },
+              {
+                "uid": "l6pTx0Y7TTdl1Z54Wu7vlbwOX7J3",
+                "name": "Don Mathews"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              },
+              {
+                "uid": "UEeQgRVgtEgUM5x6VEDPYHtypNu2",
+                "name": "abraham palaty"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              },
+              {
+                "uid": "NtTNhwSI8MTDQFZbmgj1pvUO32v2",
+                "name": "Aingel Xavier"
+              }
+            ],
+            "maxPlayers": 10
+          }
+        },
+        {
+          "id": "0_8-10TT",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "8-10TT",
+          "cutoff": {
+            "_seconds": 1762718400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 20
+          }
+        },
+        {
+          "id": "1_1-5",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1762891200,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "1_6-8",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1762804800,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "1_8-10",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "8-10",
+          "cutoff": {
+            "_seconds": 1762977600,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 10
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              },
+              {
+                "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+                "name": "Antony Jesto"
+              },
+              {
+                "uid": "vu9P8nYxFLeJVws4Ob5gbyIaVck1",
+                "name": "Manu jose"
+              },
+              {
+                "uid": "nigpY0YJHFNFyFesaYQMGmbhj3d2",
+                "name": "Anila baby"
+              },
+              {
+                "uid": "kIFroqwBzRcWbJxxnYeBX6P069w2",
+                "name": "tania thomas"
+              },
+              {
+                "uid": "W3VisPBSrxMkmniJHhRt7zg85Qq2",
+                "name": "Fini Francis"
+              },
+              {
+                "uid": "hsZbW5OuAOZ1aIRrxiieUOHr4ia2",
+                "name": "Mary Smitha Wilson"
+              },
+              {
+                "uid": "sWMUkTANTGfF2Q4z1N3jOoK6pyv1",
+                "name": "Binu Jose"
+              },
+              {
+                "uid": "EYIIgWc280SfCj6uNqjdzG0nsSx1",
+                "name": "Aleena Emmanuel"
+              },
+              {
+                "uid": "wD4yQi0KbaNvMpyO7J8mUC8MLw63",
+                "name": "Kiran Joseph"
+              }
+            ]
+          }
+        },
+        {
+          "id": "1_8-10TT",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "8-10TT",
+          "cutoff": {
+            "_seconds": 1763064000,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          }
+        },
+        {
+          "id": "2_1-5",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1763064000,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "W3VisPBSrxMkmniJHhRt7zg85Qq2",
+                "name": "Fini Francis"
+              },
+              {
+                "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+                "name": "Antony Jesto"
+              }
+            ]
+          }
+        },
+        {
+          "id": "2_6-8",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1762891200,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "2_8-10",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "8-10",
+          "cutoff": {
+            "_seconds": 1763236800,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "l6pTx0Y7TTdl1Z54Wu7vlbwOX7J3",
+                "name": "Don Mathews"
+              },
+              {
+                "uid": "OxKfmmJVzWU5EX1rjJkvtue7me12",
+                "name": "Riju Kallivalappil"
+              },
+              {
+                "uid": "SgN0MCbEv9eNXFv8RRUVEAP5v422",
+                "name": "Neil Riju"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              },
+              {
+                "uid": "wD4yQi0KbaNvMpyO7J8mUC8MLw63",
+                "name": "Kiran Joseph"
+              },
+              {
+                "uid": "bKmtjgjzDXhJWCA6Sc8CnygbExC2",
+                "name": "Jerrin Thomas James"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              },
+              {
+                "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+                "name": "Antony Jesto"
+              },
+              {
+                "uid": "HPoQ932Cs8PA8zpCaxX9fzvLPon2",
+                "name": "polin antony kooran"
+              },
+              {
+                "uid": "NMcDjhRGcgM0cNAd4VxwxjBRfmt1",
+                "name": "Shalin James Antony"
+              },
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              },
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              }
+            ]
+          }
+        },
+        {
+          "id": "2_8-10TT",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "8-10TT",
+          "cutoff": {
+            "_seconds": 1763409600,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              },
+              {
+                "uid": "zMEi6gk5HORvGDC0uNM5R6JIwjy1",
+                "name": "Jins George"
+              },
+              {
+                "uid": "CtS3jcTXvfg3qiHLhNl9I5H4zWh2",
+                "name": "Kevin Bastin"
+              },
+              {
+                "uid": "bKmtjgjzDXhJWCA6Sc8CnygbExC2",
+                "name": "Jerrin Thomas James"
+              },
+              {
+                "uid": "HPoQ932Cs8PA8zpCaxX9fzvLPon2",
+                "name": "polin antony kooran"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              },
+              {
+                "uid": "wD4yQi0KbaNvMpyO7J8mUC8MLw63",
+                "name": "Kiran Joseph"
+              }
+            ]
+          }
+        },
+        {
+          "id": "3_1-5",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1763236800,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "3_6-8",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1762977600,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "3_8-10",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "8-10",
+          "cutoff": {
+            "_seconds": 1763496000,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "nigpY0YJHFNFyFesaYQMGmbhj3d2",
+                "name": "Anila baby"
+              },
+              {
+                "uid": "EYIIgWc280SfCj6uNqjdzG0nsSx1",
+                "name": "Aleena Emmanuel"
+              },
+              {
+                "uid": "xsYWlqOQxRTkyyEpfeDhQc9VvR73",
+                "name": "Nija binoy"
+              },
+              {
+                "uid": "X01ihVk5g0ae2u9DfCGGOzD2Lz22",
+                "name": "dona stephen"
+              },
+              {
+                "uid": "W3VisPBSrxMkmniJHhRt7zg85Qq2",
+                "name": "Fini Francis"
+              }
+            ],
+            "sport": "Women Badminton"
+          }
+        },
+        {
+          "id": "3_8-10TT",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "8-10TT",
+          "cutoff": {
+            "_seconds": 1763755200,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              }
+            ]
+          }
+        },
+        {
+          "id": "4_1-5",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1763409600,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "4_6-8",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1763064000,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "4_8-10",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "8-10",
+          "cutoff": {
+            "_seconds": 1763755200,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              },
+              {
+                "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+                "name": "Antony Jesto"
+              },
+              {
+                "uid": "l6pTx0Y7TTdl1Z54Wu7vlbwOX7J3",
+                "name": "Don Mathews"
+              },
+              {
+                "uid": "TKE4cab5DOZe11HGlCB66ol000y2",
+                "name": "subhash scaria"
+              },
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              },
+              {
+                "uid": "UEeQgRVgtEgUM5x6VEDPYHtypNu2",
+                "name": "abraham palaty"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              },
+              {
+                "uid": "NMcDjhRGcgM0cNAd4VxwxjBRfmt1",
+                "name": "Shalin James Antony"
+              },
+              {
+                "uid": "wD4yQi0KbaNvMpyO7J8mUC8MLw63",
+                "name": "Kiran Joseph"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              },
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              }
+            ]
+          }
+        },
+        {
+          "id": "4_8-10TT",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "8-10TT",
+          "cutoff": {
+            "_seconds": 1764100800,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "zMEi6gk5HORvGDC0uNM5R6JIwjy1",
+                "name": "Jins George"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              },
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              },
+              {
+                "uid": "CtS3jcTXvfg3qiHLhNl9I5H4zWh2",
+                "name": "Kevin Bastin"
+              },
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              }
+            ]
+          }
+        },
+        {
+          "id": "5_1-5",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1763582400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "5_6-8",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1763150400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "5_8-10",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "8-10",
+          "cutoff": {
+            "_seconds": 1764014400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": [
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              },
+              {
+                "uid": "sqncmYNEVKY61zifm8LNqsHkjKX2",
+                "name": "Ryan Stanley"
+              },
+              {
+                "uid": "y7IJZmu7bCPicqkv6YcuGB9EX4A2",
+                "name": "ginu paul"
+              },
+              {
+                "uid": "wD4yQi0KbaNvMpyO7J8mUC8MLw63",
+                "name": "Kiran Joseph"
+              },
+              {
+                "uid": "10poLxLZsTPM4ynYKQO2uHKb3N53",
+                "name": "Vipin Jose"
+              },
+              {
+                "uid": "guest_1763160916530_4ih9ooi5u",
+                "name": "Ginu +1",
+                "isGuest": true,
+                "parishionerName": "Jue Chemparathy",
+                "familyId": "487",
+                "addedBy": "jue.george@gmail.com",
+                "addedAt": "2025-11-14T22:55:16.530Z"
+              },
+              {
+                "uid": "guest_1763160935955_czsrf8dzr",
+                "name": "Leon Sunil",
+                "isGuest": true,
+                "parishionerName": "Jue Chemparathy",
+                "familyId": "487",
+                "addedBy": "jue.george@gmail.com",
+                "addedAt": "2025-11-14T22:55:35.955Z"
+              },
+              {
+                "uid": "qOoWwjr147MBKkiXfdzUANScHQk2",
+                "name": "Darish Mathalikunnel Sony"
+              },
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              }
+            ]
+          }
+        },
+        {
+          "id": "5_8-10TT",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "8-10TT",
+          "cutoff": {
+            "_seconds": 1764878400,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "MH7laeJBeoOkoLUDp6eDv5SrYP12",
+                "name": "Mani Devasia"
+              }
+            ]
+          }
+        },
+        {
+          "id": "6_1-5",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "1-5",
+          "cutoff": {
+            "_seconds": 1763755200,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "6_6-8",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "6-8",
+          "cutoff": {
+            "_seconds": 1763236800,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "J3HkAfnvb3cdJP95Gf0X4VCAbbH3",
+                "name": "Rony Jose"
+              },
+              {
+                "uid": "iu6rFO5gVuWCnTKrAjwNLTxWJUa2",
+                "name": "Dr. Anu Kurian"
+              },
+              {
+                "uid": "UEeQgRVgtEgUM5x6VEDPYHtypNu2",
+                "name": "abraham palaty"
+              },
+              {
+                "uid": "kIFroqwBzRcWbJxxnYeBX6P069w2",
+                "name": "tania thomas"
+              },
+              {
+                "uid": "hsZbW5OuAOZ1aIRrxiieUOHr4ia2",
+                "name": "Mary Smitha Wilson"
+              }
+            ]
+          }
+        },
+        {
+          "id": "6_6-9",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "6-9",
+          "cutoff": {
+            "_seconds": 1764273600,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Basketball",
+            "minPlayers": 6,
+            "maxPlayers": 12,
+            "players": []
+          }
+        },
+        {
+          "id": "6_8-10TT",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "8-10TT",
+          "cutoff": {
+            "_seconds": 1764792000,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          }
+        }
+      ],
+      "createdAt": {
+        "_seconds": 1763250235,
+        "_nanoseconds": 169000000
+      }
+    },
+    {
+      "id": "2025-11-22",
+      "slots": [
+        {
+          "id": "0_1-5",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763323200,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": [
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              },
+              {
+                "uid": "TKE4cab5DOZe11HGlCB66ol000y2",
+                "name": "subhash scaria"
+              }
+            ]
+          }
+        },
+        {
+          "id": "0_6-9",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "6-9",
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763323200,
+            "_nanoseconds": 0
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 10,
+            "players": [
+              {
+                "uid": "l6pTx0Y7TTdl1Z54Wu7vlbwOX7J3",
+                "name": "Don Mathews"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              },
+              {
+                "uid": "TKE4cab5DOZe11HGlCB66ol000y2",
+                "name": "subhash scaria"
+              },
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              },
+              {
+                "uid": "sWMUkTANTGfF2Q4z1N3jOoK6pyv1",
+                "name": "Binu Jose"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              },
+              {
+                "uid": "85DkyCoowQUR8eQVBacJydwXOIE3",
+                "name": "John Paul Varkey"
+              },
+              {
+                "uid": "CtS3jcTXvfg3qiHLhNl9I5H4zWh2",
+                "name": "Kevin Bastin"
+              },
+              {
+                "uid": "vu9P8nYxFLeJVws4Ob5gbyIaVck1",
+                "name": "Manu jose"
+              }
+            ]
+          }
+        },
+        {
+          "id": "0_8-10TT",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 20
+          },
+          "cutoff": {
+            "_seconds": 1763323200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "1_1-5",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763496000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "1_6-8",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763409600,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "vu9P8nYxFLeJVws4Ob5gbyIaVck1",
+                "name": "Manu jose"
+              }
+            ]
+          }
+        },
+        {
+          "id": "1_8-10",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 10
+          },
+          "cutoff": {
+            "_seconds": 1763582400,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "vu9P8nYxFLeJVws4Ob5gbyIaVck1",
+                "name": "Manu jose"
+              },
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              },
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              },
+              {
+                "uid": "nigpY0YJHFNFyFesaYQMGmbhj3d2",
+                "name": "Anila baby"
+              },
+              {
+                "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+                "name": "Antony Jesto"
+              },
+              {
+                "uid": "W3VisPBSrxMkmniJHhRt7zg85Qq2",
+                "name": "Fini Francis"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              },
+              {
+                "uid": "4yxuGMpDMKfGXyM5lzNdU6XDz2g1",
+                "name": "Meera Fibin"
+              },
+              {
+                "uid": "xsYWlqOQxRTkyyEpfeDhQc9VvR73",
+                "name": "Nija binoy"
+              },
+              {
+                "uid": "TKE4cab5DOZe11HGlCB66ol000y2",
+                "name": "subhash scaria"
+              },
+              {
+                "uid": "NMcDjhRGcgM0cNAd4VxwxjBRfmt1",
+                "name": "Shalin James Antony"
+              }
+            ]
+          }
+        },
+        {
+          "id": "1_8-10TT",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763668800,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+                "name": "Antony Jesto"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              }
+            ]
+          }
+        },
+        {
+          "id": "2_1-5",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763668800,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "2_6-8",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763496000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "2_8-10",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763841600,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "l6pTx0Y7TTdl1Z54Wu7vlbwOX7J3",
+                "name": "Don Mathews"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              },
+              {
+                "uid": "OxKfmmJVzWU5EX1rjJkvtue7me12",
+                "name": "Riju Kallivalappil"
+              },
+              {
+                "uid": "guest_1763331766100_h2bhhr3vs",
+                "name": "Neil Riju",
+                "isGuest": true,
+                "parishionerName": "Riju Kallivalappil",
+                "familyId": "431",
+                "addedBy": "rijuhere@gmail.com",
+                "addedAt": "2025-11-16T22:22:46.100Z"
+              },
+              {
+                "uid": "NMcDjhRGcgM0cNAd4VxwxjBRfmt1",
+                "name": "Shalin James Antony"
+              },
+              {
+                "uid": "guest_1763433724659_fn4pmz4k3",
+                "name": "Joshua George",
+                "isGuest": true,
+                "parishionerName": "Jins George",
+                "familyId": "624",
+                "addedBy": "geojins@gmail.com",
+                "addedAt": "2025-11-18T02:42:04.659Z"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              },
+              {
+                "uid": "zMEi6gk5HORvGDC0uNM5R6JIwjy1",
+                "name": "Jins George"
+              }
+            ]
+          }
+        },
+        {
+          "id": "2_8-10TT",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764014400,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "CtS3jcTXvfg3qiHLhNl9I5H4zWh2",
+                "name": "Kevin Bastin"
+              },
+              {
+                "uid": "zMEi6gk5HORvGDC0uNM5R6JIwjy1",
+                "name": "Jins George"
+              },
+              {
+                "uid": "MH7laeJBeoOkoLUDp6eDv5SrYP12",
+                "name": "Mani Devasia"
+              },
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              },
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              },
+              {
+                "uid": "8rDl2KZE9hTSXJsNTRQ5V7E8oyV2",
+                "name": "Fibin Assissi"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              }
+            ]
+          }
+        },
+        {
+          "id": "3_1-5",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763841600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "3_6-8",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763582400,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "3_8-10",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "cutoff": {
+            "_seconds": 1764100800,
+            "_nanoseconds": 0
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "sport": "Women Badminton",
+            "players": [
+              {
+                "uid": "EYIIgWc280SfCj6uNqjdzG0nsSx1",
+                "name": "Aleena Emmanuel"
+              },
+              {
+                "uid": "W3VisPBSrxMkmniJHhRt7zg85Qq2",
+                "name": "Fini Francis"
+              },
+              {
+                "uid": "X01ihVk5g0ae2u9DfCGGOzD2Lz22",
+                "name": "dona stephen"
+              }
+            ]
+          }
+        },
+        {
+          "id": "3_8-10TT",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764360000,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "MH7laeJBeoOkoLUDp6eDv5SrYP12",
+                "name": "Mani Devasia"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              },
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              }
+            ]
+          }
+        },
+        {
+          "id": "4_1-5",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764014400,
+            "_nanoseconds": 0
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "Cdo2xSULfjdiFUbZ21uwBpGkR8O2",
+                "name": "Trini George"
+              }
+            ]
+          }
+        },
+        {
+          "id": "4_6-8",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763668800,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          }
+        },
+        {
+          "id": "4_8-10",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "cutoff": {
+            "_seconds": 1764360000,
+            "_nanoseconds": 0
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "vu9P8nYxFLeJVws4Ob5gbyIaVck1",
+                "name": "Manu jose"
+              },
+              {
+                "uid": "l6pTx0Y7TTdl1Z54Wu7vlbwOX7J3",
+                "name": "Don Mathews"
+              },
+              {
+                "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+                "name": "Antony Jesto"
+              },
+              {
+                "uid": "NMcDjhRGcgM0cNAd4VxwxjBRfmt1",
+                "name": "Shalin James Antony"
+              },
+              {
+                "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+                "name": "Jue Chemparathy"
+              },
+              {
+                "uid": "yhkQHERGIgQ2fLSIAtuzsiZZYfb2",
+                "name": "Jobin Mathew"
+              },
+              {
+                "uid": "TKE4cab5DOZe11HGlCB66ol000y2",
+                "name": "subhash scaria"
+              },
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              },
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              }
+            ]
+          }
+        },
+        {
+          "id": "4_8-10TT",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764705600,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+                "name": "Ajay Mathews Baby"
+              }
+            ]
+          }
+        },
+        {
+          "id": "5_1-5",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764187200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "5_6-8",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1763755200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "5_8-10",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764619200,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": [
+              {
+                "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+                "name": "Binoy Baby"
+              }
+            ]
+          }
+        },
+        {
+          "id": "5_8-10TT",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765483200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "6_1-5",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764360000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "6_6-8",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "cutoff": {
+            "_seconds": 1763841600,
+            "_nanoseconds": 0
+          },
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": [
+              {
+                "uid": "J3HkAfnvb3cdJP95Gf0X4VCAbbH3",
+                "name": "Rony Jose"
+              },
+              {
+                "uid": "UEeQgRVgtEgUM5x6VEDPYHtypNu2",
+                "name": "abraham palaty"
+              },
+              {
+                "uid": "iu6rFO5gVuWCnTKrAjwNLTxWJUa2",
+                "name": "Dr. Anu Kurian"
+              }
+            ]
+          }
+        },
+        {
+          "id": "6_6-9",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "6-9",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Basketball",
+            "minPlayers": 6,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1764878400,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "6_8-10TT",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765396800,
+            "_nanoseconds": 0
+          }
+        }
+      ],
+      "createdAt": {
+        "_seconds": 1763853887,
+        "_nanoseconds": 791000000
+      }
+    },
+    {
+      "id": "2025-11-23",
+      "slots": [
+        {
+          "id": "0_1-5",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765137600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "0_6-9",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "6-9",
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 10,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765137600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "0_8-10TT",
+          "dayDate": "Sun Nov 09 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Sunday",
+          "dayIndex": 0,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 20
+          },
+          "cutoff": {
+            "_seconds": 1765137600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "1_1-5",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765310400,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "1_6-8",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765224000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "1_8-10",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "players": [],
+            "maxPlayers": 10
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765396800,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "1_8-10TT",
+          "dayDate": "Mon Nov 10 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Monday",
+          "dayIndex": 1,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765483200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "2_1-5",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765483200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "2_6-8",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765310400,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "2_8-10",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765656000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "2_8-10TT",
+          "dayDate": "Tue Nov 11 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Tuesday",
+          "dayIndex": 2,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765828800,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "3_1-5",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765656000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "3_6-8",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765396800,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "3_8-10",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "sport": "Women Badminton",
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765915200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "3_8-10TT",
+          "dayDate": "Wed Nov 12 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Wednesday",
+          "dayIndex": 3,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1766174400,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "4_1-5",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765828800,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "4_6-8",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765483200,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "4_8-10",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1766174400,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "4_8-10TT",
+          "dayDate": "Thu Nov 13 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Thursday",
+          "dayIndex": 4,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1766520000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "5_1-5",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1766001600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "5_6-8",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765569600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "5_8-10",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "8-10",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1766433600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "5_8-10TT",
+          "dayDate": "Fri Nov 14 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Friday",
+          "dayIndex": 5,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1767297600,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "6_1-5",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "1-5",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1766174400,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "6_6-8",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "6-8",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Volleyball",
+            "minPlayers": 8,
+            "maxPlayers": 14,
+            "players": []
+          },
+          "p1": {
+            "sport": "Pickleball",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1765656000,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "6_6-9",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "6-9",
+          "activePriority": 0,
+          "p1": {
+            "sport": "Open Badminton",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p0": {
+            "sport": "Basketball",
+            "minPlayers": 6,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1766692800,
+            "_nanoseconds": 0
+          }
+        },
+        {
+          "id": "6_8-10TT",
+          "dayDate": "Sat Nov 15 2025 01:25:51 GMT-0800 (Pacific Standard Time)",
+          "day": "Saturday",
+          "dayIndex": 6,
+          "blockId": "8-10TT",
+          "activePriority": 0,
+          "p0": {
+            "sport": "Table Tennis",
+            "minPlayers": 4,
+            "maxPlayers": 8,
+            "players": []
+          },
+          "p1": {
+            "sport": "Kids Games",
+            "minPlayers": 4,
+            "maxPlayers": 12,
+            "players": []
+          },
+          "cutoff": {
+            "_seconds": 1767211200,
+            "_nanoseconds": 0
+          }
+        }
+      ],
+      "createdAt": {
+        "_seconds": 1763885852,
+        "_nanoseconds": 644000000
+      }
+    }
+  ],
+  "userPreferences": [
+    {
+      "id": "0qMITFXLcVMxbD47JihdBZ2RPmt2",
+      "uid": "0qMITFXLcVMxbD47JihdBZ2RPmt2",
+      "selectedSports": [
+        "Pickleball",
+        "Volleyball",
+        "Table Tennis"
+      ],
+      "updatedAt": {
+        "_seconds": 1763003888,
+        "_nanoseconds": 994000000
+      }
+    },
+    {
+      "id": "2R6GaCszdqUwa2VtogLsIKVTkni2",
+      "uid": "2R6GaCszdqUwa2VtogLsIKVTkni2",
+      "selectedSports": [
+        "Open Badminton",
+        "Women's Badminton",
+        "Pickleball",
+        "Women's Pickleball",
+        "Volleyball",
+        "Basketball",
+        "Table Tennis",
+        "Kids Games"
+      ],
+      "updatedAt": {
+        "_seconds": 1762997740,
+        "_nanoseconds": 274000000
+      }
+    },
+    {
+      "id": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+      "uid": "K0rZjeD5ruVm7r2RlUAXwTJnlG22",
+      "selectedSports": [
+        "Open Badminton",
+        "Pickleball",
+        "Table Tennis",
+        "Volleyball"
+      ],
+      "updatedAt": {
+        "_seconds": 1763428484,
+        "_nanoseconds": 960000000
+      }
+    },
+    {
+      "id": "NtTNhwSI8MTDQFZbmgj1pvUO32v2",
+      "uid": "NtTNhwSI8MTDQFZbmgj1pvUO32v2",
+      "selectedSports": [
+        "Open Badminton",
+        "Pickleball",
+        "Volleyball"
+      ],
+      "updatedAt": {
+        "_seconds": 1763006471,
+        "_nanoseconds": 301000000
+      }
+    },
+    {
+      "id": "UEeQgRVgtEgUM5x6VEDPYHtypNu2",
+      "uid": "UEeQgRVgtEgUM5x6VEDPYHtypNu2",
+      "selectedSports": [],
+      "updatedAt": {
+        "_seconds": 1763175426,
+        "_nanoseconds": 690000000
+      }
+    },
+    {
+      "id": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+      "uid": "Xqyo8YCjxtaCDDnA1SUam0xX10Z2",
+      "selectedSports": [
+        "Open Badminton",
+        "Pickleball",
+        "Volleyball",
+        "Table Tennis"
+      ],
+      "updatedAt": {
+        "_seconds": 1763395430,
+        "_nanoseconds": 738000000
+      }
+    },
+    {
+      "id": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+      "uid": "ev063X8vtQVHKxSyKmHFCQlDOd53",
+      "selectedSports": [
+        "Open Badminton",
+        "Pickleball",
+        "Volleyball",
+        "Table Tennis"
+      ],
+      "updatedAt": {
+        "_seconds": 1763061805,
+        "_nanoseconds": 179000000
+      }
+    },
+    {
+      "id": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+      "uid": "pSyNyZmZLhPefk6MiWAsUqKkcZ13",
+      "selectedSports": [],
+      "updatedAt": {
+        "_seconds": 1763019566,
+        "_nanoseconds": 989000000
+      }
+    },
+    {
+      "id": "zMEi6gk5HORvGDC0uNM5R6JIwjy1",
+      "uid": "zMEi6gk5HORvGDC0uNM5R6JIwjy1",
+      "selectedSports": [
+        "Kids Games",
+        "Open Badminton",
+        "Pickleball",
+        "Table Tennis",
+        "Women Badminton"
+      ],
+      "updatedAt": {
+        "_seconds": 1763564851,
+        "_nanoseconds": 464000000
+      }
+    }
+  ]
+}
