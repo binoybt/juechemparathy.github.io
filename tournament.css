@@ -684,6 +684,32 @@ body.tournament {
   background: #fef3c7; color: #78350f; border-color: #fcd34d;
 }
 
+/* ── Sport schedule ── */
+.t-schedule-wrap { overflow-x: auto; margin-top: 8px; }
+.t-schedule-table { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 720px; }
+.t-schedule-table th, .t-schedule-table td {
+  padding: 8px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle;
+}
+.t-schedule-table th {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--t-muted); text-align: left; background: #f8fafc; white-space: nowrap;
+}
+.t-schedule-table .t-select,
+.t-schedule-table .t-input { width: 100%; min-width: 0; }
+.t-schedule-vs { font-size: .95rem; }
+.t-schedule-vs span { color: var(--t-muted); font-weight: 600; padding: 0 8px; }
+.t-schedule-vs-cell {
+  color: var(--t-muted); font-weight: 700; text-align: center; width: 36px;
+  font-family: 'Barlow Condensed', sans-serif;
+}
+.t-schedule-note { color: var(--t-muted); font-size: .82rem; margin-bottom: 8px; }
+.t-schedule-empty {
+  padding: 20px; color: var(--t-muted); text-align: center;
+  background: #f8fafc; border-radius: 8px; border: 1px dashed var(--t-border);
+  font-size: .9rem; line-height: 1.5;
+}
+
 /* ── Roster modal contents ── */
 .t-roster-head {
   display: flex; justify-content: space-between; align-items: center;
@@ -775,4 +801,5 @@ body.tournament {
   .t-match-team { justify-content: center; }
   .t-topbar { grid-template-columns: auto 1fr; padding: 8px 12px; }
   .t-nav { grid-column: 1 / -1; justify-content: center; }
+  .t-schedule-table { min-width: 640px; }
 }
