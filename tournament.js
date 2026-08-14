@@ -40,12 +40,10 @@
   // CONFIG / CONSTANTS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const ADMIN_EMAILS = [
-    'jue.george@gmail.com',
-    'binoybt@gmail.com',
-    'geojins@gmail.com',
-    'b.ajaymathews@gmail.com'
-  ];
+  // Admin access is granted via users/{uid}.role === 'admin' (managed on
+  // admin-users.html). state.isAdmin is kept in sync by a SmashAuth.onChange
+  // subscription set up in init(); this file no longer contains any admin
+  // email list.
 
   // Default team roster copied into every new "teams"-format tournament.
   const DEFAULT_TEAMS = [
@@ -277,10 +275,6 @@
   // ═══════════════════════════════════════════════════════════════════════════
   // AUTH
   // ═══════════════════════════════════════════════════════════════════════════
-
-  function isAdminEmail(email) {
-    return !!email && ADMIN_EMAILS.indexOf(email.toLowerCase()) !== -1;
-  }
 
   function signIn() {
     const provider = new firebase.auth.GoogleAuthProvider();
@@ -2408,43 +2402,86 @@
   async function setTeamCaptain(tournamentId, sportId, teamId, person) {
     if (!canManageCaptains()) { toast('Only admins can change captains', 'error'); return; }
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
-    if (!t) return;
+    if (!t) { toast('Tournament not found in local state', 'error'); return; }
+
+    // Find the sport + team up-front so we can fail loudly if the ids are
+    // wrong (this was the class of silent bugs that made "captain assigned"
+    // toasts fire without the doc actually changing).
+    const targetSport = (t.sports || []).find(function (s) { return s.id === sportId; });
+    if (!targetSport) { toast('Sport "' + sportId + '" not found', 'error'); return; }
+    const targetTeam = (targetSport.teams || []).find(function (tm) { return tm.id === teamId; });
+    if (!targetTeam) { toast('Team "' + teamId + '" not found in ' + sportId, 'error'); return; }
+
+    const captainPatch = person
+      ? {
+          captainUid:      person.uid || null,
+          captainName:     (
+                             ((person.firstName || '') + ' ' + (person.lastName || '')).trim()
+                             || person.displayName || person.email || null
+                           ),
+          captainEmail:    (person.email || '').toLowerCase() || null,
+          captainFamilyId: person.familyId ? String(person.familyId) : null
+        }
+      : {
+          captainUid: null, captainName: null, captainEmail: null, captainFamilyId: null
+        };
+
     const sports = (t.sports || []).map(function (s) {
       if (s.id !== sportId) return s;
       const teams = (s.teams || []).map(function (tm) {
         if (tm.id !== teamId) return tm;
-        if (!person) {
-          return Object.assign({}, tm, {
-            captainUid: null, captainName: null, captainEmail: null, captainFamilyId: null
-          });
-        }
-        const fullName = ((person.firstName || '') + ' ' + (person.lastName || '')).trim()
-          || person.displayName || person.email || '';
-        return Object.assign({}, tm, {
-          // uid may be empty when picking someone who's only ever RSVP'd
-          // without signing in — that's fine, they can be matched by email
-          // once they authenticate for the first time.
-          captainUid:      person.uid   || null,
-          captainName:     fullName     || null,
-          captainEmail:    (person.email || '').toLowerCase() || null,
-          captainFamilyId: person.familyId ? String(person.familyId) : null
-        });
+        return Object.assign({}, tm, captainPatch);
       });
       return Object.assign({}, s, { teams: teams });
     });
+
+    const ref = db.collection('tournaments').doc(tournamentId);
+    console.log('[tournament] setTeamCaptain →', {
+      tournamentId: tournamentId, sportId: sportId, teamId: teamId, patch: captainPatch
+    });
+
     try {
-      await db.collection('tournaments').doc(tournamentId).update({
-        sports: sports,
-        updatedAt: FieldValue.serverTimestamp()
-      });
-      // Patch local state immediately so the UI reflects the change without
-      // waiting for the onSnapshot round-trip (which is normally instant, but
-      // can lag briefly on slow connections). The snapshot will overwrite
-      // this with the authoritative server copy shortly after.
+      await ref.update({ sports: sports, updatedAt: FieldValue.serverTimestamp() });
+
+      // Verify the write actually landed on the server. Firestore's compat
+      // SDK normally resolves update() only after server confirmation, but
+      // caches, offline persistence, or a rules rollback can hide failures
+      // — reading with {source:'server'} sidesteps all of those.
+      let serverTeam = null;
+      try {
+        const fresh = await ref.get({ source: 'server' });
+        const fData = fresh.exists ? (fresh.data() || {}) : {};
+        const fSport = (fData.sports || []).find(function (s) { return s.id === sportId; });
+        serverTeam = fSport ? (fSport.teams || []).find(function (tm) { return tm.id === teamId; }) : null;
+      } catch (verifyErr) {
+        console.warn('[tournament] verify read failed (write may still be OK):', verifyErr);
+      }
+      const wroteWhat = person
+        ? (captainPatch.captainName || captainPatch.captainEmail || '(assigned)')
+        : 'removed';
+      if (serverTeam) {
+        const okUid   = (captainPatch.captainUid   || null) === (serverTeam.captainUid   || null);
+        const okName  = (captainPatch.captainName  || null) === (serverTeam.captainName  || null);
+        const okEmail = (captainPatch.captainEmail || null) === (serverTeam.captainEmail || null);
+        if (!(okUid && okName && okEmail)) {
+          console.error('[tournament] captain write DID NOT stick on server:', {
+            intended: captainPatch, actualServer: {
+              captainUid:      serverTeam.captainUid      || null,
+              captainName:     serverTeam.captainName     || null,
+              captainEmail:    serverTeam.captainEmail    || null,
+              captainFamilyId: serverTeam.captainFamilyId || null
+            }
+          });
+          toast('Server did not accept the captain change. Check Firestore rules for tournaments.', 'error');
+          // Do not patch local state so the UI reflects reality.
+          return;
+        }
+      }
+
       const idx = state.tournaments.findIndex(function (x) { return x.id === tournamentId; });
       if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { sports: sports });
-      console.log('[tournament] captain updated for', sportId, teamId, '→', person ? (person.email || person.firstName) : 'removed');
-      toast(person ? 'Captain assigned' : 'Captain removed', 'success');
+      console.log('[tournament] captain updated for', sportId, teamId, '→', wroteWhat);
+      toast(person ? ('Captain assigned: ' + wroteWhat) : 'Captain removed', 'success');
       render();
     } catch (err) {
       console.error('[tournament] setTeamCaptain FAILED', err);
@@ -3319,7 +3356,6 @@
     loadMembersCsv();
     auth.onAuthStateChanged(function (user) {
       state.user = user;
-      state.isAdmin = user ? isAdminEmail(user.email) : false;
       sessionInitialized = true;
       if (user) {
         // Persist this sign-in into users/{uid} (fire-and-forget). This is
@@ -3339,6 +3375,16 @@
       }
       render();
     });
+
+    // Admin flag comes from users/{uid}.role via SmashAuth (managed on
+    // admin-users.html). Re-render whenever the role resolves or changes.
+    if (window.SmashAuth) {
+      SmashAuth.onChange(function (s) {
+        const was = state.isAdmin;
+        state.isAdmin = !!(s.user && s.isAdmin);
+        if (was !== state.isAdmin) render();
+      });
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
