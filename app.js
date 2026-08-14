@@ -26,13 +26,12 @@ const SPORT_META = {
 /* cutoff per slot (local time). Adjust as needed. */
 const DEFAULT_CUTOFF_HOUR = 12; // noon of the day
 
-/* Admin emails who can run seed / overrides (edit this) */
-const ADMIN_EMAILS = [
-  "jue.george@gmail.com",
-  "binoybt@gmail.com",
-  "geojins@gmail.com"
-  // "you@example.com"
-];
+/* Admin access is granted via users/{uid}.role === 'admin' — managed on the
+ * admin-users.html page. This file no longer contains any admin email list.
+ * `currentUserIsAdmin` is kept in sync by the SmashAuth.onChange handler
+ * further down. */
+let currentUserIsAdmin = false;
+function isCurrentUserAdmin() { return !!currentUserIsAdmin; }
 
 let currentUser = null;
 let showAllSignups = false; // Admin toggle state - default to show upcoming only
@@ -139,7 +138,7 @@ const patronsBox = document.getElementById("patronsBox");
 
 function renderUser() {
   if (currentUser) {
-    const isAdmin = ADMIN_EMAILS.includes(currentUser.email);
+    const isAdmin = isCurrentUserAdmin();
     
     // Show Patrons button to all logged-in users
     patronsBox.innerHTML = `
@@ -237,6 +236,15 @@ function toggleViewMode() {
   renderTabContent();
 }
 
+
+// Keep admin state up-to-date whenever role changes in Firestore.
+if (window.SmashAuth) {
+  SmashAuth.onChange(s => {
+    const was = currentUserIsAdmin;
+    currentUserIsAdmin = !!(s.user && s.isAdmin);
+    if (was !== currentUserIsAdmin && currentUser) renderUser();
+  });
+}
 
 auth.onAuthStateChanged(u => {
   currentUser = u;
@@ -416,7 +424,7 @@ async function savePreferences() {
 
 function shouldShowSport(sport) {
   // Admin override: if showing all sign-ups, ignore preferences
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
+  if (currentUser && isCurrentUserAdmin() && showAllSignups) {
     console.log(`Admin mode: showing ${sport}`); // Debug
     return true;
   }
@@ -498,7 +506,7 @@ function isSlotBlocked(slotId, prio) {
 }
 
 async function toggleBlockSlot(slotId, prio, slot, p, block) {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) {
+  if (!currentUser || !isCurrentUserAdmin()) {
     return alert("Admins only.");
   }
   
@@ -695,7 +703,7 @@ function closeBlockDaysModal() {
 }
 
 async function saveBlockedDays() {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) {
+  if (!currentUser || !isCurrentUserAdmin()) {
     return alert("Admins only.");
   }
   
@@ -1183,7 +1191,7 @@ function renderSlotCard(slot, prio) {
   const active = computeActivePriority(slot) === prio;
   const dayBlocked = isDayBlocked(slot.dayIndex);
   const slotBlocked = isSlotBlocked(slot.id, prio);
-  const isAdmin = currentUser && ADMIN_EMAILS.includes(currentUser.email);
+  const isAdmin = currentUser && isCurrentUserAdmin();
 
   const mainLimit = meta.mainLimit || 10;
   const totalPlayers = (p.players || []).length;
@@ -1504,7 +1512,7 @@ function renderSlotRow(slot, prio) {
   const active = computeActivePriority(slot) === prio;
   const dayBlocked = isDayBlocked(slot.dayIndex);
   const slotBlocked = isSlotBlocked(slot.id, prio);
-  const isAdmin = currentUser && ADMIN_EMAILS.includes(currentUser.email);
+  const isAdmin = currentUser && isCurrentUserAdmin();
   const blocked = dayBlocked || slotBlocked;
 
   const mainLimit = meta.mainLimit || 10;
@@ -1696,7 +1704,7 @@ function getDateLabel(dayIndex) {
 
 function isDayInPast(dayIndex) {
   // Admins can see all days when toggle is on
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
+  if (currentUser && isCurrentUserAdmin() && showAllSignups) {
     return false;
   }
   
@@ -1740,7 +1748,7 @@ function getBlockEndTime(blockId) {
 
 function isTimeSlotInPast(dayIndex, blockId) {
   // Admins can see all time slots when toggle is on
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
+  if (currentUser && isCurrentUserAdmin() && showAllSignups) {
     return false;
   }
   
@@ -1855,7 +1863,7 @@ async function addGuest(slotId, prio, guestData) {
 }
 
 async function removeGuest(slotId, prio, guestUid) {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) {
+  if (!currentUser || !isCurrentUserAdmin()) {
     return alert("Only admins can remove guest players.");
   }
   
@@ -1921,7 +1929,7 @@ async function updateSignup(slotId, prio, action) {
  * OPTIONAL: seed if empty (admin only)
  *********************/
 async function seedWeeklyIfEmpty() {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) return alert("Admins only");
+  if (!currentUser || !isCurrentUserAdmin()) return alert("Admins only");
   const col = await db.collection("slots").limit(1).get();
   if (!col.empty) return alert("Slots already exist");
 
@@ -2101,7 +2109,7 @@ function handleDeepLink() {
 }
 
 async function backupAndResetWeekly() {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) {
+  if (!currentUser || !isCurrentUserAdmin()) {
     alert("Admins only.");
     return;
   }
