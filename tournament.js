@@ -1450,6 +1450,11 @@
         payload.createdAt = FieldValue.serverTimestamp();
         payload.createdBy = (state.user && state.user.email) || '';
         const ref = await db.collection('tournaments').add(payload);
+        // Optimistically add to local state so navigate() doesn't beat the
+        // onSnapshot delivery and render "Tournament not found".
+        if (!state.tournaments.some(function (x) { return x.id === ref.id; })) {
+          state.tournaments.push(Object.assign({ id: ref.id }, payload));
+        }
         toast('Tournament created');
         navigate({ view: 'tournament', tournamentId: ref.id });
       }
@@ -1498,6 +1503,13 @@
       payload.updatedAt = FieldValue.serverTimestamp();
       payload.createdBy = (state.user && state.user.email) || '';
       const ref = await db.collection('tournaments').add(payload);
+      // Optimistically stash the new doc in local state so navigate() below
+      // doesn't race the onSnapshot delivery (which normally arrives within
+      // a few ms of the write, but can lag long enough for renderTournament
+      // to fire "Tournament not found" first and redirect back to the list).
+      if (!state.tournaments.some(function (x) { return x.id === ref.id; })) {
+        state.tournaments.push(Object.assign({ id: ref.id }, payload));
+      }
       toast('Koinonia 2026 created');
       navigate({ view: 'tournament', tournamentId: ref.id });
     } catch (err) {
