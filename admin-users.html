@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
+    <meta name="theme-color" content="#3b82f6">
+    <title>SMASH — Members &amp; Admins</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f6f7fb; color: #1f2937; min-height: 100vh;
+        }
+        .topbar {
+            position: sticky; top: 0; z-index: 5;
+            display: grid; grid-template-columns: auto 1fr auto;
+            align-items: center; padding: 10px 14px;
+            background: #fff; border-bottom: 1px solid #e5e7eb; gap: 12px;
+        }
+        .brand { display: flex; align-items: center; gap: 8px; }
+        .title-icon { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; box-shadow: 0 6px 12px rgba(0,0,0,.15); }
+        .title-bar {
+            text-align: center; margin: 0; font-size: clamp(1.2rem,4vw,1.6rem);
+            letter-spacing: .06em; text-transform: uppercase;
+            background: linear-gradient(120deg,#ff8a00,#ff3d7f,#7b2ff7);
+            -webkit-background-clip: text; color: transparent;
+        }
+        .nav-links { display: flex; align-items: center; gap: 10px; }
+        .nav-btn {
+            padding: 8px 14px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 14px; color: #1f2937;
+            text-decoration: none; cursor: pointer; transition: all 0.2s;
+        }
+        .nav-btn:hover { background: #f9fafb; border-color: #3b82f6; }
+
+        .container { max-width: 1000px; margin: 0 auto; padding: 20px 12px; }
+
+        .auth-gate { text-align: center; padding: 60px 20px; }
+        .auth-gate h2 { margin-bottom: 16px; }
+        .auth-gate p { color: #6b7280; margin-bottom: 24px; }
+        .sign-in-btn {
+            padding: 12px 28px; border-radius: 10px; border: none;
+            background: #3b82f6; color: #fff; font-weight: 600; font-size: 1rem;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .sign-in-btn:hover { background: #2563eb; }
+        .access-denied { color: #ef4444; font-weight: 600; margin-top: 16px; }
+
+        .header-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 16px; padding: 22px 24px; color: #fff; margin-bottom: 20px;
+        }
+        .header-card h2 { font-size: 1.35rem; margin-bottom: 4px; }
+        .header-card p { opacity: 0.9; font-size: 0.9rem; }
+
+        .toolbar {
+            display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+            margin-bottom: 14px;
+        }
+        .search-box {
+            flex: 1 1 260px;
+            display: flex; align-items: center;
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+            padding: 4px 12px;
+        }
+        .search-box input {
+            flex: 1; border: 0; outline: 0; padding: 8px 4px; font-size: 0.95rem;
+            background: transparent;
+        }
+        .filter-bar { display: flex; gap: 6px; flex-wrap: wrap; }
+        .filter-btn {
+            padding: 8px 16px; border-radius: 999px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 0.85rem; cursor: pointer;
+            color: #374151;
+        }
+        .filter-btn.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+        .count-pill {
+            display: inline-block; margin-left: 6px; padding: 1px 8px;
+            border-radius: 999px; background: rgba(255,255,255,.25); font-size: .72rem;
+        }
+        .filter-btn:not(.active) .count-pill { background: #f3f4f6; color: #6b7280; }
+
+        .table-wrapper {
+            overflow-x: auto; border-radius: 12px; border: 1px solid #e5e7eb;
+            background: #fff;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        thead { background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; }
+        th {
+            padding: 14px 16px; text-align: left; font-weight: 600; font-size: 0.78rem;
+            text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+        }
+        td { padding: 12px 16px; border-bottom: 1px solid #f3f4f6; font-size: 0.9rem; vertical-align: middle; }
+        tbody tr:hover { background: #f9fafb; }
+        tbody tr:last-child td { border-bottom: none; }
+
+        .role-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 999px;
+            font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+            letter-spacing: .04em;
+        }
+        .role-badge.admin  { background: #d1fae5; color: #065f46; }
+        .role-badge.member { background: #e5e7eb; color: #374151; }
+
+        .btn {
+            padding: 6px 14px; border-radius: 8px; border: 1px solid #d1d5db;
+            background: #fff; font-weight: 600; font-size: 0.85rem; cursor: pointer;
+            transition: all .15s;
+        }
+        .btn:hover { background: #f3f4f6; }
+        .btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+        .btn.primary:hover { background: #2563eb; }
+        .btn.danger { background: #fff; border-color: #fca5a5; color: #b91c1c; }
+        .btn.danger:hover { background: #fef2f2; }
+        .btn:disabled { opacity: .6; cursor: not-allowed; }
+        .btn.self { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
+
+        .empty-state { text-align: center; padding: 40px; color: #6b7280; font-style: italic; }
+
+        .toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            padding: 12px 24px; border-radius: 8px; color: #fff; font-weight: 600;
+            box-shadow: 0 4px 12px rgba(0,0,0,.15); opacity: 0; visibility: hidden;
+            transition: opacity .3s, visibility .3s; z-index: 10000; max-width: 90vw;
+        }
+        .toast.show { opacity: 1; visibility: visible; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+
+        .loading-state { text-align: center; padding: 40px; color: #6b7280; }
+    </style>
+
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="title-icon" />
+    </div>
+    <h1 class="title-bar">Members &amp; Admins</h1>
+    <div class="nav-links">
+        <a href="index.html" class="nav-btn">Home</a>
+        <a href="pending-users.html" class="nav-btn">Pending Reviews</a>
+        <button id="signOutBtn" class="nav-btn" style="display:none;" onclick="signOut()">Sign out</button>
+    </div>
+</header>
+
+<main class="container">
+    <div id="authGate" class="auth-gate" style="display:none;">
+        <h2>Admin sign-in required</h2>
+        <p>This page is only accessible to SMASH admins.</p>
+        <button class="sign-in-btn" onclick="signIn()">Sign in with Google</button>
+        <div id="accessDenied" class="access-denied" style="display:none;">
+            You are signed in but this account is not authorized. Please contact a SMASH admin.
+        </div>
+    </div>
+
+    <div id="loadingState" class="loading-state" style="display:none;">Checking access…</div>
+
+    <div id="mainContent" style="display:none;">
+        <div class="header-card">
+            <h2>All members</h2>
+            <p>Grant or revoke admin access. Everyone starts as a member; promote a person to admin to give them access to admin pages (RSVP, Events, Wishlist, Tournament controls, Pending Reviews, this page). You can't revoke your own admin access.</p>
+        </div>
+
+        <div class="toolbar">
+            <div class="search-box">
+                <span>🔍</span>
+                <input type="text" id="searchInput" placeholder="Search by name or Family ID…" />
+            </div>
+            <div class="filter-bar">
+                <button class="filter-btn active" data-filter="all"    onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
+                <button class="filter-btn"        data-filter="admin"  onclick="setFilter('admin')">Admins <span class="count-pill" id="countAdmin">0</span></button>
+                <button class="filter-btn"        data-filter="member" onclick="setFilter('member')">Members <span class="count-pill" id="countMember">0</span></button>
+            </div>
+        </div>
+
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Family ID</th>
+                        <th>First Name</th>
+                        <th>Last Name</th>
+                        <th>Role</th>
+                        <th style="text-align:right;">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="usersBody">
+                    <tr><td colspan="5" class="empty-state">Loading users…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="firebase-config.js?v=9"></script>
+<script>
+let allUsers = [];
+let currentFilter = 'all';
+let unsubUsers = null;
+let currentUser = null;
+
+function toast(msg, type) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast ' + (type || 'success') + ' show';
+    setTimeout(function () { el.classList.remove('show'); }, 3000);
+}
+
+function esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function signIn() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(function (err) {
+        console.error('Sign-in error:', err);
+        toast('Sign-in failed.', 'error');
+    });
+}
+
+function signOut() { auth.signOut(); }
+
+SmashAuth.onChange(function (s) {
+    const gate    = document.getElementById('authGate');
+    const denied  = document.getElementById('accessDenied');
+    const loading = document.getElementById('loadingState');
+    const main    = document.getElementById('mainContent');
+    const outBtn  = document.getElementById('signOutBtn');
+    currentUser = s.user;
+
+    if (!s.user) {
+        gate.style.display = '';
+        denied.style.display = 'none';
+        loading.style.display = 'none';
+        main.style.display = 'none';
+        outBtn.style.display = 'none';
+        stopSubscribe();
+        return;
+    }
+
+    outBtn.style.display = '';
+
+    if (s.loading) {
+        gate.style.display = 'none';
+        loading.style.display = '';
+        main.style.display = 'none';
+        return;
+    }
+
+    if (s.isAdmin) {
+        gate.style.display = 'none';
+        loading.style.display = 'none';
+        main.style.display = '';
+        subscribeUsers();
+    } else {
+        gate.style.display = '';
+        denied.style.display = '';
+        loading.style.display = 'none';
+        main.style.display = 'none';
+        stopSubscribe();
+    }
+});
+
+function stopSubscribe() {
+    if (unsubUsers) { try { unsubUsers(); } catch (_) {} unsubUsers = null; }
+}
+
+function subscribeUsers() {
+    if (unsubUsers) return;
+    unsubUsers = db.collection('users').onSnapshot(function (snap) {
+        allUsers = [];
+        snap.forEach(function (d) {
+            const v = d.data() || {};
+            v.__id = d.id;
+            allUsers.push(v);
+        });
+        allUsers.sort(function (a, b) {
+            const la = String(a.lastName  || '').toLowerCase();
+            const lb = String(b.lastName  || '').toLowerCase();
+            if (la !== lb) return la < lb ? -1 : 1;
+            const fa = String(a.firstName || '').toLowerCase();
+            const fb = String(b.firstName || '').toLowerCase();
+            return fa < fb ? -1 : (fa > fb ? 1 : 0);
+        });
+        renderAll();
+    }, function (err) {
+        console.error('users subscribe failed:', err);
+        document.getElementById('usersBody').innerHTML =
+            '<tr><td colspan="5" class="empty-state" style="color:#b91c1c;">Failed to load users: ' +
+            esc(err.message || err) + '</td></tr>';
+    });
+}
+
+function setFilter(f) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-filter') === f);
+    });
+    renderAll();
+}
+
+document.getElementById('searchInput').addEventListener('input', renderAll);
+
+function renderAll() {
+    const q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
+    const admins  = allUsers.filter(function (u) { return u.role === 'admin'; }).length;
+    const members = allUsers.length - admins;
+    document.getElementById('countAll').textContent    = allUsers.length;
+    document.getElementById('countAdmin').textContent  = admins;
+    document.getElementById('countMember').textContent = members;
+
+    const filtered = allUsers.filter(function (u) {
+        const role = u.role || 'member';
+        if (currentFilter === 'admin'  && role !== 'admin')  return false;
+        if (currentFilter === 'member' && role === 'admin')  return false;
+        if (!q) return true;
+        const hay = [u.firstName, u.lastName, u.familyId].join(' ').toLowerCase();
+        return hay.indexOf(q) !== -1;
+    });
+
+    const body = document.getElementById('usersBody');
+    if (!filtered.length) {
+        body.innerHTML = '<tr><td colspan="5" class="empty-state">No users match.</td></tr>';
+        return;
+    }
+
+    body.innerHTML = '';
+    filtered.forEach(function (u) {
+        const role = u.role || 'member';
+        const isSelf = currentUser && currentUser.uid === u.__id;
+        const btn = isSelf
+            ? '<button class="btn self" disabled title="You can\'t change your own role">You</button>'
+            : (role === 'admin'
+                ? '<button class="btn danger" data-action="demote">Revoke admin</button>'
+                : '<button class="btn primary" data-action="promote">Make admin</button>');
+
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+            '<td>' + esc(u.familyId || '—') + '</td>' +
+            '<td>' + esc(u.firstName || '') + '</td>' +
+            '<td>' + esc(u.lastName  || '') + '</td>' +
+            '<td><span class="role-badge ' + role + '">' + role + '</span></td>' +
+            '<td style="text-align:right;">' + btn + '</td>';
+
+        const actionBtn = tr.querySelector('[data-action]');
+        if (actionBtn) {
+            actionBtn.addEventListener('click', function () {
+                const action = actionBtn.getAttribute('data-action');
+                if (action === 'promote') promote(u, actionBtn);
+                else                       demote(u, actionBtn);
+            });
+        }
+        body.appendChild(tr);
+    });
+}
+
+async function promote(u, btn) {
+    const label = ((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.email || u.__id;
+    if (!confirm('Make ' + label + ' an admin? They will get access to all admin pages.')) return;
+    btn.disabled = true; btn.textContent = 'Updating…';
+    try {
+        await SmashAuth.promoteToAdmin(u.__id);
+        toast(label + ' is now an admin.');
+    } catch (err) {
+        console.error('promote failed:', err);
+        toast('Promote failed: ' + (err.message || err), 'error');
+        btn.disabled = false; btn.textContent = 'Make admin';
+    }
+}
+
+async function demote(u, btn) {
+    const label = ((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.email || u.__id;
+    if (!confirm('Revoke admin access for ' + label + '? They will lose access to admin pages.')) return;
+    btn.disabled = true; btn.textContent = 'Updating…';
+    try {
+        await SmashAuth.demoteFromAdmin(u.__id);
+        toast('Admin access revoked for ' + label + '.');
+    } catch (err) {
+        console.error('demote failed:', err);
+        toast('Revoke failed: ' + (err.message || err), 'error');
+        btn.disabled = false; btn.textContent = 'Revoke admin';
+    }
+}
+</script>
+</body>
+</html>
