@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
+    <meta name="theme-color" content="#3b82f6">
+    <title>SMASH — Pending User Reviews</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f6f7fb; color: #1f2937; min-height: 100vh;
+        }
+
+        .topbar {
+            position: sticky; top: 0; z-index: 5;
+            display: grid; grid-template-columns: auto 1fr auto;
+            align-items: center; padding: 10px 14px;
+            background: #fff; border-bottom: 1px solid #e5e7eb; gap: 12px;
+        }
+        .brand { display: flex; align-items: center; gap: 8px; }
+        .title-icon { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; box-shadow: 0 6px 12px rgba(0,0,0,.15); }
+        .title-bar {
+            text-align: center; margin: 0; font-size: clamp(1.2rem,4vw,1.6rem);
+            letter-spacing: .06em; text-transform: uppercase;
+            background: linear-gradient(120deg,#ff8a00,#ff3d7f,#7b2ff7);
+            -webkit-background-clip: text; color: transparent;
+        }
+        .nav-links { display: flex; align-items: center; gap: 10px; }
+        .nav-btn {
+            padding: 8px 14px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 14px; color: #1f2937;
+            text-decoration: none; cursor: pointer; transition: all 0.2s;
+        }
+        .nav-btn:hover { background: #f9fafb; border-color: #3b82f6; }
+
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px 12px; }
+
+        .auth-gate { text-align: center; padding: 60px 20px; }
+        .auth-gate h2 { margin-bottom: 16px; }
+        .auth-gate p { color: #6b7280; margin-bottom: 24px; }
+        .sign-in-btn {
+            padding: 12px 28px; border-radius: 10px; border: none;
+            background: #3b82f6; color: #fff; font-weight: 600; font-size: 1rem;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .sign-in-btn:hover { background: #2563eb; }
+        .access-denied { color: #ef4444; font-weight: 600; margin-top: 16px; }
+
+        .header-card {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border-radius: 16px; padding: 22px 24px; color: #fff; margin-bottom: 20px;
+        }
+        .header-card h2 { font-size: 1.35rem; margin-bottom: 4px; }
+        .header-card p { opacity: 0.9; font-size: 0.9rem; }
+
+        .filter-bar {
+            display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px;
+        }
+        .filter-btn {
+            padding: 8px 16px; border-radius: 999px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 0.85rem; cursor: pointer;
+            color: #374151;
+        }
+        .filter-btn.active { background: #1f2937; color: #fff; border-color: #1f2937; }
+        .count-pill {
+            display: inline-block; margin-left: 6px; padding: 1px 8px;
+            border-radius: 999px; background: rgba(255,255,255,.25); font-size: .75rem;
+        }
+        .filter-btn:not(.active) .count-pill { background: #f3f4f6; color: #6b7280; }
+
+        .card-list { display: flex; flex-direction: column; gap: 14px; }
+
+        .review-card {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+            padding: 18px; box-shadow: 0 1px 2px rgba(0,0,0,.03);
+        }
+        .review-card.status-accepted { border-color: #a7f3d0; background: #f0fdf4; }
+        .review-card.status-rejected { border-color: #fca5a5; background: #fef2f2; }
+
+        .card-head {
+            display: flex; justify-content: space-between; align-items: flex-start;
+            gap: 10px; flex-wrap: wrap; margin-bottom: 14px;
+        }
+        .who { display: flex; flex-direction: column; }
+        .who strong { font-size: 1.05rem; color: #111827; }
+        .who .who-email { font-size: 0.85rem; color: #6b7280; }
+        .status-badge {
+            padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 0.04em;
+        }
+        .status-badge.pending  { background: #fef3c7; color: #78350f; }
+        .status-badge.accepted { background: #d1fae5; color: #065f46; }
+        .status-badge.rejected { background: #fee2e2; color: #991b1b; }
+
+        .submitted-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px; padding: 12px; background: #f9fafb;
+            border-radius: 10px; margin-bottom: 14px; font-size: 0.9rem;
+        }
+        .submitted-grid .lbl { color: #6b7280; font-size: 0.72rem; text-transform: uppercase; margin-bottom: 2px; }
+        .submitted-grid .val { color: #111827; font-weight: 600; word-break: break-word; }
+
+        .directory-hint {
+            margin: 0 0 12px 0; padding: 10px 12px; border-radius: 8px;
+            background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af;
+            font-size: 0.85rem; line-height: 1.45;
+        }
+        .directory-hint.warn { background: #fef3c7; border-color: #fbbf24; color: #78350f; }
+        .directory-hint strong { display: block; margin-bottom: 2px; }
+
+        .admin-inputs {
+            display: grid; grid-template-columns: 1fr 1fr;
+            gap: 10px; margin-bottom: 14px;
+        }
+        .admin-inputs label { display: block; font-size: 0.78rem; color: #374151; margin-bottom: 4px; font-weight: 600; }
+        .admin-inputs input {
+            width: 100%; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+            font-size: 0.9rem; box-sizing: border-box;
+        }
+        .admin-inputs input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+
+        .card-actions {
+            display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap;
+        }
+        .btn {
+            padding: 9px 18px; border-radius: 8px; border: 1px solid #d1d5db;
+            background: #fff; font-weight: 600; font-size: 0.9rem; cursor: pointer; transition: all .15s;
+        }
+        .btn:hover { background: #f3f4f6; }
+        .btn.primary { background: #10b981; border-color: #10b981; color: #fff; }
+        .btn.primary:hover { background: #059669; }
+        .btn.danger { background: #fff; border-color: #fca5a5; color: #b91c1c; }
+        .btn.danger:hover { background: #fef2f2; }
+        .btn:disabled { opacity: .6; cursor: not-allowed; }
+
+        .review-meta { color: #6b7280; font-size: 0.78rem; margin-top: 10px; }
+        .review-meta .reason { color: #991b1b; }
+
+        .empty-state { text-align: center; padding: 40px; color: #6b7280; font-style: italic; background: #fff; border: 1px dashed #e5e7eb; border-radius: 12px; }
+
+        .toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            padding: 12px 24px; border-radius: 8px; color: #fff; font-weight: 600;
+            box-shadow: 0 4px 12px rgba(0,0,0,.15); opacity: 0; visibility: hidden;
+            transition: opacity .3s, visibility .3s; z-index: 10000; max-width: 90vw;
+        }
+        .toast.show { opacity: 1; visibility: visible; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+
+        @media (max-width: 640px) {
+            .admin-inputs { grid-template-columns: 1fr; }
+        }
+    </style>
+
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="title-icon" />
+    </div>
+    <h1 class="title-bar">Pending User Reviews</h1>
+    <div class="nav-links">
+        <a href="index.html" class="nav-btn">Home</a>
+        <a href="admin-users.html" class="nav-btn">Members &amp; Admins</a>
+        <a href="tournament.html" class="nav-btn">Tournament</a>
+        <button id="signOutBtn" class="nav-btn" style="display:none;" onclick="signOut()">Sign out</button>
+    </div>
+</header>
+
+<main class="container">
+    <div id="authGate" class="auth-gate" style="display:none;">
+        <h2>Admin sign-in required</h2>
+        <p>This page is only accessible to SMASH admins.</p>
+        <button class="sign-in-btn" onclick="signIn()">Sign in with Google</button>
+        <div id="accessDenied" class="access-denied" style="display:none;">
+            You are signed in but this account is not authorized. Please contact a SMASH admin.
+        </div>
+    </div>
+
+    <div id="mainContent" style="display:none;">
+        <div class="header-card">
+            <h2>New parishioner requests</h2>
+            <p>Review each entry, fill in the Member ID and Family Name, then Accept or Reject. Accepting adds the parishioner to the directory and lets the user sign in normally on their next visit.</p>
+        </div>
+
+        <div class="filter-bar">
+            <button class="filter-btn active" data-filter="pending"  onclick="setFilter('pending')">Pending <span class="count-pill" id="countPending">0</span></button>
+            <button class="filter-btn" data-filter="accepted" onclick="setFilter('accepted')">Accepted <span class="count-pill" id="countAccepted">0</span></button>
+            <button class="filter-btn" data-filter="rejected" onclick="setFilter('rejected')">Rejected <span class="count-pill" id="countRejected">0</span></button>
+            <button class="filter-btn" data-filter="all"      onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
+        </div>
+
+        <div id="cardList" class="card-list">
+            <div class="empty-state">Loading requests…</div>
+        </div>
+    </div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="firebase-config.js?v=9"></script>
+<script>
+let currentUser = null;
+let allRequests = [];
+let currentFilter = 'pending';
+let unsubRequests = null;
+let directoryLoaded = false;
+
+function toast(msg, type) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast ' + (type || 'success') + ' show';
+    setTimeout(function () { el.classList.remove('show'); }, 3000);
+}
+
+function esc(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function formatTimestamp(ts) {
+    if (!ts) return '—';
+    const d = ts.toDate ? ts.toDate() : new Date(ts);
+    return d.toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+    });
+}
+
+function signIn() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(function (err) {
+        console.error('Sign-in error:', err);
+        toast('Sign-in failed.', 'error');
+    });
+}
+
+function signOut() {
+    auth.signOut();
+}
+
+SmashAuth.onChange(async function (s) {
+    const gate = document.getElementById('authGate');
+    const main = document.getElementById('mainContent');
+    const denied = document.getElementById('accessDenied');
+    const outBtn = document.getElementById('signOutBtn');
+    currentUser = s.user;
+
+    if (!s.user) {
+        gate.style.display = '';
+        main.style.display = 'none';
+        denied.style.display = 'none';
+        outBtn.style.display = 'none';
+        if (unsubRequests) { unsubRequests(); unsubRequests = null; }
+        return;
+    }
+    outBtn.style.display = '';
+    if (s.loading) return;
+
+    if (s.isAdmin) {
+        gate.style.display = 'none';
+        main.style.display = '';
+        denied.style.display = 'none';
+        await preloadDirectory();
+        subscribeRequests();
+    } else {
+        gate.style.display = '';
+        main.style.display = 'none';
+        denied.style.display = '';
+        if (unsubRequests) { unsubRequests(); unsubRequests = null; }
+    }
+});
+
+async function preloadDirectory() {
+    if (directoryLoaded) return;
+    try {
+        // Uses helpers from firebase-config.js
+        await window.__smashOnboarding.loadMembersCsv();
+        await window.__smashOnboarding.loadAdditionalMembers();
+        directoryLoaded = true;
+    } catch (err) {
+        console.warn('Directory preload failed:', err);
+        toast('Could not load members directory: ' + (err.message || err), 'error');
+    }
+}
+
+function subscribeRequests() {
+    if (unsubRequests) return;
+    unsubRequests = db.collection('pendingRegistrations')
+        .orderBy('submittedAt', 'desc')
+        .onSnapshot(function (snap) {
+            allRequests = [];
+            snap.forEach(function (d) {
+                const v = d.data() || {};
+                v.__id = d.id;
+                allRequests.push(v);
+            });
+            renderAll();
+        }, function (err) {
+            console.error('pendingRegistrations subscribe failed:', err);
+            document.getElementById('cardList').innerHTML =
+                '<div class="empty-state" style="color:#b91c1c;">Failed to load requests: ' + esc(err.message || err) + '</div>';
+        });
+}
+
+function setFilter(f) {
+    currentFilter = f;
+    document.querySelectorAll('.filter-btn').forEach(function (b) {
+        b.classList.toggle('active', b.getAttribute('data-filter') === f);
+    });
+    renderAll();
+}
+
+function renderAll() {
+    const counts = { pending: 0, accepted: 0, rejected: 0 };
+    allRequests.forEach(function (r) {
+        const s = r.status || 'pending';
+        if (counts[s] != null) counts[s]++;
+    });
+    document.getElementById('countPending').textContent  = counts.pending;
+    document.getElementById('countAccepted').textContent = counts.accepted;
+    document.getElementById('countRejected').textContent = counts.rejected;
+    document.getElementById('countAll').textContent      = allRequests.length;
+
+    const list = document.getElementById('cardList');
+    const filtered = currentFilter === 'all'
+        ? allRequests
+        : allRequests.filter(function (r) { return (r.status || 'pending') === currentFilter; });
+
+    if (!filtered.length) {
+        list.innerHTML = '<div class="empty-state">No ' + esc(currentFilter) + ' requests.</div>';
+        return;
+    }
+
+    // Combine directory sources once so we can pre-fill suggestions.
+    const csv  = window.__smashOnboarding && window.__smashOnboarding.loadMembersCsv        ? null : null;
+    const html = filtered.map(renderCard).join('');
+    list.innerHTML = html;
+
+    // Wire up per-card behaviour (need to do this after innerHTML replace).
+    filtered.forEach(function (r) {
+        const card = document.getElementById('card-' + r.__id);
+        if (!card) return;
+        if ((r.status || 'pending') === 'pending') {
+            const acceptBtn = card.querySelector('[data-action="accept"]');
+            const rejectBtn = card.querySelector('[data-action="reject"]');
+            const fidInput  = card.querySelector('[data-field="familyId"]');
+            const fnInput   = card.querySelector('[data-field="firstName"]');
+            const lnInput   = card.querySelector('[data-field="lastName"]');
+            acceptBtn.addEventListener('click', function () { acceptRequest(r, card); });
+            rejectBtn.addEventListener('click', function () { rejectRequest(r); });
+
+            // Auto-populate suggested Family Name from members directory
+            // whenever the admin edits Family ID (or on first render).
+            const refreshSuggestions = function () {
+                suggestDirectoryPrefill(card, {
+                    firstName: fnInput.value,
+                    lastName:  lnInput.value,
+                    familyId:  fidInput.value
+                });
+            };
+            fidInput.addEventListener('input', refreshSuggestions);
+            fnInput.addEventListener('input',  refreshSuggestions);
+            lnInput.addEventListener('input',  refreshSuggestions);
+            refreshSuggestions();
+        }
+    });
+}
+
+function renderCard(r) {
+    const status = r.status || 'pending';
+    const isPending = status === 'pending';
+    const badge = '<span class="status-badge ' + status + '">' + status + '</span>';
+
+    let bodyExtra = '';
+    if (status === 'accepted') {
+        bodyExtra =
+            '<div class="review-meta">' +
+                'Accepted ' + formatTimestamp(r.reviewedAt) +
+                (r.reviewedBy ? ' by ' + esc(r.reviewedBy) : '') +
+                (r.adminMemberId  ? ' &middot; Member ID ' + esc(r.adminMemberId)   : '') +
+                (r.adminFamilyName ? ' &middot; ' + esc(r.adminFamilyName) + ' family' : '') +
+            '</div>';
+    } else if (status === 'rejected') {
+        bodyExtra =
+            '<div class="review-meta">' +
+                'Rejected ' + formatTimestamp(r.reviewedAt) +
+                (r.reviewedBy ? ' by ' + esc(r.reviewedBy) : '') +
+                (r.rejectReason ? '<div class="reason">Reason: ' + esc(r.rejectReason) + '</div>' : '') +
+            '</div>';
+    }
+
+    const editable = isPending
+      ? (
+        '<div id="hint-' + r.__id + '"></div>' +
+        '<div class="admin-inputs">' +
+            '<div>' +
+                '<label>First name</label>' +
+                '<input type="text" data-field="firstName" value="' + esc(r.firstName || '') + '" />' +
+            '</div>' +
+            '<div>' +
+                '<label>Last name</label>' +
+                '<input type="text" data-field="lastName" value="' + esc(r.lastName || '') + '" />' +
+            '</div>' +
+            '<div>' +
+                '<label>Family ID</label>' +
+                '<input type="text" data-field="familyId" value="' + esc(r.familyId || '') + '" />' +
+            '</div>' +
+            '<div>' +
+                '<label>Family Name</label>' +
+                '<input type="text" data-field="familyName" placeholder="e.g. Thekaekara" />' +
+            '</div>' +
+            '<div>' +
+                '<label>Member ID</label>' +
+                '<input type="text" data-field="memberId" placeholder="e.g. 210" />' +
+            '</div>' +
+        '</div>' +
+        '<div class="card-actions">' +
+            '<button class="btn danger"  data-action="reject">Reject</button>' +
+            '<button class="btn primary" data-action="accept">Accept &amp; add to directory</button>' +
+        '</div>'
+      )
+      : '';
+
+    return '' +
+        '<div id="card-' + r.__id + '" class="review-card status-' + status + '">' +
+            '<div class="card-head">' +
+                '<div class="who">' +
+                    '<strong>' + esc(r.googleDisplayName || (r.firstName + ' ' + r.lastName)) + '</strong>' +
+                    '<span class="who-email">' + esc(r.email || '') + '</span>' +
+                '</div>' + badge +
+            '</div>' +
+            '<div class="submitted-grid">' +
+                '<div><div class="lbl">Submitted</div><div class="val">' + esc(r.firstName || '') + ' ' + esc(r.lastName || '') + '</div></div>' +
+                '<div><div class="lbl">Family ID</div><div class="val">' + esc(r.familyId || '—') + '</div></div>' +
+                '<div><div class="lbl">When</div><div class="val">' + formatTimestamp(r.submittedAt) + '</div></div>' +
+            '</div>' +
+            editable +
+            bodyExtra +
+        '</div>';
+}
+
+function suggestDirectoryPrefill(card, entered) {
+    const hintEl = card.querySelector('[id^="hint-"]');
+    if (!hintEl) return;
+    const helpers = window.__smashOnboarding || {};
+    if (!helpers.loadMembersCsv) return;
+
+    Promise.all([helpers.loadMembersCsv(), helpers.loadAdditionalMembers()])
+        .then(function (arrs) {
+            const list = arrs[0].concat(arrs[1]);
+            const fid  = String(entered.familyId || '').trim();
+
+            const familyMatches   = list.filter(function (m) { return m.familyId && m.familyId === fid; });
+            const familyName      = familyMatches.length ? familyMatches[0].familyName : '';
+
+            // Suggest next Member ID = max numeric + 1.
+            const nums = list.map(function (m) { return parseInt(m.memberId, 10); })
+                             .filter(function (n) { return !isNaN(n); });
+            const nextMemberId = nums.length ? Math.max.apply(null, nums) + 1 : 1;
+
+            // Autofill admin inputs if empty.
+            const fnEl = card.querySelector('[data-field="familyName"]');
+            const idEl = card.querySelector('[data-field="memberId"]');
+            if (fnEl && !fnEl.value && familyName) fnEl.value = familyName;
+            if (idEl && !idEl.value) idEl.value = String(nextMemberId);
+
+            // Detect exact-person match (in case admin needs to know).
+            const person = list.find(function (m) {
+                return (m.firstName || '').toLowerCase() === (entered.firstName || '').toLowerCase() &&
+                       (m.lastName  || '').toLowerCase() === (entered.lastName  || '').toLowerCase() &&
+                       (m.familyId  || '')                === fid;
+            });
+
+            let html = '';
+            if (person) {
+                html = '<div class="directory-hint warn">' +
+                    '<strong>Heads up:</strong> ' + esc(person.firstName + ' ' + person.lastName) +
+                    ' (Family ID ' + esc(person.familyId) + ', Member ID ' + esc(person.memberId) +
+                    ') already exists in the directory (source: ' + esc(person._source || 'unknown') +
+                    '). Accepting will still add another row — usually you should Reject and ask the user to sign in with matching details.' +
+                '</div>';
+            } else if (familyMatches.length) {
+                html = '<div class="directory-hint">' +
+                    '<strong>Family ' + esc(fid) + ' recognised as "' + esc(familyName) + '"</strong>' +
+                    'The Family Name field has been prefilled. Suggested new Member ID: ' + esc(String(nextMemberId)) + '.' +
+                '</div>';
+            } else if (fid) {
+                html = '<div class="directory-hint">' +
+                    '<strong>Family ID ' + esc(fid) + ' is not yet in the directory.</strong>' +
+                    'Enter the Family Name manually. Suggested Member ID: ' + esc(String(nextMemberId)) + '.' +
+                '</div>';
+            }
+            hintEl.innerHTML = html;
+        })
+        .catch(function (err) {
+            console.warn('suggestDirectoryPrefill failed:', err);
+        });
+}
+
+async function acceptRequest(r, card) {
+    const fnEl  = card.querySelector('[data-field="firstName"]');
+    const lnEl  = card.querySelector('[data-field="lastName"]');
+    const fidEl = card.querySelector('[data-field="familyId"]');
+    const famEl = card.querySelector('[data-field="familyName"]');
+    const midEl = card.querySelector('[data-field="memberId"]');
+
+    const firstName  = (fnEl.value  || '').trim();
+    const lastName   = (lnEl.value  || '').trim();
+    const familyId   = (fidEl.value || '').trim();
+    const familyName = (famEl.value || '').trim();
+    const memberId   = (midEl.value || '').trim();
+
+    if (!firstName || !lastName || !familyId) {
+        toast('First name, last name and Family ID are required.', 'error');
+        return;
+    }
+    if (!familyName || !memberId) {
+        toast('Please fill in Family Name and Member ID before accepting.', 'error');
+        return;
+    }
+
+    const acceptBtn = card.querySelector('[data-action="accept"]');
+    const rejectBtn = card.querySelector('[data-action="reject"]');
+    acceptBtn.disabled = rejectBtn.disabled = true;
+    const originalText = acceptBtn.textContent;
+    acceptBtn.textContent = 'Adding…';
+
+    try {
+        const FV = firebase.firestore.FieldValue;
+        const admDoc = db.collection('additionalMembers').doc();
+        await admDoc.set({
+            familyId:          familyId,
+            firstName:         firstName,
+            lastName:          lastName,
+            familyName:        familyName,
+            memberId:          memberId,
+            addedFromPendingId: r.__id,
+            addedBy:           (currentUser && currentUser.email) || '',
+            addedAt:           FV.serverTimestamp()
+        });
+
+        // Also try to auto-verify the user's users/{uid} doc so their next
+        // sign-in has zero friction. This will fail under strict rules
+        // (users can only write their own doc); that's OK — the onboarding
+        // gate on the client will self-verify on next sign-in.
+        try {
+            await db.collection('users').doc(r.uid).set({
+                verified:       true,
+                verifiedAt:     FV.serverTimestamp(),
+                firstName:      firstName,
+                lastName:       lastName,
+                firstNameLower: firstName.toLowerCase(),
+                lastNameLower:  lastName.toLowerCase(),
+                familyId:       familyId,
+                familyName:     familyName,
+                memberId:       memberId,
+                pendingRegistrationId: FV.delete()
+            }, { merge: true });
+        } catch (uErr) {
+            console.warn('users/{uid} auto-verify skipped (permission denied is fine):', uErr);
+        }
+
+        await db.collection('pendingRegistrations').doc(r.__id).update({
+            status:          'accepted',
+            adminMemberId:   memberId,
+            adminFamilyName: familyName,
+            reviewedAt:      FV.serverTimestamp(),
+            reviewedBy:      (currentUser && currentUser.email) || ''
+        });
+
+        if (window.__smashOnboarding && window.__smashOnboarding.invalidateCaches) {
+            window.__smashOnboarding.invalidateCaches();
+        }
+        toast('Added to directory. Ask the user to sign in again.');
+    } catch (err) {
+        console.error('Accept failed:', err);
+        toast('Accept failed: ' + (err.message || err), 'error');
+        acceptBtn.disabled = rejectBtn.disabled = false;
+        acceptBtn.textContent = originalText;
+    }
+}
+
+async function rejectRequest(r) {
+    const reason = prompt('Reason for rejecting this request? (shown to the user)', '');
+    if (reason === null) return;
+    try {
+        const FV = firebase.firestore.FieldValue;
+        await db.collection('pendingRegistrations').doc(r.__id).update({
+            status:      'rejected',
+            rejectReason: (reason || '').trim(),
+            reviewedAt:  FV.serverTimestamp(),
+            reviewedBy:  (currentUser && currentUser.email) || ''
+        });
+        toast('Rejected.');
+    } catch (err) {
+        console.error('Reject failed:', err);
+        toast('Reject failed: ' + (err.message || err), 'error');
+    }
+}
+</script>
+</body>
+</html>
