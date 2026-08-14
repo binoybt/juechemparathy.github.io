@@ -4,7 +4,9 @@
   "private": true,
   "description": "Static signup site plus Firestore backup tooling",
   "scripts": {
-    "backup": "node backup.js"
+    "backup": "node backup.js",
+    "mirror-auth": "node mirror-auth.js",
+    "mirror-auth:dry": "node mirror-auth.js --dry-run"
   },
   "dependencies": {
     "firebase-admin": "^12.0.0"
