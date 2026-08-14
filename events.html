@@ -199,21 +199,13 @@
     </div>
 </main>
 
-<script src="firebase-config.js?v=7"></script>
+<script src="firebase-config.js?v=9"></script>
 <script>
-const ADMIN_EMAILS = [
-    "jue.george@gmail.com",
-    "binoybt@gmail.com",
-    "geojins@gmail.com"
-];
-
-// Show admin link for admins
-auth.onAuthStateChanged(user => {
-    if (user && ADMIN_EMAILS.includes(user.email)) {
-        document.getElementById('adminLink').style.display = '';
-        document.getElementById('rsvpAdminLink').style.display = '';
-        document.getElementById('wishlistAdminLink').style.display = '';
-    }
+SmashAuth.onChange(s => {
+    const show = !!(s.user && s.isAdmin);
+    document.getElementById('adminLink').style.display         = show ? '' : 'none';
+    document.getElementById('rsvpAdminLink').style.display     = show ? '' : 'none';
+    document.getElementById('wishlistAdminLink').style.display = show ? '' : 'none';
 });
 
 function formatDate(dateStr) {
