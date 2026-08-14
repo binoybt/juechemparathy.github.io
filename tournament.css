@@ -616,13 +616,136 @@ body.tournament {
   display: grid; gap: 8px;
 }
 .t-team-row {
-  display: grid; grid-template-columns: 80px 1fr auto; gap: 8px;
+  display: grid; grid-template-columns: 80px 1fr minmax(220px, 1.4fr) auto; gap: 8px;
   align-items: center;
   padding: 8px 10px; background: #f8fafc;
   border: 1px solid var(--t-border); border-radius: 8px;
 }
 .t-team-row input { padding: 6px 10px; border: 1px solid var(--t-border); border-radius: 6px; font-family: inherit; font-size: .9rem; }
 .t-team-row input:focus { outline: none; border-color: var(--t-primary); }
+.t-team-captain-cell {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 4px 8px; background: #fff; border: 1px dashed var(--t-border);
+  border-radius: 6px; font-size: .82rem;
+}
+.t-team-captain-cell .cap-lbl { color: var(--t-fg); font-weight: 600; }
+.t-team-captain-cell .cap-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .t-team-row { grid-template-columns: 1fr; }
+  .t-team-captain-cell { flex-direction: row; align-items: center; justify-content: space-between; }
+}
+
+/* ── Team rosters (tournament view) ── */
+.t-rosters-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+.t-roster-card {
+  background: #fff; border: 1px solid var(--t-border); border-left: 4px solid var(--team-color, var(--t-primary));
+  border-radius: var(--t-r-md); box-shadow: var(--t-shadow-sm);
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.t-roster-card-head { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+.t-roster-team { display: flex; gap: 10px; align-items: flex-start; }
+.t-roster-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex-shrink: 0; }
+.t-roster-name { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 1.1rem; letter-spacing: .02em; }
+.t-roster-sub { font-size: .8rem; color: var(--t-muted); margin-top: 2px; }
+.t-roster-card-body { display: grid; gap: 6px; }
+.t-roster-line { display: flex; justify-content: space-between; align-items: center; font-size: .88rem; }
+.t-roster-line .lbl { color: var(--t-muted); text-transform: uppercase; letter-spacing: .04em; font-size: .74rem; font-weight: 600; }
+.t-roster-line .val { color: var(--t-fg); }
+.t-roster-card-foot { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.t-badge {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  background: #e0e7ff; color: #4338ca; font-size: .72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.t-badge.you { background: #dcfce7; color: #166534; margin-left: 6px; }
+.t-badge.login { background: #dcfce7; color: #166534; margin-left: 6px; }
+.t-badge.nologin { background: #fef3c7; color: #92400e; margin-left: 6px; }
+
+/* ── Roster modal contents ── */
+.t-roster-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 12px; background: #f8fafc; border-radius: 8px;
+  border: 1px solid var(--t-border); font-size: .92rem;
+}
+.t-roster-count { font-weight: 700; color: var(--t-muted); font-size: .85rem; }
+.t-roster-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+.t-empty-note { padding: 20px; color: var(--t-muted); text-align: center; background: #f8fafc; border-radius: 8px; border: 1px dashed var(--t-border); }
+.t-roster-list { display: flex; flex-direction: column; gap: 6px; }
+.t-roster-row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; padding: 10px 12px; background: #fff;
+  border: 1px solid var(--t-border); border-radius: 8px;
+}
+.t-roster-row .name { font-weight: 600; font-size: .95rem; }
+.t-roster-row .meta { font-size: .78rem; color: var(--t-muted); margin-top: 2px; }
+.t-roster-row .sub { font-size: .72rem; color: var(--t-muted-2); margin-top: 2px; font-style: italic; }
+
+/* ── Captain / member picker results ── */
+.t-user-results, .t-member-results {
+  margin-top: 14px; max-height: 46vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid var(--t-border); border-radius: 8px; padding: 6px;
+  background: #f8fafc;
+}
+.t-user-row, .t-member-row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 10px; padding: 10px 12px; background: #fff;
+  border: 1px solid var(--t-border); border-radius: 8px;
+}
+.t-user-row .who { display: flex; gap: 10px; align-items: center; }
+.t-user-row .who img, .t-user-row .who .avatar-placeholder {
+  width: 32px; height: 32px; border-radius: 50%; object-fit: cover;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: #e2e8f0; font-size: 1rem;
+}
+.t-user-row .name, .t-member-row .name { font-weight: 600; font-size: .92rem; }
+.t-user-row .email, .t-member-row .meta { font-size: .78rem; color: var(--t-muted); margin-top: 2px; }
+.t-captain-current {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 12px; background: #eff6ff;
+  border: 1px solid #bfdbfe; border-radius: 8px;
+}
+.t-captain-current.empty {
+  background: #f8fafc; border-style: dashed; color: var(--t-muted);
+  font-size: .88rem; justify-content: flex-start;
+}
+.t-captain-current .lbl { font-size: .72rem; color: var(--t-muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 700; }
+.t-captain-current .val { font-size: 1rem; font-weight: 700; color: var(--t-fg); margin-top: 2px; }
+.t-captain-current .sub { font-size: .78rem; color: var(--t-muted); margin-top: 2px; }
+
+.t-form-label {
+  display: block; font-size: .78rem; color: var(--t-muted);
+  text-transform: uppercase; letter-spacing: .06em; font-weight: 700;
+  margin-bottom: 6px;
+}
+
+/* ── Captain-picker diagnostics ── */
+.t-diag-row {
+  display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0 4px;
+}
+.t-diag-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 999px; font-size: .78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid;
+}
+.t-diag-pill.ok      { background: #dcfce7; color: #166534; border-color: #86efac; }
+.t-diag-pill.warn    { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+.t-diag-pill.err     { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.t-diag-pill.loading { background: #e0e7ff; color: #3730a3; border-color: #a5b4fc; }
+.t-diag-hint {
+  margin: 10px 0; padding: 12px;
+  background: #fffbeb; border: 1px solid #fcd34d;
+  border-radius: 8px; color: #78350f;
+}
+.t-diag-hint pre {
+  margin-top: 6px; padding: 10px; background: #fff;
+  border: 1px solid #fde68a; border-radius: 6px;
+  font-size: .78rem; overflow: auto; color: #1f2937;
+}
 
 /* ── Responsive ── */
 @media (max-width: 640px) {
