@@ -103,7 +103,7 @@
     };
   }
 
-  function sportTemplateForConfig(templateId) {
+  function sportTemplateForConfig(templateId, opts) {
     const tpl = SPORT_TEMPLATES[templateId];
     if (!tpl) return null;
     return {
@@ -115,6 +115,9 @@
       date: '',
       hasThirdPlace: true,
       categories: tpl.kind === 'racket' ? [...DEFAULT_CATEGORIES] : [],
+      // Each sport now owns its own team roster. If defaults are provided
+      // (e.g. seeding Koinonia), we pre-populate G1–G4.
+      teams: (opts && opts.teams) ? JSON.parse(JSON.stringify(opts.teams)) : [],
       scoring: defaultScoring(tpl.kind)
     };
   }
@@ -127,18 +130,34 @@
     return stages;
   }
 
+  // Resolves the team roster for a given sport within a tournament.
+  //
+  // Teams now live per-sport (sport.teams). For backward compatibility we
+  // fall back to any tournament-level `teams` array from the previous data
+  // model, so existing Koinonia docs keep rendering correctly until the
+  // admin saves the tournament again (which drops the legacy field).
+  function teamsFor(tournament, sportOrId) {
+    if (!tournament) return [];
+    const sport = typeof sportOrId === 'string'
+      ? getSportConfig(tournament, sportOrId)
+      : sportOrId;
+    if (sport && Array.isArray(sport.teams) && sport.teams.length) return sport.teams;
+    if (Array.isArray(tournament.teams) && tournament.teams.length) return tournament.teams;
+    return [];
+  }
+
   // Koinonia seed used when the tournament list is empty and admin clicks "Seed".
   function koinoniaSeed() {
+    const teams = JSON.parse(JSON.stringify(DEFAULT_TEAMS));
     return {
       name: 'Koinonia 2026',
       format: 'teams',
-      teams: JSON.parse(JSON.stringify(DEFAULT_TEAMS)),
       sports: [
-        sportTemplateForConfig('badminton'),
-        sportTemplateForConfig('pickleball'),
-        sportTemplateForConfig('tabletennis'),
-        sportTemplateForConfig('volleyball'),
-        sportTemplateForConfig('basketball')
+        sportTemplateForConfig('badminton',   { teams: teams }),
+        sportTemplateForConfig('pickleball',  { teams: teams }),
+        sportTemplateForConfig('tabletennis', { teams: teams }),
+        sportTemplateForConfig('volleyball',  { teams: teams }),
+        sportTemplateForConfig('basketball',  { teams: teams })
       ],
       archived: false
     };
@@ -308,14 +327,283 @@
     tournaments: [],       // all tournaments (subscribed once)
     matches: [],           // matches for the current tournament only
     currentId: null,       // tournamentId currently subscribed for matches
+    users: [],             // signed-in user profiles (from `users` collection)
+    rsvpResponses: [],     // raw docs from rsvpResponses (existing app data)
+    members: [],           // parishioner directory (parsed from members.csv, in-memory only)
+    membersLoaded: false,  // becomes true once CSV has been fetched and parsed
     unsubTournaments: null,
     unsubMatches: null,
-    ready: { tournaments: false, matches: false }
+    unsubUsers: null,
+    unsubRsvp: null,
+    ready: { tournaments: false, matches: false, users: false, rsvp: false },
+    // Last error surfaced by each data source, for diagnostics in the UI.
+    errors: { users: null, rsvp: null, upsert: null }
   };
 
   // Flipped to true once auth.onAuthStateChanged has fired at least once,
   // so we can distinguish "still restoring session" from "definitely signed out".
   let sessionInitialized = false;
+
+  // Tracks which live-data modal is currently on-screen so that async data
+  // arrivals (users snapshot, members.csv load) can re-render it in place.
+  // Values: null | 'userPicker' | 'memberPicker' | 'roster'.
+  let openLiveModal = null;
+  let openLiveModalContext = null; // arbitrary payload used by the re-renderer
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // PERMISSIONS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Anyone who has signed in and thus has a profile in `users` counts as a
+  // known-user. Admin can always do everything. A signed-in user who is also
+  // the captain of a specific team can edit that team's roster.
+  function currentUid() { return state.user ? state.user.uid : null; }
+
+  function canEditTournamentConfig() { return state.isAdmin; }
+
+  function canManageCaptains() { return state.isAdmin; }
+
+  // Returns true if the current user is the captain of the given team.
+  // Matches on Firebase uid when available; otherwise falls back to email so
+  // captains assigned by name-only (from an rsvpResponse that predates their
+  // Google sign-in) can still edit the roster once they authenticate.
+  function isCaptainOf(team) {
+    if (!team || !state.user) return false;
+    if (team.captainUid && team.captainUid === state.user.uid) return true;
+    if (team.captainEmail && state.user.email
+        && team.captainEmail.toLowerCase() === (state.user.email || '').toLowerCase()) return true;
+    return false;
+  }
+
+  function canEditRoster(team) {
+    return state.isAdmin || isCaptainOf(team);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // USER PROFILE (users/{uid}) — upserted on every login
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Split a Google displayName into first + last. Some accounts have only a
+  // single name; the admin can edit their profile later if needed.
+  function splitName(displayName) {
+    const parts = String(displayName || '').trim().split(/\s+/);
+    if (!parts.length) return { firstName: '', lastName: '' };
+    if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+    return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+  }
+
+  // Persist the signed-in user's identity (email, name, photo) into the
+  // `users/{uid}` doc. This is the ONLY place we write to that collection;
+  // nothing here ever deletes. Uses `set({ merge: true })` so we can write
+  // safely without a pre-read and so `firstLoginAt` (set only on the first
+  // ever write) is never overwritten on subsequent logins.
+  //
+  // If profiles appear to "disappear on logout", the cause is almost always
+  // Firestore security rules that only allow a user to read their own
+  // `/users/{uid}` doc — so the moment they sign out, the collection reads
+  // as empty. See the rules snippet in the README/setup docs; the required
+  // rule is:
+  //     match /users/{uid} {
+  //       allow read:   if request.auth != null;
+  //       allow create, update: if request.auth.uid == uid;
+  //     }
+  async function upsertUserProfile(user) {
+    if (!user || !user.uid) return;
+    const { firstName, lastName } = splitName(user.displayName);
+    const ref = db.collection('users').doc(user.uid);
+    const payload = {
+      uid: user.uid,
+      email: (user.email || '').toLowerCase(),
+      displayName: user.displayName || '',
+      firstName: firstName,
+      lastName: lastName,
+      firstNameLower: firstName.toLowerCase(),
+      lastNameLower: lastName.toLowerCase(),
+      photoURL: user.photoURL || '',
+      lastLoginAt: FieldValue.serverTimestamp()
+    };
+    try {
+      // Only stamp firstLoginAt if the doc doesn't exist yet. We swallow a
+      // read failure (e.g. offline) and just set the field unconditionally;
+      // subsequent merges will overwrite it — that's fine, the field is
+      // informational only.
+      let firstEver = true;
+      try {
+        const existing = await ref.get();
+        firstEver = !existing.exists;
+      } catch (_) { /* proceed as if first-ever */ }
+      if (firstEver) payload.firstLoginAt = FieldValue.serverTimestamp();
+      await ref.set(payload, { merge: true });
+      state.errors.upsert = null;
+      console.log('[tournament] user profile saved for', payload.email);
+    } catch (err) {
+      state.errors.upsert = err;
+      console.error('[tournament] upsertUserProfile FAILED — check Firestore rules for /users/{uid}', err);
+      toast('Could not save your profile — Firestore rules may need updating (' + (err.code || err.message || 'unknown') + ')', 'error');
+      if (openLiveModal === 'userPicker') rerenderUserPicker();
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MEMBERS.CSV — parishioner directory (client-side cache)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Very small CSV parser: no quoted fields in our file, so a simple split
+  // per line + comma is sufficient. If the CSV ever gains quoted commas
+  // this will need upgrading.
+  function parseMembersCsv(text) {
+    const lines = String(text || '').split(/\r?\n/).filter(Boolean);
+    if (!lines.length) return [];
+    const header = lines[0].split(',').map(function (h) { return h.trim(); });
+    const idx = {
+      familyId:   header.indexOf('Family ID'),
+      firstName:  header.indexOf('Firstname'),
+      lastName:   header.indexOf('Lastname'),
+      familyName: header.indexOf('Family Name'),
+      memberId:   header.indexOf('Member ID')
+    };
+    const out = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',');
+      const fn = (cols[idx.firstName] || '').trim();
+      const ln = (cols[idx.lastName]  || '').trim();
+      out.push({
+        familyId:   (cols[idx.familyId]   || '').trim(),
+        firstName:  fn,
+        lastName:   ln,
+        familyName: (cols[idx.familyName] || '').trim(),
+        memberId:   (cols[idx.memberId]   || '').trim(),
+        // pre-computed lowercased haystack for fast filtering
+        search: (fn + ' ' + ln + ' ' + (cols[idx.familyName] || '').trim()).toLowerCase()
+      });
+    }
+    return out;
+  }
+
+  async function loadMembersCsv() {
+    if (state.membersLoaded) return;
+    try {
+      const res = await fetch('members.csv', { cache: 'no-cache' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const text = await res.text();
+      state.members = parseMembersCsv(text);
+      state.membersLoaded = true;
+      // If the member picker is open, redraw it so results appear.
+      if (openLiveModal === 'memberPicker') rerenderMemberPicker();
+    } catch (err) {
+      console.error('[tournament] Failed to load members.csv:', err);
+      toast('Could not load parishioner directory (members.csv). Roster search will not work.', 'error');
+    }
+  }
+
+  function searchMembers(query) {
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return state.members.slice(0, 50);
+    // If the query looks numeric, also match against Family ID / Member ID.
+    const numeric = /^\d+$/.test(q);
+    const out = [];
+    for (const m of state.members) {
+      if (out.length >= 100) break;
+      if (m.search.indexOf(q) !== -1) { out.push(m); continue; }
+      if (numeric && (m.familyId === q || m.memberId === q)) out.push(m);
+    }
+    return out;
+  }
+
+  // Union of everyone the app knows about — anyone who's ever RSVP'd (whether
+  // or not they were signed in at the time) plus anyone whose profile lives
+  // in the `users` collection. Deduped on Firebase uid when available,
+  // otherwise on a normalized firstName+lastName+familyId key. The person
+  // is "authenticatable" (i.e. can be assigned as captain and actually edit
+  // the roster themselves) only if their record carries a uid or email
+  // captured from a Google sign-in.
+  function normKey(firstName, lastName, familyId) {
+    return (String(firstName || '') + '|' + String(lastName || '') + '|' + String(familyId || ''))
+      .toLowerCase().trim();
+  }
+
+  function getKnownPeople() {
+    const byKey = new Map();
+
+    function upsert(rec) {
+      const uidKey = rec.uid ? ('U:' + rec.uid) : null;
+      const nameKey = 'N:' + normKey(rec.firstName, rec.lastName, rec.familyId);
+      // Prefer uid identity when we have one — merge onto that record.
+      const primaryKey = uidKey || nameKey;
+      const existing = byKey.get(primaryKey) || byKey.get(nameKey);
+      if (existing) {
+        // Merge — richer source wins per field.
+        existing.uid       = existing.uid       || rec.uid       || '';
+        existing.email     = existing.email     || rec.email     || '';
+        existing.firstName = existing.firstName || rec.firstName || '';
+        existing.lastName  = existing.lastName  || rec.lastName  || '';
+        existing.familyId  = existing.familyId  || rec.familyId  || '';
+        existing.photoURL  = existing.photoURL  || rec.photoURL  || '';
+        existing.sources   = Array.from(new Set([...(existing.sources || []), rec.source]));
+        // Re-key under the uid-preferred key so future lookups converge.
+        if (uidKey && byKey.get(nameKey) === existing) byKey.delete(nameKey);
+        byKey.set(primaryKey, existing);
+      } else {
+        byKey.set(primaryKey, Object.assign({}, rec, { sources: [rec.source] }));
+      }
+    }
+
+    // Source 1: rsvpResponses (existing app data — most people are here).
+    (state.rsvpResponses || []).forEach(function (r) {
+      upsert({
+        uid:       r.uid || '',
+        email:     (r.email || '').toLowerCase(),
+        firstName: r.firstName || '',
+        lastName:  r.lastName || '',
+        familyId:  r.familyId != null ? String(r.familyId) : '',
+        photoURL:  '',
+        source:    'rsvp'
+      });
+    });
+
+    // Source 2: users collection (portal sign-ins).
+    (state.users || []).forEach(function (u) {
+      upsert({
+        uid:       u.uid || '',
+        email:     (u.email || '').toLowerCase(),
+        firstName: u.firstName || '',
+        lastName:  u.lastName || '',
+        familyId:  '',
+        photoURL:  u.photoURL || '',
+        source:    'portal'
+      });
+    });
+
+    const out = [];
+    byKey.forEach(function (v) {
+      // Skip records with no usable name at all.
+      if (!v.firstName && !v.lastName) return;
+      v.firstNameLower = (v.firstName || '').toLowerCase();
+      v.lastNameLower  = (v.lastName  || '').toLowerCase();
+      v.hasLogin       = !!(v.uid || v.email);
+      out.push(v);
+    });
+    out.sort(function (a, b) {
+      // People with a Google login first, then alphabetical.
+      if (a.hasLogin !== b.hasLogin) return a.hasLogin ? -1 : 1;
+      return (a.firstName + a.lastName).localeCompare(b.firstName + b.lastName);
+    });
+    return out;
+  }
+
+  function searchPeople(query) {
+    const people = getKnownPeople();
+    const q = String(query || '').trim().toLowerCase();
+    if (!q) return people.slice(0, 50);
+    const numeric = /^\d+$/.test(q);
+    return people.filter(function (p) {
+      if (p.firstNameLower.indexOf(q) !== -1) return true;
+      if (p.lastNameLower.indexOf(q) !== -1) return true;
+      if ((p.email || '').indexOf(q) !== -1) return true;
+      if (numeric && p.familyId === q) return true;
+      return false;
+    }).slice(0, 100);
+  }
 
   function currentTournament() {
     const parsed = parseUrl();
@@ -459,19 +747,21 @@
     return { a: match.playerA || '', b: match.playerB || '' };
   }
 
-  function displayName(tournament, id) {
+  function displayName(tournament, sportId, id) {
     if (!tournament || tournament.format !== 'teams') return id || '—';
-    const t = (tournament.teams || []).find(function (x) { return x.id === id; });
+    const teams = teamsFor(tournament, sportId);
+    const t = teams.find(function (x) { return x.id === id; });
     return t ? t.name : (id || '—');
   }
 
-  function teamMeta(tournament, id) {
+  function teamMeta(tournament, sportId, id) {
     if (!tournament) return { name: id || '—', wards: '', color: 'var(--t-muted)' };
     if (tournament.format !== 'teams') {
       return { name: id || '—', wards: '', color: TEAM_COLORS[Math.abs(hashCode(id || '')) % TEAM_COLORS.length] };
     }
-    const idx = (tournament.teams || []).findIndex(function (x) { return x.id === id; });
-    const t = (tournament.teams || [])[idx];
+    const teams = teamsFor(tournament, sportId);
+    const idx = teams.findIndex(function (x) { return x.id === id; });
+    const t = teams[idx];
     if (!t) return { name: id || '—', wards: '', color: 'var(--t-muted)' };
     return { name: t.name, wards: t.wards || '', color: TEAM_COLORS[idx % TEAM_COLORS.length] };
   }
@@ -491,7 +781,7 @@
     // Collect participant IDs
     const seen = {};
     if (tournament.format === 'teams') {
-      (tournament.teams || []).forEach(function (t) { seen[t.id] = true; });
+      teamsFor(tournament, sportId).forEach(function (t) { seen[t.id] = true; });
     } else {
       scoped.forEach(function (m) { if (m.playerA) seen[m.playerA] = true; if (m.playerB) seen[m.playerB] = true; });
     }
@@ -650,6 +940,14 @@
       const extra = (t.sports || []).length > 6 ? `<span class="t-sport-chip">+${t.sports.length - 6}</span>` : '';
       const formatLabel = t.format === 'individual' ? 'Individual / Doubles' : 'Team-based';
 
+      // Show the max team count across sports (each sport has its own roster now).
+      let maxTeams = 0;
+      (t.sports || []).forEach(function (s) {
+        const n = (s.teams || []).length;
+        if (n > maxTeams) maxTeams = n;
+      });
+      if (!maxTeams && Array.isArray(t.teams)) maxTeams = t.teams.length; // legacy fallback
+
       const card = el('div', { class: 't-tournament-card ' + (t.archived ? 'archived' : '') });
       card.innerHTML = `
         <div class="t-format">${escapeHtml(formatLabel)}${t.archived ? ' · Archived' : ''}</div>
@@ -657,7 +955,7 @@
         <div class="t-sports">${sports || '<span class="t-sport-chip">No sports yet</span>'}${extra}</div>
         <div class="t-stats">
           <span><b>${(t.sports || []).length}</b> sports</span>
-          ${t.format === 'teams' ? `<span><b>${(t.teams || []).length}</b> teams</span>` : ''}
+          ${t.format === 'teams' ? `<span>up to <b>${maxTeams}</b> teams</span>` : ''}
         </div>
         ${state.isAdmin ? `
           <div class="t-card-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--t-border);">
@@ -720,9 +1018,18 @@
       // Deep clone so edits don't mutate live state.
       draft = JSON.parse(JSON.stringify(t));
       draft.sports = draft.sports || [];
-      draft.teams = draft.teams || [];
+      // Migration: teams used to live at the tournament root. If the doc still
+      // has it, copy those teams into every sport that doesn't already have
+      // its own roster, then drop the legacy tournament-level field.
+      const legacyTeams = Array.isArray(draft.teams) ? draft.teams : [];
+      draft.sports.forEach(function (s) {
+        if (!Array.isArray(s.teams) || !s.teams.length) {
+          s.teams = JSON.parse(JSON.stringify(legacyTeams));
+        }
+      });
+      delete draft.teams;
     } else {
-      draft = { name: '', format: 'teams', teams: JSON.parse(JSON.stringify(DEFAULT_TEAMS)), sports: [], archived: false };
+      draft = { name: '', format: 'teams', sports: [], archived: false };
     }
     editState.draft = draft;
 
@@ -760,17 +1067,9 @@
         </div>
       </section>
 
-      <section class="t-section" id="tfTeamsSection">
-        <div class="t-section-header">
-          <h2 class="t-section-title">Teams <small>edit group names & rosters</small></h2>
-          <button class="t-btn" id="tfAddTeam">➕ Add team</button>
-        </div>
-        <div class="t-teams-editor" id="tfTeams"></div>
-      </section>
-
       <section class="t-section">
         <div class="t-section-header">
-          <h2 class="t-section-title">Sports <small>date & scoring per stage</small></h2>
+          <h2 class="t-section-title">Sports <small>teams, date & scoring per sport</small></h2>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
             <select class="t-select" id="tfAddSport" style="width:auto;">
               <option value="">Add sport…</option>
@@ -791,17 +1090,8 @@
 
     document.getElementById('tfFormat').addEventListener('change', function (e) {
       draft.format = e.target.value;
-      const wrap = document.getElementById('tfTeamsSection');
-      wrap.style.display = draft.format === 'teams' ? '' : 'none';
+      paintSports(draft);
     });
-    document.getElementById('tfTeamsSection').style.display = draft.format === 'teams' ? '' : 'none';
-
-    document.getElementById('tfAddTeam').addEventListener('click', function () {
-      const nextId = 'G' + ((draft.teams || []).length + 1);
-      draft.teams.push({ id: nextId, name: nextId, wards: '' });
-      paintTeams(draft);
-    });
-    paintTeams(draft);
 
     document.getElementById('tfAddSport').addEventListener('change', function (e) {
       const v = e.target.value;
@@ -819,25 +1109,60 @@
     }
   }
 
-  function paintTeams(draft) {
-    const wrap = document.getElementById('tfTeams');
-    if (!wrap) return;
-    wrap.innerHTML = '';
-    (draft.teams || []).forEach(function (t, i) {
+  function paintTeamsInto(container, sport, draft) {
+    container.innerHTML = '';
+    sport.teams = sport.teams || [];
+    if (!sport.teams.length) {
+      const empty = el('div', { class: 't-empty', style: { padding: '12px', textAlign: 'left' } },
+        'No teams yet. Click "Add team" or "Copy from another sport" to get started.');
+      container.appendChild(empty);
+      return;
+    }
+    sport.teams.forEach(function (t, i) {
       const row = el('div', { class: 't-team-row' });
+      const rosterCount = Array.isArray(t.roster) ? t.roster.length : 0;
+      const capAssigned = t.captainUid || t.captainName || t.captainEmail;
+      const captainLabel = capAssigned
+        ? '👤 ' + escapeHtml(t.captainName || t.captainEmail || '(assigned)')
+          + (t.captainUid ? '' : ' <span class="t-badge nologin" style="font-size:.62rem;">no login</span>')
+        : '<span style="color:var(--t-muted);">No captain</span>';
       row.innerHTML = `
         <input type="text" placeholder="Id" value="${escapeHtml(t.id)}" data-team-key="id" />
         <input type="text" placeholder="Wards / description" value="${escapeHtml(t.wards || '')}" data-team-key="wards" />
+        <div class="t-team-captain-cell">
+          <span class="cap-lbl">${captainLabel}</span>
+          <div class="cap-actions">
+            <button class="t-btn sm" type="button" data-team-captain="1">${capAssigned ? 'Change' : 'Assign captain'}</button>
+            ${rosterCount ? '<button class="t-btn sm" type="button" data-team-roster="1">Roster (' + rosterCount + ')</button>' : ''}
+          </div>
+        </div>
         <button class="t-btn danger sm" data-team-remove="1">Remove</button>
       `;
       const inputs = row.querySelectorAll('input');
       inputs[0].addEventListener('input', function () { t.id = this.value.trim() || t.id; t.name = t.id; });
       inputs[1].addEventListener('input', function () { t.wards = this.value; });
       row.querySelector('[data-team-remove]').addEventListener('click', function () {
-        draft.teams.splice(i, 1);
-        paintTeams(draft);
+        sport.teams.splice(i, 1);
+        paintTeamsInto(container, sport, draft);
       });
-      wrap.appendChild(row);
+      row.querySelector('[data-team-captain]').addEventListener('click', function () {
+        // Captain assignment writes directly to Firestore (not the draft) so
+        // it's immediate — but we need a saved tournament for that. If we're
+        // in the Create flow the tournament doesn't exist yet.
+        if (!draft.id) {
+          toast('Save the tournament first, then assign captains from the Manage view or the tournament page.', 'error');
+          return;
+        }
+        openCaptainPicker(draft.id, sport.id, t.id);
+      });
+      const rosterBtn = row.querySelector('[data-team-roster]');
+      if (rosterBtn) {
+        rosterBtn.addEventListener('click', function () {
+          if (!draft.id) { toast('Save the tournament first.', 'error'); return; }
+          openRoster(draft.id, sport.id, t.id);
+        });
+      }
+      container.appendChild(row);
     });
   }
 
@@ -847,7 +1172,11 @@
       return;
     }
     draft.sports = draft.sports || [];
-    draft.sports.push(sportTemplateForConfig(templateId));
+    // Seed the new sport's teams from any existing sport that already has a
+    // roster (Koinonia will typically want the same G1–G4 across sports).
+    const donor = (draft.sports || []).find(function (s) { return Array.isArray(s.teams) && s.teams.length; });
+    const seed = donor ? { teams: donor.teams } : { teams: DEFAULT_TEAMS };
+    draft.sports.push(sportTemplateForConfig(templateId, seed));
   }
 
   function addCustomSport(draft) {
@@ -862,10 +1191,13 @@
       toast('A sport with this id already exists', 'error');
       return;
     }
+    const donor = (draft.sports || []).find(function (s) { return Array.isArray(s.teams) && s.teams.length; });
     draft.sports.push({
       id: id, label: name, kind: kind, emoji: '🏅', color: '#64748b',
       date: '',
+      hasThirdPlace: true,
       categories: kind === 'racket' ? [...DEFAULT_CATEGORIES] : [],
+      teams: donor ? JSON.parse(JSON.stringify(donor.teams)) : JSON.parse(JSON.stringify(DEFAULT_TEAMS)),
       scoring: defaultScoring(kind)
     });
   }
@@ -880,7 +1212,21 @@
     }
     draft.sports.forEach(function (s, i) {
       if (s.hasThirdPlace === undefined) s.hasThirdPlace = true;
+      s.teams = s.teams || [];
       const card = el('div', { class: 't-config-sport' });
+      const teamsSectionHtml = draft.format === 'teams' ? `
+        <div>
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+            <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--t-muted);">Teams for this sport</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <button class="t-btn sm" data-act="add-team">➕ Add team</button>
+              ${draft.sports.length > 1 ? '<button class="t-btn sm" data-act="copy-from">📋 Copy from…</button>' : ''}
+              ${draft.sports.length > 1 && s.teams.length ? '<button class="t-btn sm" data-act="apply-all">📤 Apply to all sports</button>' : ''}
+            </div>
+          </div>
+          <div class="t-teams-editor" data-teams></div>
+        </div>
+      ` : '';
       card.innerHTML = `
         <div class="t-config-sport-head">
           <div class="label">${s.emoji || '🏅'} ${escapeHtml(s.label)}</div>
@@ -900,6 +1246,7 @@
               </div>
             ` : ''}
           </div>
+          ${teamsSectionHtml}
           <div>
             <label style="display:inline-flex;align-items:center;gap:8px;color:var(--t-fg);font-weight:600;font-size:.9rem;">
               <input type="checkbox" data-field="hasThirdPlace" ${s.hasThirdPlace !== false ? 'checked' : ''} />
@@ -929,6 +1276,38 @@
         s.hasThirdPlace = this.checked;
         paintSports(draft);
       });
+
+      // Per-sport teams editor (only in team format)
+      if (draft.format === 'teams') {
+        const teamsBox = card.querySelector('[data-teams]');
+        paintTeamsInto(teamsBox, s, draft);
+        card.querySelector('[data-act="add-team"]').addEventListener('click', function () {
+          const nextId = 'G' + ((s.teams || []).length + 1);
+          s.teams.push({ id: nextId, name: nextId, wards: '' });
+          paintTeamsInto(teamsBox, s, draft);
+        });
+        const copyBtn = card.querySelector('[data-act="copy-from"]');
+        if (copyBtn) copyBtn.addEventListener('click', function () {
+          const others = draft.sports.filter(function (o) { return o.id !== s.id && (o.teams || []).length; });
+          if (!others.length) return toast('No other sport has teams yet', 'error');
+          const labels = others.map(function (o, oi) { return (oi + 1) + ') ' + o.label + ' (' + o.teams.length + ' teams)'; }).join('\n');
+          const pick = prompt('Copy teams from which sport?\n' + labels, '1');
+          if (!pick) return;
+          const idx = Math.max(0, Math.min(others.length - 1, (parseInt(pick, 10) || 1) - 1));
+          s.teams = JSON.parse(JSON.stringify(others[idx].teams));
+          paintSports(draft);
+        });
+        const applyBtn = card.querySelector('[data-act="apply-all"]');
+        if (applyBtn) applyBtn.addEventListener('click', function () {
+          if (!confirm('Overwrite team rosters for ALL other sports in this tournament with the teams from ' + s.label + '?')) return;
+          draft.sports.forEach(function (o) {
+            if (o.id !== s.id) o.teams = JSON.parse(JSON.stringify(s.teams));
+          });
+          paintSports(draft);
+          toast('Teams applied to all sports');
+        });
+      }
+
       const stagesWrap = card.querySelector('[data-stages]');
       enabledStagesFor(s).forEach(function (st) {
         if (!s.scoring[st]) s.scoring[st] = defaultScoring(s.kind)[st];
@@ -975,14 +1354,49 @@
     draft.name = document.getElementById('tfName').value.trim();
     draft.archived = document.getElementById('tfArchived').checked;
     if (!draft.name) return toast('Tournament name is required', 'error');
-    if (draft.format === 'teams' && (!draft.teams || draft.teams.length < 2)) return toast('Add at least 2 teams', 'error');
     if (!draft.sports || !draft.sports.length) return toast('Add at least 1 sport', 'error');
+
+    if (draft.format === 'teams') {
+      // Every sport should have at least 2 teams before you can meaningfully
+      // run a round-robin. Warn but don't block: admins might want to save
+      // the shell first and come back to fill teams later.
+      const missing = draft.sports.filter(function (s) { return !s.teams || s.teams.length < 2; });
+      if (missing.length) {
+        const names = missing.map(function (s) { return s.label; }).join(', ');
+        if (!confirm(names + ' — this sport has fewer than 2 teams and won\'t allow match creation. Save anyway?')) return;
+      }
+    }
+
+    // Merge in live captain + roster fields so we don't clobber assignments
+    // that were made (via the direct-write captain/roster modals) after this
+    // Manage session was opened. The draft is a deep clone; live data may
+    // have moved on since.
+    const live = (mode === 'manage')
+      ? state.tournaments.find(function (x) { return x.id === draft.id; })
+      : null;
+    const mergedSports = (draft.sports || []).map(function (s) {
+      const liveSport = live ? (live.sports || []).find(function (x) { return x.id === s.id; }) : null;
+      const teams = (s.teams || []).map(function (tm) {
+        const liveTeam = liveSport ? (liveSport.teams || []).find(function (x) { return x.id === tm.id; }) : null;
+        if (!liveTeam) return tm;
+        return Object.assign({}, tm, {
+          captainUid:      liveTeam.captainUid      || tm.captainUid      || null,
+          captainName:     liveTeam.captainName     || tm.captainName     || null,
+          captainEmail:    liveTeam.captainEmail    || tm.captainEmail    || null,
+          captainFamilyId: liveTeam.captainFamilyId || tm.captainFamilyId || null,
+          roster: Array.isArray(liveTeam.roster) ? liveTeam.roster : (tm.roster || [])
+        });
+      });
+      return Object.assign({}, s, { teams: teams });
+    });
 
     const payload = {
       name: draft.name,
       format: draft.format,
-      teams: draft.format === 'teams' ? draft.teams : [],
-      sports: draft.sports,
+      // teams field is now per-sport; we explicitly clear the legacy
+      // tournament-level field on every save.
+      teams: FieldValue.delete(),
+      sports: mergedSports,
       archived: !!draft.archived,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
@@ -994,6 +1408,8 @@
         toast('Saved');
         navigate({ view: 'tournament', tournamentId: t.id });
       } else {
+        // Can't use FieldValue.delete() on a new doc — drop the sentinel.
+        delete payload.teams;
         payload.createdAt = FieldValue.serverTimestamp();
         payload.createdBy = (state.user && state.user.email) || '';
         const ref = await db.collection('tournaments').add(payload);
@@ -1053,6 +1469,9 @@
     }
   }
   window.__tournament.seedKoinonia = seedKoinonia;
+  window.__tournament.openCaptainPicker = openCaptainPicker;
+  window.__tournament.openRoster = openRoster;
+  window.__tournament.openMemberPicker = openMemberPicker;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
@@ -1122,6 +1541,15 @@
       `}
 
       ${sport ? `
+        ${t.format === 'teams' ? `
+        <section class="t-section" id="tRostersSection">
+          <div class="t-section-header">
+            <h2 class="t-section-title">Team rosters <small>captains &amp; members</small></h2>
+          </div>
+          <div class="t-rosters-grid" id="tRostersGrid"></div>
+        </section>
+        ` : ''}
+
         <section class="t-section">
           <div class="t-section-header"><h2 class="t-section-title">Standings <small>league round-robin</small></h2></div>
           <div class="t-card"><div class="t-card-body" id="tStandings"><p class="t-empty">Loading…</p></div></div>
@@ -1160,11 +1588,57 @@
     `;
 
     if (sport) {
+      if (t.format === 'teams') renderRostersFor(t, sport);
       renderStandingsFor(t, sport.id);
       renderMatchListsFor(t, sport.id);
       renderPlayoffsFor(t, sport.id);
       if (state.isAdmin) renderCreateMatchForm(t, sport);
     }
+  }
+
+  function renderRostersFor(tournament, sport) {
+    const wrap = document.getElementById('tRostersGrid');
+    if (!wrap) return;
+    const teams = teamsFor(tournament, sport);
+    if (!teams.length) {
+      wrap.innerHTML = '<div class="t-empty">No teams configured for this sport yet.</div>';
+      return;
+    }
+    wrap.innerHTML = teams.map(function (team) {
+      const meta = teamMeta(tournament, sport.id, team.id);
+      const captainAssigned = team.captainUid || team.captainName || team.captainEmail;
+      const captainName = captainAssigned
+        ? escapeHtml(team.captainName || team.captainEmail || '(captain)')
+          + (team.captainUid
+              ? ''
+              : ' <span class="t-badge nologin" style="margin-left:4px;font-size:.65rem;">no login yet</span>')
+        : '<span style="color:var(--t-muted);">Not assigned</span>';
+      const rosterCount = Array.isArray(team.roster) ? team.roster.length : 0;
+      const isMine = isCaptainOf(team);
+      const canManage = state.isAdmin;
+      return `
+        <div class="t-roster-card" style="--team-color:${meta.color || '#3b82f6'}">
+          <div class="t-roster-card-head">
+            <div class="t-roster-team">
+              <span class="t-roster-dot" style="background:${meta.color || '#3b82f6'};"></span>
+              <div>
+                <div class="t-roster-name">${escapeHtml(team.name || team.id)}${isMine ? ' <span class="t-badge you">Your team</span>' : ''}</div>
+                <div class="t-roster-sub">${escapeHtml(team.wards || '')}</div>
+              </div>
+            </div>
+            ${canManage ? `<button class="t-btn sm" onclick="window.__tournament.openCaptainPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">${captainAssigned ? 'Change captain' : 'Assign captain'}</button>` : ''}
+          </div>
+          <div class="t-roster-card-body">
+            <div class="t-roster-line"><span class="lbl">Captain</span><span class="val">${captainName}</span></div>
+            <div class="t-roster-line"><span class="lbl">Members</span><span class="val"><b>${rosterCount}</b></span></div>
+          </div>
+          <div class="t-roster-card-foot">
+            <button class="t-btn sm" onclick="window.__tournament.openRoster('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">View roster</button>
+            ${isCaptainOf(team) || state.isAdmin ? `<button class="t-btn sm primary" onclick="window.__tournament.openMemberPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">➕ Add member</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
   function renderStandingsFor(tournament, sportId) {
@@ -1182,7 +1656,7 @@
         </thead>
         <tbody>
           ${rows.map(function (r, i) {
-            const meta = teamMeta(tournament, r.id);
+            const meta = teamMeta(tournament, sportId, r.id);
             return `
               <tr class="rank-${i + 1}">
                 <td><span class="rank-badge">${i + 1}</span></td>
@@ -1279,8 +1753,8 @@
   function renderMatchHeadline(match, tournament) {
     const sport = getSportConfig(tournament, match.sport);
     const p = participantsOf(match, tournament);
-    const aMeta = teamMeta(tournament, p.a);
-    const bMeta = teamMeta(tournament, p.b);
+    const aMeta = teamMeta(tournament, match.sport, p.a);
+    const bMeta = teamMeta(tournament, match.sport, p.b);
     const s = matchScoreDisplay(match, tournament);
     const aWin = match.winner === 'A';
     const bWin = match.winner === 'B';
@@ -1362,8 +1836,8 @@
       <div class="t-match-details">
         <div class="t-periods">
           <div></div>
-          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, p.a))}</div>
-          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, p.b))}</div>
+          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, match.sport, p.a))}</div>
+          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, match.sport, p.b))}</div>
           ${rows}
           <div class="p-label p-total">Sets</div>
           <div class="p-score p-total">${a}</div>
@@ -1386,8 +1860,8 @@
       <div class="t-match-details">
         <div class="t-periods">
           <div></div>
-          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, p.a))}</div>
-          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, p.b))}</div>
+          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, match.sport, p.a))}</div>
+          <div class="p-header" style="text-align:center;">${escapeHtml(displayName(tournament, match.sport, p.b))}</div>
           ${rows}
           <div class="p-label p-total">Total</div>
           <div class="p-score p-total">${ta}</div>
@@ -1447,7 +1921,7 @@
       const sport = getSportConfig(tournament, match.sport);
       if (act === 'delete') {
         const p = participantsOf(match, tournament);
-        const label = displayName(tournament, p.a) + ' vs ' + displayName(tournament, p.b);
+        const label = displayName(tournament, match.sport, p.a) + ' vs ' + displayName(tournament, match.sport, p.b);
         const warn = match.status === 'completed'
           ? '\n\nThis match is COMPLETED. Deleting it will remove it from standings and cannot be undone.'
           : match.status === 'in_progress'
@@ -1499,17 +1973,31 @@
     const defaultDate = sport.date ? sport.date + 'T18:00' : '';
     let participantFields = '';
     if (tournament.format === 'teams') {
-      const opts = (tournament.teams || []).map(function (t) { return `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}${t.wards ? ' — ' + escapeHtml(t.wards) : ''}</option>`; }).join('');
-      participantFields = `
-        <div class="t-form-field">
-          <label>Team A</label>
-          <select class="t-select" id="tmA">${opts}</select>
-        </div>
-        <div class="t-form-field">
-          <label>Team B</label>
-          <select class="t-select" id="tmB">${opts}</select>
-        </div>
-      `;
+      const sportTeams = teamsFor(tournament, sport);
+      if (sportTeams.length < 2) {
+        participantFields = `
+          <div class="t-form-field" style="grid-column:1 / -1;">
+            <div class="t-empty" style="padding:16px;text-align:left;">
+              <b>${escapeHtml(sport.label)}</b> needs at least 2 teams before matches can be created.
+              <div style="margin-top:8px;">
+                <button type="button" class="t-btn primary sm" onclick="window.__tournament.navigate({view:'manage',tournamentId:'${tournament.id}'})">⚙️ Add teams in Manage tournament</button>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        const opts = sportTeams.map(function (t) { return `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}${t.wards ? ' — ' + escapeHtml(t.wards) : ''}</option>`; }).join('');
+        participantFields = `
+          <div class="t-form-field">
+            <label>Team A</label>
+            <select class="t-select" id="tmA">${opts}</select>
+          </div>
+          <div class="t-form-field">
+            <label>Team B</label>
+            <select class="t-select" id="tmB">${opts}</select>
+          </div>
+        `;
+      }
     } else {
       participantFields = `
         <div class="t-form-field">
@@ -1546,14 +2034,21 @@
         </div>
       </form>
     `;
-    if (tournament.format === 'teams' && (tournament.teams || []).length >= 2) {
-      document.getElementById('tmB').value = tournament.teams[1].id;
+    if (tournament.format === 'teams') {
+      const sportTeams = teamsFor(tournament, sport);
+      if (sportTeams.length >= 2 && document.getElementById('tmB')) {
+        document.getElementById('tmB').value = sportTeams[1].id;
+      }
     }
-    document.getElementById('tCreateMatchForm').addEventListener('submit', function (e) {
+    const form = document.getElementById('tCreateMatchForm');
+    if (form) form.addEventListener('submit', function (e) {
       e.preventDefault();
       const stage = document.getElementById('tmStage').value;
-      const a = document.getElementById('tmA').value.trim();
-      const b = document.getElementById('tmB').value.trim();
+      const aEl = document.getElementById('tmA');
+      const bEl = document.getElementById('tmB');
+      if (!aEl || !bEl) return toast('Add teams to this sport first', 'error');
+      const a = aEl.value.trim();
+      const b = bEl.value.trim();
       const when = document.getElementById('tmWhen').value;
       const venue = document.getElementById('tmVenue').value.trim();
       if (!a || !b) return toast('Both participants required', 'error');
@@ -1601,6 +2096,526 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // GENERIC MODAL HELPERS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Creates (or reuses) a persistent modal shell with the given DOM id, and
+  // returns { modal, body }. The shell owns its own close button.
+  function getOrCreateModal(id, title, opts) {
+    let modal = document.getElementById(id);
+    if (!modal) {
+      modal = el('div', { class: 't-modal', id: id });
+      modal.innerHTML = `
+        <div class="t-modal-content ${(opts && opts.wide) ? 'wide' : ''}">
+          <div class="t-modal-head">
+            <h3 data-title></h3>
+            <button class="t-modal-close" type="button" data-close>×</button>
+          </div>
+          <div class="t-modal-body" data-body></div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.querySelector('[data-close]').addEventListener('click', function () {
+        closeLiveModal(id);
+      });
+      modal.addEventListener('click', function (e) {
+        if (e.target === modal) closeLiveModal(id);
+      });
+    }
+    modal.querySelector('[data-title]').textContent = title;
+    return { modal: modal, body: modal.querySelector('[data-body]') };
+  }
+
+  function closeLiveModal(id) {
+    const modal = document.getElementById(id);
+    if (modal) modal.classList.remove('open');
+    openLiveModal = null;
+    openLiveModalContext = null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CAPTAIN PICKER (admin only) — search the users collection
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function openCaptainPicker(tournamentId, sportId, teamId) {
+    if (!canManageCaptains()) return;
+    openLiveModal = 'userPicker';
+    openLiveModalContext = { tournamentId, sportId, teamId, query: '' };
+    rerenderUserPicker();
+  }
+
+  function rerenderUserPicker() {
+    if (openLiveModal !== 'userPicker') return;
+    const ctx = openLiveModalContext || {};
+    const t = state.tournaments.find(function (x) { return x.id === ctx.tournamentId; });
+    const sport = t ? getSportConfig(t, ctx.sportId) : null;
+    const teams = sport ? (sport.teams || []) : [];
+    const team = teams.find(function (x) { return x.id === ctx.teamId; });
+    const teamLabel = team ? (team.name || team.id) : ctx.teamId;
+    const sportLabel = sport ? ((sport.emoji || '') + ' ' + sport.label) : ctx.sportId;
+
+    const { modal, body } = getOrCreateModal('tCaptainPicker', 'Assign captain — ' + sportLabel + ' · ' + teamLabel, { wide: false });
+    const currentCaptainRow = team && (team.captainUid || team.captainName || team.captainEmail)
+      ? `<div class="t-captain-current">
+           <div>
+             <div class="lbl">Current captain</div>
+             <div class="val">👤 ${escapeHtml(team.captainName || team.captainEmail || team.captainUid)}</div>
+             <div class="sub">
+               ${team.captainEmail ? escapeHtml(team.captainEmail) : ''}
+               ${team.captainEmail && team.captainFamilyId ? ' · ' : ''}
+               ${team.captainFamilyId ? 'FID ' + escapeHtml(team.captainFamilyId) : ''}
+             </div>
+             ${team.captainUid
+                ? '<div class="sub" style="color:var(--t-success);">✓ signed in — can manage roster</div>'
+                : '<div class="sub" style="color:var(--t-warning);">⚠ hasn\'t signed in yet — can\'t edit roster until they sign in with Google</div>'}
+           </div>
+           <button class="t-btn danger sm" data-remove-captain>Remove captain</button>
+         </div>`
+      : `<div class="t-captain-current empty">No captain assigned yet.</div>`;
+
+    const totalKnown = getKnownPeople().length;
+    const usersCount = state.users.length;
+    const rsvpCount = state.rsvpResponses.length;
+
+    // Explicit per-source status pills so it's obvious what's loaded and
+    // what's blocked. Turns silent failures into visible ones.
+    function pill(label, count, ready, err) {
+      let cls = 'loading', txt = 'loading…';
+      if (err) { cls = 'err'; txt = 'blocked (' + (err.code || 'error') + ')'; }
+      else if (ready) { cls = count > 0 ? 'ok' : 'warn'; txt = count + ' ' + (count === 1 ? 'record' : 'records'); }
+      return `<span class="t-diag-pill ${cls}"><b>${label}:</b> ${txt}</span>`;
+    }
+    const statusRow = `
+      <div class="t-diag-row">
+        ${pill('users collection', usersCount, state.ready.users, state.errors.users)}
+        ${pill('rsvpResponses', rsvpCount, state.ready.rsvp, state.errors.rsvp)}
+        ${state.errors.upsert ? '<span class="t-diag-pill err"><b>your profile write:</b> failed (' + escapeHtml(state.errors.upsert.code || 'error') + ')</span>' : ''}
+      </div>
+    `;
+
+    const rulesBlocks = [];
+    if (state.errors.users || (state.ready.users && usersCount === 0)) {
+      rulesBlocks.push({
+        title: '/users/{uid}',
+        why: state.errors.users
+          ? 'Read was blocked by Firestore rules.'
+          : 'Reads OK but the collection is empty — every sign-in should write a doc here.',
+        snippet: `match /users/{uid} {
+  allow read:          if request.auth != null;
+  allow create, update: if request.auth.uid == uid;
+  allow delete: if false;
+}`
+      });
+    }
+    if (state.errors.rsvp) {
+      rulesBlocks.push({
+        title: '/rsvpResponses/{doc}',
+        why: 'Read was blocked by Firestore rules — the app can\'t use RSVPs as a captain source until admins can read them.',
+        snippet: `match /rsvpResponses/{doc} {
+  allow read: if request.auth != null;
+  // keep your existing write rules
+}`
+      });
+    }
+    const rulesHint = rulesBlocks.length
+      ? `<div class="t-diag-hint">
+           <div style="font-weight:700;margin-bottom:6px;">⚠ Firestore rules need updating</div>
+           ${rulesBlocks.map(function (b) {
+             return `<div style="margin-top:8px;">
+               <div style="font-size:.82rem;">${escapeHtml(b.why)}</div>
+               <pre>${escapeHtml(b.snippet)}</pre>
+             </div>`;
+           }).join('')}
+         </div>`
+      : '';
+
+    body.innerHTML = `
+      ${currentCaptainRow}
+      ${statusRow}
+      ${rulesHint}
+      <div style="margin-top:14px;">
+        <label class="t-form-label" for="tCaptainSearch">Search people (first name, last name, email, or Family ID)</label>
+        <input id="tCaptainSearch" type="text" class="t-input" placeholder="Type a name or Family ID…" value="${escapeHtml(ctx.query || '')}" autocomplete="off" />
+        <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
+          <b>${totalKnown}</b> known people total.
+          A ✓ badge means the person has a Google sign-in and can manage the roster themselves.
+        </div>
+      </div>
+      <div class="t-user-results" id="tCaptainResults"></div>
+    `;
+
+    const input = body.querySelector('#tCaptainSearch');
+    const results = body.querySelector('#tCaptainResults');
+    const removeBtn = body.querySelector('[data-remove-captain]');
+    if (removeBtn) {
+      removeBtn.addEventListener('click', async function () {
+        await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, null);
+        closeLiveModal('tCaptainPicker');
+      });
+    }
+
+    // Keep the last rendered list around so index-based click handlers
+    // pick the right record even after re-rendering.
+    let lastList = [];
+
+    function paintResults() {
+      if (!state.ready.rsvp && !state.ready.users) {
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading people…</div>';
+        return;
+      }
+      lastList = searchPeople(input.value);
+      if (!lastList.length) {
+        const totalKnown = getKnownPeople().length;
+        if (totalKnown === 0) {
+          results.innerHTML = '<div style="padding:14px;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">No people loaded from any source. See the diagnostic panel above — it usually means Firestore rules need updating.</div>';
+        } else {
+          results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">No matches for "' + escapeHtml(input.value) + '". Try a different name or a Family ID.</div>';
+        }
+        return;
+      }
+      results.innerHTML = lastList.map(function (u, idx) {
+        const isCurrent = team && (
+          (team.captainUid && u.uid && u.uid === team.captainUid) ||
+          (team.captainEmail && u.email && u.email === team.captainEmail.toLowerCase())
+        );
+        const fullName = ((u.firstName || '') + ' ' + (u.lastName || '')).trim();
+        const meta = [
+          u.familyId ? 'FID ' + escapeHtml(u.familyId) : null,
+          u.email ? escapeHtml(u.email) : null
+        ].filter(Boolean).join(' · ');
+        const loginBadge = u.hasLogin
+          ? '<span class="t-badge login" title="This person has a Google sign-in">✓ has login</span>'
+          : '<span class="t-badge nologin" title="Assignable, but this person must sign in with Google once before they can edit the roster">no login yet</span>';
+        return `
+          <div class="t-user-row">
+            <div class="who">
+              ${u.photoURL ? '<img src="' + escapeHtml(u.photoURL) + '" alt="">' : '<span class="avatar-placeholder">👤</span>'}
+              <div>
+                <div class="name">${escapeHtml(fullName || u.email || '(unnamed)')} ${loginBadge}</div>
+                <div class="email">${meta || '<i style="color:var(--t-muted-2);">no contact info</i>'}</div>
+              </div>
+            </div>
+            ${isCurrent
+              ? '<span class="t-badge">Current captain</span>'
+              : '<button class="t-btn sm primary" data-pick="' + idx + '">Assign</button>'}
+          </div>
+        `;
+      }).join('');
+      results.querySelectorAll('[data-pick]').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          const idx = parseInt(btn.getAttribute('data-pick'), 10);
+          const person = lastList[idx];
+          if (!person) return;
+          if (!person.hasLogin) {
+            const fullName = ((person.firstName || '') + ' ' + (person.lastName || '')).trim();
+            if (!confirm(fullName + ' hasn\'t signed in with Google yet, so they can\'t edit their team\'s roster until they do. Assign anyway?')) return;
+          }
+          await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, person);
+          closeLiveModal('tCaptainPicker');
+        });
+      });
+    }
+
+    input.addEventListener('input', function () {
+      ctx.query = input.value;
+      paintResults();
+    });
+    paintResults();
+    modal.classList.add('open');
+    setTimeout(function () { input.focus(); }, 30);
+  }
+
+  async function setTeamCaptain(tournamentId, sportId, teamId, person) {
+    if (!canManageCaptains()) { toast('Only admins can change captains', 'error'); return; }
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const sports = (t.sports || []).map(function (s) {
+      if (s.id !== sportId) return s;
+      const teams = (s.teams || []).map(function (tm) {
+        if (tm.id !== teamId) return tm;
+        if (!person) {
+          return Object.assign({}, tm, {
+            captainUid: null, captainName: null, captainEmail: null, captainFamilyId: null
+          });
+        }
+        const fullName = ((person.firstName || '') + ' ' + (person.lastName || '')).trim()
+          || person.displayName || person.email || '';
+        return Object.assign({}, tm, {
+          // uid may be empty when picking someone who's only ever RSVP'd
+          // without signing in — that's fine, they can be matched by email
+          // once they authenticate for the first time.
+          captainUid:      person.uid   || null,
+          captainName:     fullName     || null,
+          captainEmail:    (person.email || '').toLowerCase() || null,
+          captainFamilyId: person.familyId ? String(person.familyId) : null
+        });
+      });
+      return Object.assign({}, s, { teams: teams });
+    });
+    try {
+      await db.collection('tournaments').doc(tournamentId).update({
+        sports: sports,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      toast(person ? 'Captain assigned' : 'Captain removed', 'success');
+    } catch (err) {
+      console.error(err);
+      toast('Failed to update captain: ' + (err.message || err.code), 'error');
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // ROSTER VIEWER / EDITOR
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function openRoster(tournamentId, sportId, teamId) {
+    openLiveModal = 'roster';
+    openLiveModalContext = { tournamentId, sportId, teamId };
+    rerenderRoster();
+  }
+
+  function rerenderRoster() {
+    if (openLiveModal !== 'roster') return;
+    const ctx = openLiveModalContext || {};
+    const t = state.tournaments.find(function (x) { return x.id === ctx.tournamentId; });
+    const sport = t ? getSportConfig(t, ctx.sportId) : null;
+    const teams = sport ? (sport.teams || []) : [];
+    const team = teams.find(function (x) { return x.id === ctx.teamId; });
+    if (!t || !sport || !team) { closeLiveModal('tRoster'); return; }
+
+    const canEdit = canEditRoster(team);
+    const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
+    roster.sort(function (a, b) {
+      return ((a.firstName || '') + (a.lastName || '')).localeCompare((b.firstName || '') + (b.lastName || ''));
+    });
+
+    const title = (sport.emoji || '🏅') + ' ' + (sport.label || sport.id) + ' — ' + (team.name || team.id) + ' roster';
+    const { modal, body } = getOrCreateModal('tRoster', title, { wide: true });
+
+    const captainAssigned = team.captainUid || team.captainName || team.captainEmail;
+    const captainLine = captainAssigned
+      ? '👤 Captain: <b>' + escapeHtml(team.captainName || team.captainEmail || '') + '</b>'
+        + (team.captainFamilyId ? ' <small style="color:var(--t-muted);">· FID ' + escapeHtml(team.captainFamilyId) + '</small>' : '')
+        + (team.captainUid ? '' : ' <span class="t-badge nologin">no login yet</span>')
+      : '<span style="color:var(--t-muted);">No captain assigned yet.</span>';
+
+    body.innerHTML = `
+      <div class="t-roster-head">
+        <div>${captainLine}</div>
+        <div class="t-roster-count">${roster.length} member${roster.length === 1 ? '' : 's'}</div>
+      </div>
+      ${canEdit ? `
+        <div class="t-roster-actions">
+          <button class="t-btn primary" data-add-member>➕ Add member from directory</button>
+          ${!state.membersLoaded ? '<span style="color:var(--t-muted);font-size:.85rem;">Loading parishioner directory…</span>' : ''}
+        </div>
+      ` : `
+        <div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">
+          You can view this roster but only the team captain (or an admin) can edit it.
+        </div>
+      `}
+      <div class="t-roster-list">
+        ${roster.length === 0
+          ? '<div class="t-empty-note">No members added yet.</div>'
+          : roster.map(function (r, i) {
+              const nm = ((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.name || '(unnamed)';
+              return `
+                <div class="t-roster-row">
+                  <div class="who">
+                    <div class="name">${escapeHtml(nm)}</div>
+                    <div class="meta">Family: ${escapeHtml(r.familyName || '—')} · FID ${escapeHtml(r.familyId || '—')}${r.memberId ? ' · MID ' + escapeHtml(r.memberId) : ''}</div>
+                    ${r.addedByName ? '<div class="sub">Added by ' + escapeHtml(r.addedByName) + '</div>' : ''}
+                  </div>
+                  ${canEdit ? '<button class="t-btn danger sm" data-remove="' + i + '">Remove</button>' : ''}
+                </div>
+              `;
+            }).join('')}
+      </div>
+    `;
+
+    const addBtn = body.querySelector('[data-add-member]');
+    if (addBtn) {
+      addBtn.addEventListener('click', function () {
+        openMemberPicker(ctx.tournamentId, ctx.sportId, ctx.teamId);
+      });
+    }
+    body.querySelectorAll('[data-remove]').forEach(function (btn) {
+      btn.addEventListener('click', async function () {
+        const i = parseInt(btn.getAttribute('data-remove'), 10);
+        if (!confirm('Remove this member from the roster?')) return;
+        await removeRosterMember(ctx.tournamentId, ctx.sportId, ctx.teamId, i);
+      });
+    });
+
+    modal.classList.add('open');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MEMBER PICKER (captain/admin) — search members.csv
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function openMemberPicker(tournamentId, sportId, teamId) {
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const team = sport ? (sport.teams || []).find(function (x) { return x.id === teamId; }) : null;
+    if (!team || !canEditRoster(team)) {
+      toast('Only the team captain or an admin can edit this roster', 'error');
+      return;
+    }
+    openLiveModal = 'memberPicker';
+    openLiveModalContext = { tournamentId, sportId, teamId, query: '' };
+    rerenderMemberPicker();
+  }
+
+  function rerenderMemberPicker() {
+    if (openLiveModal !== 'memberPicker') return;
+    const ctx = openLiveModalContext || {};
+    const t = state.tournaments.find(function (x) { return x.id === ctx.tournamentId; });
+    const sport = t ? getSportConfig(t, ctx.sportId) : null;
+    const team = sport ? (sport.teams || []).find(function (x) { return x.id === ctx.teamId; }) : null;
+    if (!team) { closeLiveModal('tMemberPicker'); return; }
+
+    const { modal, body } = getOrCreateModal(
+      'tMemberPicker',
+      'Add member — ' + (sport.label || sport.id) + ' · ' + (team.name || team.id),
+      { wide: true }
+    );
+
+    const existingKeys = new Set((team.roster || []).map(function (r) {
+      return r.memberId ? ('M:' + r.memberId) : ('N:' + (r.firstName + '|' + r.lastName + '|' + r.familyId).toLowerCase());
+    }));
+
+    body.innerHTML = `
+      <div>
+        <label class="t-form-label" for="tMemberSearch">Search parishioner directory (name or Family ID)</label>
+        <input id="tMemberSearch" type="text" class="t-input" placeholder="e.g. Joseph, or 16" value="${escapeHtml(ctx.query || '')}" autocomplete="off" />
+        <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
+          ${state.membersLoaded ? state.members.length + ' members in the directory' : 'Loading directory…'}
+        </div>
+      </div>
+      <div class="t-member-results" id="tMemberResults"></div>
+    `;
+
+    const input = body.querySelector('#tMemberSearch');
+    const results = body.querySelector('#tMemberResults');
+
+    function paintResults() {
+      if (!state.membersLoaded) {
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading members.csv…</div>';
+        return;
+      }
+      const list = searchMembers(input.value);
+      if (!list.length) {
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">No matches. Try a different name or a Family ID.</div>';
+        return;
+      }
+      results.innerHTML = list.map(function (m, idx) {
+        const key = m.memberId ? ('M:' + m.memberId) : ('N:' + (m.firstName + '|' + m.lastName + '|' + m.familyId).toLowerCase());
+        const already = existingKeys.has(key);
+        return `
+          <div class="t-member-row">
+            <div>
+              <div class="name">${escapeHtml((m.firstName + ' ' + m.lastName).trim())}</div>
+              <div class="meta">Family: ${escapeHtml(m.familyName || '—')} · FID ${escapeHtml(m.familyId || '—')}${m.memberId ? ' · MID ' + escapeHtml(m.memberId) : ''}</div>
+            </div>
+            ${already
+              ? '<span class="t-badge">Already on roster</span>'
+              : '<button class="t-btn sm primary" data-add="' + idx + '">Add</button>'}
+          </div>
+        `;
+      }).join('');
+      results.querySelectorAll('[data-add]').forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          const idx = parseInt(btn.getAttribute('data-add'), 10);
+          const m = list[idx];
+          if (!m) return;
+          await addRosterMember(ctx.tournamentId, ctx.sportId, ctx.teamId, m);
+          // Refresh the picker so this member now shows "Already on roster"
+          rerenderMemberPicker();
+        });
+      });
+    }
+
+    input.addEventListener('input', function () {
+      ctx.query = input.value;
+      paintResults();
+    });
+    paintResults();
+    modal.classList.add('open');
+    setTimeout(function () { input.focus(); }, 30);
+  }
+
+  async function addRosterMember(tournamentId, sportId, teamId, member) {
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const sport = getSportConfig(t, sportId);
+    if (!sport) return;
+    const team = (sport.teams || []).find(function (x) { return x.id === teamId; });
+    if (!team) return;
+    if (!canEditRoster(team)) {
+      toast('Only the team captain or an admin can edit this roster', 'error');
+      return;
+    }
+    const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
+    const newEntry = {
+      memberId: member.memberId || '',
+      familyId: member.familyId || '',
+      firstName: member.firstName || '',
+      lastName: member.lastName || '',
+      familyName: member.familyName || '',
+      addedByUid: currentUid() || '',
+      addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
+      // Use an ISO string rather than serverTimestamp — Firestore does not
+      // allow FieldValue sentinels inside nested arrays.
+      addedAt: new Date().toISOString()
+    };
+    roster.push(newEntry);
+    await writeTeamPatch(t, sportId, teamId, { roster: roster });
+    toast('Added ' + (member.firstName + ' ' + member.lastName).trim(), 'success');
+  }
+
+  async function removeRosterMember(tournamentId, sportId, teamId, index) {
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const sport = getSportConfig(t, sportId);
+    if (!sport) return;
+    const team = (sport.teams || []).find(function (x) { return x.id === teamId; });
+    if (!team) return;
+    if (!canEditRoster(team)) {
+      toast('Only the team captain or an admin can edit this roster', 'error');
+      return;
+    }
+    const roster = (team.roster || []).slice();
+    roster.splice(index, 1);
+    await writeTeamPatch(t, sportId, teamId, { roster: roster });
+    toast('Member removed', 'success');
+  }
+
+  // Because Firestore requires overwriting the whole `sports` array to modify
+  // a nested field, this helper rebuilds the array with a shallow patch to
+  // the target team.
+  async function writeTeamPatch(tournament, sportId, teamId, patch) {
+    const sports = (tournament.sports || []).map(function (s) {
+      if (s.id !== sportId) return s;
+      const teams = (s.teams || []).map(function (tm) {
+        if (tm.id !== teamId) return tm;
+        return Object.assign({}, tm, patch);
+      });
+      return Object.assign({}, s, { teams: teams });
+    });
+    try {
+      await db.collection('tournaments').doc(tournament.id).update({
+        sports: sports,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+    } catch (err) {
+      console.error(err);
+      toast('Save failed: ' + (err.message || err.code || 'unknown'), 'error');
+      throw err;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // SCORER MODAL
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1629,7 +2644,7 @@
     const modal = getScorerModal();
     const p = participantsOf(match, tournament);
     modal.querySelector('#tScorerTitle').textContent =
-      (sport.emoji || '🏅') + ' ' + displayName(tournament, p.a) + ' vs ' + displayName(tournament, p.b) + ' — ' + STAGE_LABEL[match.stage];
+      (sport.emoji || '🏅') + ' ' + displayName(tournament, match.sport, p.a) + ' vs ' + displayName(tournament, match.sport, p.b) + ' — ' + STAGE_LABEL[match.stage];
     const body = modal.querySelector('#tScorerBody');
     body.innerHTML = '';
     if (sport.kind === 'racket') body.appendChild(buildRacketScorer(match, tournament, sport));
@@ -1640,10 +2655,10 @@
 
   function buildRacketScorer(match, tournament, sport) {
     const cfg = getStageScoring(tournament, match.sport, match.stage) || {};
-    const aName = displayName(tournament, participantsOf(match, tournament).a);
-    const bName = displayName(tournament, participantsOf(match, tournament).b);
-    const aColor = teamMeta(tournament, participantsOf(match, tournament).a).color;
-    const bColor = teamMeta(tournament, participantsOf(match, tournament).b).color;
+    const aName = displayName(tournament, match.sport, participantsOf(match, tournament).a);
+    const bName = displayName(tournament, match.sport, participantsOf(match, tournament).b);
+    const aColor = teamMeta(tournament, match.sport, participantsOf(match, tournament).a).color;
+    const bColor = teamMeta(tournament, match.sport, participantsOf(match, tournament).b).color;
     const cats = (sport.categories && sport.categories.length) ? sport.categories : DEFAULT_CATEGORIES;
     const games = (match.games && match.games.length) ? match.games.map(function (g) { return Object.assign({}, g, { sets: (g.sets || []).map(function (s) { return Object.assign({}, s); }) }); })
                 : cats.map(function (c) { return { category: c, playersA: '', playersB: '', sets: [{ a: 0, b: 0 }], status: 'pending', winner: null }; });
@@ -1762,10 +2777,10 @@
   function buildVolleyballScorer(match, tournament, sport) {
     const cfg = getStageScoring(tournament, match.sport, match.stage) || {};
     const p = participantsOf(match, tournament);
-    const aName = displayName(tournament, p.a);
-    const bName = displayName(tournament, p.b);
-    const aColor = teamMeta(tournament, p.a).color;
-    const bColor = teamMeta(tournament, p.b).color;
+    const aName = displayName(tournament, match.sport, p.a);
+    const bName = displayName(tournament, match.sport, p.b);
+    const aColor = teamMeta(tournament, match.sport, p.a).color;
+    const bColor = teamMeta(tournament, match.sport, p.b).color;
     const bestOf = cfg.bestOf || 3;
     const sets = (match.sets && match.sets.length) ? match.sets.map(function (s) { return Object.assign({}, s); }) : [{ a: 0, b: 0 }];
 
@@ -1853,10 +2868,10 @@
   function buildBasketballScorer(match, tournament, sport) {
     const cfg = getStageScoring(tournament, match.sport, match.stage) || {};
     const p = participantsOf(match, tournament);
-    const aName = displayName(tournament, p.a);
-    const bName = displayName(tournament, p.b);
-    const aColor = teamMeta(tournament, p.a).color;
-    const bColor = teamMeta(tournament, p.b).color;
+    const aName = displayName(tournament, match.sport, p.a);
+    const bName = displayName(tournament, match.sport, p.b);
+    const aColor = teamMeta(tournament, match.sport, p.a).color;
+    const bColor = teamMeta(tournament, match.sport, p.b).color;
     const totalQuarters = cfg.quarters || 4;
     const quarters = (match.quarters && match.quarters.length) ? match.quarters.map(function (q) { return Object.assign({}, q); }) : [{ a: 0, b: 0 }];
 
@@ -1973,11 +2988,82 @@
       snap.forEach(function (doc) { state.tournaments.push(Object.assign({ id: doc.id }, doc.data())); });
       state.ready.tournaments = true;
       render();
+      // Refresh any live modals whose contents depend on the tournament doc.
+      if (openLiveModal === 'roster') rerenderRoster();
+      if (openLiveModal === 'memberPicker') rerenderMemberPicker();
+      if (openLiveModal === 'userPicker') rerenderUserPicker();
     }, function (err) {
       console.error('tournaments error:', err);
       state.ready.tournaments = true;
       toast('Unable to load tournaments — check Firestore rules', 'error');
       render();
+    });
+  }
+
+  function subscribeRsvpResponses() {
+    if (state.unsubRsvp) return;
+    state.unsubRsvp = db.collection('rsvpResponses').onSnapshot(function (snap) {
+      state.rsvpResponses = [];
+      snap.forEach(function (doc) {
+        const d = doc.data() || {};
+        state.rsvpResponses.push({
+          uid: d.uid || '',
+          email: d.email || '',
+          firstName: d.firstName || '',
+          lastName: d.lastName || '',
+          familyId: d.familyId != null ? String(d.familyId) : ''
+        });
+      });
+      state.ready.rsvp = true;
+      state.errors.rsvp = null;
+      console.log('[tournament] rsvpResponses:', state.rsvpResponses.length, 'docs');
+      if (openLiveModal === 'userPicker') rerenderUserPicker();
+    }, function (err) {
+      state.errors.rsvp = err;
+      state.ready.rsvp = true;
+      console.error('[tournament] rsvpResponses read FAILED — check Firestore rules for /rsvpResponses:', err);
+      if (openLiveModal === 'userPicker') rerenderUserPicker();
+    });
+  }
+
+  function unsubscribeUserData() {
+    if (state.unsubUsers) { state.unsubUsers(); state.unsubUsers = null; }
+    if (state.unsubRsvp)  { state.unsubRsvp();  state.unsubRsvp  = null; }
+    state.users = [];
+    state.rsvpResponses = [];
+    state.ready.users = false;
+    state.ready.rsvp  = false;
+  }
+
+  function subscribeUsers() {
+    if (state.unsubUsers) return;
+    state.unsubUsers = db.collection('users').onSnapshot(function (snap) {
+      state.users = [];
+      snap.forEach(function (doc) {
+        const d = doc.data() || {};
+        state.users.push({
+          uid: doc.id,
+          email: d.email || '',
+          displayName: d.displayName || '',
+          firstName: d.firstName || '',
+          lastName: d.lastName || '',
+          firstNameLower: (d.firstNameLower || d.firstName || '').toLowerCase(),
+          lastNameLower: (d.lastNameLower || d.lastName || '').toLowerCase(),
+          photoURL: d.photoURL || ''
+        });
+      });
+      state.users.sort(function (a, b) {
+        return (a.firstName + a.lastName).localeCompare(b.firstName + b.lastName);
+      });
+      state.ready.users = true;
+      state.errors.users = null;
+      console.log('[tournament] users collection:', state.users.length, 'profiles');
+      if (openLiveModal === 'userPicker') rerenderUserPicker();
+    }, function (err) {
+      state.errors.users = err;
+      state.ready.users = true;
+      console.error('[tournament] users read FAILED — Firestore rules likely block reading /users:', err);
+      if (openLiveModal === 'userPicker') rerenderUserPicker();
     });
   }
 
@@ -2011,11 +3097,21 @@
     const parsed = parseUrl();
     renderTopbar();
 
-    // Gate the entire tournament section behind admin sign-in for now.
-    // Everyone else sees a sign-in prompt (or an access-denied message if
-    // they signed in with a non-admin account).
-    if (!state.isAdmin) {
+    // Gate the tournament section behind sign-in. Anyone signed in can view;
+    // admins and captains get extra controls. Non-signed-in visitors see a
+    // sign-in prompt.
+    if (!state.user) {
       renderAccessGate();
+      return;
+    }
+    // Non-admin, non-captain users hitting an admin-only URL get bounced to
+    // the tournament view (or the list if no tournament is selected).
+    if (parsed.view === 'create' && !state.isAdmin) {
+      navigate({ view: 'list' }, { replace: true });
+      return;
+    }
+    if (parsed.view === 'manage' && !state.isAdmin) {
+      navigate({ view: 'tournament', tournamentId: parsed.tournamentId }, { replace: true });
       return;
     }
 
@@ -2036,38 +3132,23 @@
   }
 
   function renderAccessGate() {
-    document.title = 'Church Tournament — Admin only';
+    document.title = 'Church Tournament — Sign in';
     const container = document.getElementById('tContent');
-    // While auth is still initializing (page just loaded, no user yet, but
-    // Firebase may still restore a persisted session) show a short loading
-    // state instead of the "access denied" copy.
     const authInitialized = state.user !== null || sessionInitialized;
     container.innerHTML = `
-      <section class="t-hero" style="--hero-a:#1e293b;--hero-b:#334155;">
+      <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
         <div>
-          <h1>🔒 Tournament — Admin only</h1>
-          <p>The tournament section is currently restricted to match admins while we set it up. Public viewing will be enabled soon.</p>
+          <h1>🏆 Church Tournament</h1>
+          <p>Sign in with your Google account to see live scores, standings, and (if you're a team captain) manage your team roster.</p>
         </div>
         <div class="t-emoji">🔒</div>
       </section>
       <section class="t-section">
         <div class="t-auth-gate">
-          ${!state.user
-            ? `
-              <h3>Sign in required</h3>
-              <p>Sign in with an admin Google account to continue.</p>
-              <button class="t-btn primary lg" onclick="window.__tournament.signIn()">🔐 Sign in with Google</button>
-              ${!authInitialized ? '<p style="color:var(--t-muted);margin-top:12px;font-size:.85rem;">Checking your existing sign-in…</p>' : ''}
-            `
-            : `
-              <h3>Access denied</h3>
-              <p>You're signed in as <b>${escapeHtml(state.user.email || '')}</b>, but that account isn't on the tournament admin list.</p>
-              <p style="color:var(--t-muted);font-size:.9rem;margin-top:8px;">Ask an existing admin to add your email, or sign out and sign in with a different account.</p>
-              <div style="margin-top:16px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-                <button class="t-btn" onclick="window.__tournament.signOut()">Sign out</button>
-                <a href="index.html" class="t-btn">← Back to SMASH</a>
-              </div>
-            `}
+          <h3>Sign in required</h3>
+          <p>Signing in registers you as a portal user so admins can assign you as a team captain.</p>
+          <button class="t-btn primary lg" onclick="window.__tournament.signIn()">🔐 Sign in with Google</button>
+          ${!authInitialized ? '<p style="color:var(--t-muted);margin-top:12px;font-size:.85rem;">Checking your existing sign-in…</p>' : ''}
         </div>
       </section>
     `;
@@ -2080,10 +3161,27 @@
   function init() {
     render();
     subscribeTournaments();
+    loadMembersCsv();
     auth.onAuthStateChanged(function (user) {
       state.user = user;
       state.isAdmin = user ? isAdminEmail(user.email) : false;
       sessionInitialized = true;
+      if (user) {
+        // Persist this sign-in into users/{uid} (fire-and-forget). This is
+        // how the users collection grows to contain everyone who has ever
+        // signed into any part of the site.
+        upsertUserProfile(user);
+        // Only start people-list subscriptions after auth is settled, so the
+        // read carries an authenticated token. Starting before onAuthStateChanged
+        // fires can hit rules that require `request.auth != null` and result
+        // in an empty snapshot that never recovers.
+        subscribeUsers();
+        subscribeRsvpResponses();
+      } else {
+        // Sign-out — drop the people-list subscriptions. The Firestore docs
+        // remain untouched; only the local cached view is cleared.
+        unsubscribeUserData();
+      }
       render();
     });
   }
