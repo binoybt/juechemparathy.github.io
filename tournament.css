@@ -663,6 +663,26 @@ body.tournament {
 .t-badge.you { background: #dcfce7; color: #166534; margin-left: 6px; }
 .t-badge.login { background: #dcfce7; color: #166534; margin-left: 6px; }
 .t-badge.nologin { background: #fef3c7; color: #92400e; margin-left: 6px; }
+.t-badge.locked { background: #fee2e2; color: #991b1b; margin-left: 6px; }
+.t-badge.unlocked { background: #e0f2fe; color: #075985; margin-left: 6px; }
+
+.t-roster-card.is-locked { background: #fafafa; }
+.t-roster-hidden {
+  margin-top: 8px; padding: 10px 12px;
+  background: #f8fafc; border: 1px dashed var(--t-border);
+  border-radius: 8px; color: var(--t-muted);
+  font-size: .82rem; font-style: italic;
+}
+.t-lock-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 10px 0; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid;
+}
+.t-lock-banner.locked   { background: #fef2f2; border-color: #fecaca; color: #7f1d1d; }
+.t-lock-banner.unlocked { background: #eff6ff; border-color: #bfdbfe; color: #1e3a8a; }
+.t-btn.warn {
+  background: #fef3c7; color: #78350f; border-color: #fcd34d;
+}
 
 /* ── Roster modal contents ── */
 .t-roster-head {
