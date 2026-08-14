@@ -267,14 +267,8 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=7"></script>
+<script src="firebase-config.js?v=9"></script>
 <script>
-const ADMIN_EMAILS = [
-    "jue.george@gmail.com",
-    "binoybt@gmail.com",
-    "geojins@gmail.com",
-    "b.ajaymathews@gmail.com"
-];
 
 const params = new URLSearchParams(window.location.search);
 const eventId = params.get('id');
@@ -334,21 +328,27 @@ function signIn() {
     });
 }
 
-auth.onAuthStateChanged(function(user) {
+SmashAuth.onChange(function(s) {
     const gate = document.getElementById('authGate');
     const content = document.getElementById('mainContent');
     const denied = document.getElementById('accessDenied');
 
-    if (user && ADMIN_EMAILS.includes(user.email)) {
-        gate.style.display = 'none';
-        content.style.display = '';
-        loadData();
-    } else if (user) {
-        denied.style.display = '';
-    } else {
+    if (!s.user) {
         gate.style.display = '';
         content.style.display = 'none';
         denied.style.display = 'none';
+        return;
+    }
+    if (s.loading) return;
+    if (s.isAdmin) {
+        gate.style.display = 'none';
+        content.style.display = '';
+        denied.style.display = 'none';
+        loadData();
+    } else {
+        gate.style.display = '';
+        content.style.display = 'none';
+        denied.style.display = '';
     }
 });
 
