@@ -375,8 +375,43 @@
     return false;
   }
 
+  function isRosterLocked(team) { return !!(team && team.locked); }
+
+  // Only admins can toggle the lock. Once locked, no captain can edit.
+  function canLockRoster()      { return state.isAdmin; }
+
+  // Edit permissions: admin any time; captain only when unlocked.
   function canEditRoster(team) {
-    return state.isAdmin || isCaptainOf(team);
+    if (state.isAdmin) return true;
+    if (isRosterLocked(team)) return false;
+    return isCaptainOf(team);
+  }
+
+  // View permissions:
+  //   admin           → always
+  //   captain of team → always (even before lock)
+  //   any signed-in   → only when roster is locked AND the tournament has
+  //                     opted in via revealLockedRosters
+  function canViewRoster(tournament, team) {
+    if (!state.user) return false;
+    if (state.isAdmin) return true;
+    if (isCaptainOf(team)) return true;
+    if (isRosterLocked(team) && tournament && tournament.revealLockedRosters) return true;
+    return false;
+  }
+
+  // Human-friendly explainer for why the current user can't view the roster.
+  // Used in the "Roster hidden" placeholder on the team card.
+  function whyCantView(tournament, team) {
+    if (!state.user) return 'Sign in to view rosters.';
+    const cap = team && (team.captainName || team.captainEmail);
+    if (isRosterLocked(team) && !tournament.revealLockedRosters) {
+      return 'Locked. Only ' + (cap ? 'Captain ' + cap : 'the team captain') + ' or an admin can view.';
+    }
+    if (!isRosterLocked(team)) {
+      return 'Not yet published. Only ' + (cap ? 'Captain ' + cap : 'the team captain') + ' or an admin can view until the roster is locked.';
+    }
+    return 'Only the team captain or an admin can view.';
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1058,9 +1093,12 @@
                 </select>
               </div>
             </div>
-            <div id="tfArchivedWrap" style="margin-top:12px;">
+            <div id="tfArchivedWrap" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
               <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;">
                 <input type="checkbox" id="tfArchived" ${draft.archived ? 'checked' : ''}/> Archive this tournament (hides from active list)
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="When enabled, any signed-in user can view rosters that have been locked. Unlocked rosters remain visible only to the team captain and admins.">
+                <input type="checkbox" id="tfRevealLocked" ${draft.revealLockedRosters ? 'checked' : ''}/> Reveal locked rosters to everyone signed in
               </label>
             </div>
           </div>
@@ -1353,6 +1391,7 @@
     if (!draft) return;
     draft.name = document.getElementById('tfName').value.trim();
     draft.archived = document.getElementById('tfArchived').checked;
+    draft.revealLockedRosters = document.getElementById('tfRevealLocked').checked;
     if (!draft.name) return toast('Tournament name is required', 'error');
     if (!draft.sports || !draft.sports.length) return toast('Add at least 1 sport', 'error');
 
@@ -1384,6 +1423,9 @@
           captainName:     liveTeam.captainName     || tm.captainName     || null,
           captainEmail:    liveTeam.captainEmail    || tm.captainEmail    || null,
           captainFamilyId: liveTeam.captainFamilyId || tm.captainFamilyId || null,
+          locked:   typeof liveTeam.locked   === 'boolean' ? liveTeam.locked   : !!tm.locked,
+          lockedAt: liveTeam.lockedAt || tm.lockedAt || null,
+          lockedBy: liveTeam.lockedBy || tm.lockedBy || null,
           roster: Array.isArray(liveTeam.roster) ? liveTeam.roster : (tm.roster || [])
         });
       });
@@ -1398,6 +1440,7 @@
       teams: FieldValue.delete(),
       sports: mergedSports,
       archived: !!draft.archived,
+      revealLockedRosters: !!draft.revealLockedRosters,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
     };
@@ -1472,6 +1515,7 @@
   window.__tournament.openCaptainPicker = openCaptainPicker;
   window.__tournament.openRoster = openRoster;
   window.__tournament.openMemberPicker = openMemberPicker;
+  window.__tournament.setRosterLock = setRosterLock;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
@@ -1616,13 +1660,19 @@
       const rosterCount = Array.isArray(team.roster) ? team.roster.length : 0;
       const isMine = isCaptainOf(team);
       const canManage = state.isAdmin;
+      const locked = isRosterLocked(team);
+      const canView = canViewRoster(tournament, team);
+      const canEdit = canEditRoster(team);
+      const lockChip = locked
+        ? '<span class="t-badge locked" title="Locked ' + escapeHtml(team.lockedAt || '') + '">🔒 Locked</span>'
+        : '<span class="t-badge unlocked">🔓 Open</span>';
       return `
-        <div class="t-roster-card" style="--team-color:${meta.color || '#3b82f6'}">
+        <div class="t-roster-card ${locked ? 'is-locked' : ''}" style="--team-color:${meta.color || '#3b82f6'}">
           <div class="t-roster-card-head">
             <div class="t-roster-team">
               <span class="t-roster-dot" style="background:${meta.color || '#3b82f6'};"></span>
               <div>
-                <div class="t-roster-name">${escapeHtml(team.name || team.id)}${isMine ? ' <span class="t-badge you">Your team</span>' : ''}</div>
+                <div class="t-roster-name">${escapeHtml(team.name || team.id)}${isMine ? ' <span class="t-badge you">Your team</span>' : ''} ${lockChip}</div>
                 <div class="t-roster-sub">${escapeHtml(team.wards || '')}</div>
               </div>
             </div>
@@ -1630,11 +1680,13 @@
           </div>
           <div class="t-roster-card-body">
             <div class="t-roster-line"><span class="lbl">Captain</span><span class="val">${captainName}</span></div>
-            <div class="t-roster-line"><span class="lbl">Members</span><span class="val"><b>${rosterCount}</b></span></div>
+            <div class="t-roster-line"><span class="lbl">Members</span><span class="val"><b>${canView ? rosterCount : '—'}</b></span></div>
+            ${!canView ? '<div class="t-roster-hidden">' + escapeHtml(whyCantView(tournament, team)) + '</div>' : ''}
           </div>
           <div class="t-roster-card-foot">
-            <button class="t-btn sm" onclick="window.__tournament.openRoster('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">View roster</button>
-            ${isCaptainOf(team) || state.isAdmin ? `<button class="t-btn sm primary" onclick="window.__tournament.openMemberPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">➕ Add member</button>` : ''}
+            ${canView ? `<button class="t-btn sm" onclick="window.__tournament.openRoster('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">View roster</button>` : ''}
+            ${canEdit ? `<button class="t-btn sm primary" onclick="window.__tournament.openMemberPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">➕ Add member</button>` : ''}
+            ${canManage ? `<button class="t-btn sm ${locked ? 'warn' : ''}" onclick="window.__tournament.setRosterLock('${tournament.id}','${sport.id}','${escapeHtml(team.id)}',${!locked})">${locked ? '🔓 Unlock' : '🔒 Lock roster'}</button>` : ''}
           </div>
         </div>
       `;
@@ -2177,21 +2229,28 @@
     const usersCount = state.users.length;
     const rsvpCount = state.rsvpResponses.length;
 
-    // Explicit per-source status pills so it's obvious what's loaded and
-    // what's blocked. Turns silent failures into visible ones.
+    // Diagnostic pills — only shown when something's actually wrong (an error
+    // occurred, or a source returned zero records). When everything is
+    // healthy the picker stays clean. This keeps the debug affordance for
+    // future rules issues without cluttering the normal UI.
     function pill(label, count, ready, err) {
-      let cls = 'loading', txt = 'loading…';
+      let cls, txt;
       if (err) { cls = 'err'; txt = 'blocked (' + (err.code || 'error') + ')'; }
-      else if (ready) { cls = count > 0 ? 'ok' : 'warn'; txt = count + ' ' + (count === 1 ? 'record' : 'records'); }
+      else if (!ready) { cls = 'loading'; txt = 'loading…'; }
+      else if (count === 0) { cls = 'warn'; txt = 'empty'; }
+      else return ''; // healthy — no pill
       return `<span class="t-diag-pill ${cls}"><b>${label}:</b> ${txt}</span>`;
     }
-    const statusRow = `
-      <div class="t-diag-row">
-        ${pill('users collection', usersCount, state.ready.users, state.errors.users)}
-        ${pill('rsvpResponses', rsvpCount, state.ready.rsvp, state.errors.rsvp)}
-        ${state.errors.upsert ? '<span class="t-diag-pill err"><b>your profile write:</b> failed (' + escapeHtml(state.errors.upsert.code || 'error') + ')</span>' : ''}
-      </div>
-    `;
+    const pills = [
+      pill('users collection', usersCount, state.ready.users, state.errors.users),
+      pill('rsvpResponses',   rsvpCount,   state.ready.rsvp,  state.errors.rsvp),
+      state.errors.upsert
+        ? '<span class="t-diag-pill err"><b>your profile write:</b> failed (' + escapeHtml(state.errors.upsert.code || 'error') + ')</span>'
+        : ''
+    ].filter(Boolean);
+    const statusRow = pills.length
+      ? '<div class="t-diag-row">' + pills.join('') + '</div>'
+      : '';
 
     const rulesBlocks = [];
     if (state.errors.users || (state.ready.users && usersCount === 0)) {
@@ -2325,6 +2384,27 @@
     setTimeout(function () { input.focus(); }, 30);
   }
 
+  async function setRosterLock(tournamentId, sportId, teamId, locked) {
+    if (!canLockRoster()) { toast('Only admins can lock or unlock rosters', 'error'); return; }
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const patch = locked
+      ? {
+          locked: true,
+          lockedAt: new Date().toISOString(),
+          lockedBy: (state.user && state.user.email) || ''
+        }
+      : {
+          locked: false,
+          lockedAt: null,
+          lockedBy: null
+        };
+    try {
+      await writeTeamPatch(t, sportId, teamId, patch);
+      toast(locked ? 'Roster locked' : 'Roster unlocked', 'success');
+    } catch (_) { /* writeTeamPatch already toasted the error */ }
+  }
+
   async function setTeamCaptain(tournamentId, sportId, teamId, person) {
     if (!canManageCaptains()) { toast('Only admins can change captains', 'error'); return; }
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
@@ -2357,9 +2437,17 @@
         sports: sports,
         updatedAt: FieldValue.serverTimestamp()
       });
+      // Patch local state immediately so the UI reflects the change without
+      // waiting for the onSnapshot round-trip (which is normally instant, but
+      // can lag briefly on slow connections). The snapshot will overwrite
+      // this with the authoritative server copy shortly after.
+      const idx = state.tournaments.findIndex(function (x) { return x.id === tournamentId; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { sports: sports });
+      console.log('[tournament] captain updated for', sportId, teamId, '→', person ? (person.email || person.firstName) : 'removed');
       toast(person ? 'Captain assigned' : 'Captain removed', 'success');
+      render();
     } catch (err) {
-      console.error(err);
+      console.error('[tournament] setTeamCaptain FAILED', err);
       toast('Failed to update captain: ' + (err.message || err.code), 'error');
     }
   }
@@ -2369,6 +2457,13 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function openRoster(tournamentId, sportId, teamId) {
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const team = sport ? (sport.teams || []).find(function (x) { return x.id === teamId; }) : null;
+    if (t && team && !canViewRoster(t, team)) {
+      toast(whyCantView(t, team), 'error');
+      return;
+    }
     openLiveModal = 'roster';
     openLiveModalContext = { tournamentId, sportId, teamId };
     rerenderRoster();
@@ -2383,7 +2478,17 @@
     const team = teams.find(function (x) { return x.id === ctx.teamId; });
     if (!t || !sport || !team) { closeLiveModal('tRoster'); return; }
 
-    const canEdit = canEditRoster(team);
+    // If the user lost view permission after opening (e.g. an admin unlocked
+    // and reveal is off), close the modal defensively.
+    if (!canViewRoster(t, team)) {
+      closeLiveModal('tRoster');
+      toast(whyCantView(t, team), 'error');
+      return;
+    }
+
+    const canEdit    = canEditRoster(team);
+    const canLock    = canLockRoster();
+    const locked     = isRosterLocked(team);
     const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
     roster.sort(function (a, b) {
       return ((a.firstName || '') + (a.lastName || '')).localeCompare((b.firstName || '') + (b.lastName || ''));
@@ -2399,21 +2504,41 @@
         + (team.captainUid ? '' : ' <span class="t-badge nologin">no login yet</span>')
       : '<span style="color:var(--t-muted);">No captain assigned yet.</span>';
 
+    // Lock state banner + admin lock/unlock control.
+    const lockBanner = locked
+      ? `<div class="t-lock-banner locked">
+           <div>
+             <b>🔒 Roster locked.</b>
+             ${team.lockedBy ? '<span style="color:var(--t-muted);font-size:.82rem;"> — by ' + escapeHtml(team.lockedBy) + '</span>' : ''}
+             <div style="font-size:.78rem;color:var(--t-muted);margin-top:2px;">No further edits allowed. ${t.revealLockedRosters ? 'Visible to everyone signed in.' : 'Still visible only to the captain and admins.'}</div>
+           </div>
+           ${canLock ? '<button class="t-btn sm" data-toggle-lock>🔓 Unlock</button>' : ''}
+         </div>`
+      : (canLock
+          ? `<div class="t-lock-banner unlocked">
+               <div>
+                 <b>🔓 Open.</b>
+                 <div style="font-size:.78rem;color:var(--t-muted);margin-top:2px;">Captain and admins can add or remove members. Lock when the roster is final.</div>
+               </div>
+               <button class="t-btn sm primary" data-toggle-lock>🔒 Lock roster</button>
+             </div>`
+          : '');
+
     body.innerHTML = `
       <div class="t-roster-head">
         <div>${captainLine}</div>
         <div class="t-roster-count">${roster.length} member${roster.length === 1 ? '' : 's'}</div>
       </div>
+      ${lockBanner}
       ${canEdit ? `
         <div class="t-roster-actions">
           <button class="t-btn primary" data-add-member>➕ Add member from directory</button>
           ${!state.membersLoaded ? '<span style="color:var(--t-muted);font-size:.85rem;">Loading parishioner directory…</span>' : ''}
         </div>
-      ` : `
-        <div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">
-          You can view this roster but only the team captain (or an admin) can edit it.
-        </div>
-      `}
+      ` : (locked
+        ? '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">This roster is locked. Only an admin can unlock it.</div>'
+        : '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">You can view this roster but only the team captain (or an admin) can edit it.</div>'
+      )}
       <div class="t-roster-list">
         ${roster.length === 0
           ? '<div class="t-empty-note">No members added yet.</div>'
@@ -2446,6 +2571,14 @@
         await removeRosterMember(ctx.tournamentId, ctx.sportId, ctx.teamId, i);
       });
     });
+    const lockBtn = body.querySelector('[data-toggle-lock]');
+    if (lockBtn) {
+      lockBtn.addEventListener('click', async function () {
+        const nextLocked = !locked;
+        if (nextLocked && !confirm('Lock this roster? Captain and members will no longer be able to add or remove people. Only an admin can unlock.')) return;
+        await setRosterLock(ctx.tournamentId, ctx.sportId, ctx.teamId, nextLocked);
+      });
+    }
 
     modal.classList.add('open');
   }
@@ -2454,12 +2587,29 @@
   // MEMBER PICKER (captain/admin) — search members.csv
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // Explains — for a specific team — why the current user is not allowed to
+  // edit the roster right now. Used by every edit entry point so admins and
+  // captains see the actual reason instead of a generic "denied" toast.
+  function whyCantEdit(team) {
+    if (state.isAdmin) return null; // admin always can
+    if (isRosterLocked(team)) {
+      return 'This roster is locked. Only an admin can unlock it.';
+    }
+    if (!isCaptainOf(team)) {
+      const cap = team && (team.captainName || team.captainEmail);
+      return cap
+        ? 'Only Captain ' + cap + ' or an admin can edit this team\'s roster.'
+        : 'Only the team captain or an admin can edit this roster.';
+    }
+    return null;
+  }
+
   function openMemberPicker(tournamentId, sportId, teamId) {
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     const sport = t ? getSportConfig(t, sportId) : null;
     const team = sport ? (sport.teams || []).find(function (x) { return x.id === teamId; }) : null;
     if (!team || !canEditRoster(team)) {
-      toast('Only the team captain or an admin can edit this roster', 'error');
+      toast(whyCantEdit(team) || 'You can\'t edit this roster.', 'error');
       return;
     }
     openLiveModal = 'memberPicker';
@@ -2553,7 +2703,7 @@
     const team = (sport.teams || []).find(function (x) { return x.id === teamId; });
     if (!team) return;
     if (!canEditRoster(team)) {
-      toast('Only the team captain or an admin can edit this roster', 'error');
+      toast(whyCantEdit(team) || 'You can\'t edit this roster.', 'error');
       return;
     }
     const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
@@ -2582,7 +2732,7 @@
     const team = (sport.teams || []).find(function (x) { return x.id === teamId; });
     if (!team) return;
     if (!canEditRoster(team)) {
-      toast('Only the team captain or an admin can edit this roster', 'error');
+      toast(whyCantEdit(team) || 'You can\'t edit this roster.', 'error');
       return;
     }
     const roster = (team.roster || []).slice();
@@ -2608,8 +2758,13 @@
         sports: sports,
         updatedAt: FieldValue.serverTimestamp()
       });
+      // Mirror the write into local state so the UI updates without waiting
+      // for the snapshot round-trip.
+      const idx = state.tournaments.findIndex(function (x) { return x.id === tournament.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { sports: sports });
+      render();
     } catch (err) {
-      console.error(err);
+      console.error('[tournament] writeTeamPatch FAILED', err);
       toast('Save failed: ' + (err.message || err.code || 'unknown'), 'error');
       throw err;
     }
