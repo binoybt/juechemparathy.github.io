@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
+    <meta name="theme-color" content="#3b82f6">
+    <title>SMASH Wishlist - Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f6f7fb; color: #1f2937; min-height: 100vh;
+        }
+
+        .topbar {
+            position: sticky; top: 0; z-index: 5;
+            display: grid; grid-template-columns: auto 1fr auto;
+            align-items: center; padding: 10px 14px;
+            background: #fff; border-bottom: 1px solid #e5e7eb; gap: 12px;
+        }
+        .brand { display: flex; align-items: center; gap: 8px; }
+        .title-icon { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; box-shadow: 0 6px 12px rgba(0,0,0,.15); }
+        .title-bar {
+            text-align: center; margin: 0; font-size: clamp(1.2rem,4vw,1.8rem);
+            letter-spacing: .08em; text-transform: uppercase;
+            background: linear-gradient(120deg,#ff8a00,#ff3d7f,#7b2ff7);
+            -webkit-background-clip: text; color: transparent;
+        }
+        .nav-links { display: flex; align-items: center; gap: 10px; }
+        .nav-btn {
+            padding: 8px 14px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 14px; color: #1f2937;
+            text-decoration: none; cursor: pointer; transition: all 0.2s;
+        }
+        .nav-btn:hover { background: #f9fafb; border-color: #3b82f6; }
+
+        .container { max-width: 900px; margin: 0 auto; padding: 20px 12px; }
+
+        /* Auth gate */
+        .auth-gate { text-align: center; padding: 60px 20px; }
+        .auth-gate h2 { margin-bottom: 16px; }
+        .auth-gate p { color: #6b7280; margin-bottom: 24px; }
+        .sign-in-btn {
+            padding: 12px 28px; border-radius: 10px; border: none;
+            background: #3b82f6; color: #fff; font-weight: 600; font-size: 1rem;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .sign-in-btn:hover { background: #2563eb; }
+        .access-denied { color: #ef4444; font-weight: 600; margin-top: 16px; }
+
+        /* Form */
+        .form-card {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 16px;
+            padding: 24px; margin-bottom: 24px;
+        }
+        .form-card h2 { font-size: 1.3rem; margin-bottom: 20px; color: #1e293b; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.full { grid-column: 1 / -1; }
+        .form-group label { font-weight: 600; font-size: 0.85rem; color: #374151; text-transform: uppercase; letter-spacing: 0.03em; }
+        .form-group input, .form-group textarea, .form-group select {
+            padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px;
+            font-size: 0.95rem; font-family: inherit; transition: border-color 0.2s;
+        }
+        .form-group input:focus, .form-group textarea:focus, .form-group select:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        .form-group textarea { resize: vertical; min-height: 70px; }
+        .checkbox-label { flex-direction: row !important; align-items: center; gap: 8px !important; }
+        .checkbox-label input { width: auto; }
+        .form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+        .btn {
+            padding: 10px 20px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s;
+        }
+        .btn:hover { background: #f9fafb; }
+        .btn.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        .btn.primary:hover { background: #2563eb; }
+        .btn.danger { background: #ef4444; color: #fff; border-color: #ef4444; }
+        .btn.danger:hover { background: #dc2626; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Items list */
+        .items-list h2 { font-size: 1.3rem; margin-bottom: 16px; color: #1e293b; }
+        .item-row {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+            padding: 16px; margin-bottom: 10px;
+        }
+        .item-row:hover { border-color: #3b82f6; }
+        .item-row-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+        .item-info { flex: 1; }
+        .item-info .name { font-weight: 700; font-size: 1rem; color: #1e293b; display: flex; align-items: center; gap: 8px; }
+        .item-info .amounts { color: #7c3aed; font-weight: 500; font-size: 0.9rem; margin-top: 4px; }
+        .item-info .notes { color: #6b7280; font-size: 0.85rem; margin-top: 4px; }
+        .item-actions { display: flex; gap: 6px; flex-shrink: 0; }
+        .icon-btn {
+            width: 36px; height: 36px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; cursor: pointer; font-size: 1rem; display: flex;
+            align-items: center; justify-content: center; transition: all 0.2s;
+        }
+        .icon-btn:hover { background: #f3f4f6; }
+        .icon-btn.delete:hover { background: #fef2f2; border-color: #fca5a5; }
+
+        .store-tag { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; color: #fff; text-transform: uppercase; }
+        .store-tag.amazon { background: #ff9900; }
+        .store-tag.walmart { background: #0071ce; }
+        .status-tag { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; }
+        .status-tag.open { background: #dbeafe; color: #1d4ed8; }
+        .status-tag.secured { background: #dcfce7; color: #166534; }
+        .ad-tag { font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #fef3c7; color: #92400e; }
+
+        .contributions-toggle {
+            margin-top: 10px; font-size: 0.82rem; color: #7c3aed; background: none;
+            border: none; cursor: pointer; font-weight: 600; padding: 0;
+        }
+        .contributions-toggle:hover { text-decoration: underline; }
+        .contributions-panel { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #f1f5f9; }
+        .contributions-panel.show { display: block; }
+        .contribution-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 10px; background: #fafbfd; border-radius: 8px; margin-bottom: 6px; font-size: 0.85rem;
+        }
+        .contribution-row .c-name { font-weight: 600; color: #1e293b; }
+        .contribution-row .c-amount { color: #059669; font-weight: 700; margin-left: 8px; }
+        .contribution-row .c-date { color: #94a3b8; font-size: 0.75rem; margin-left: 8px; }
+        .contribution-row .icon-btn { width: 28px; height: 28px; font-size: 0.85rem; }
+        .no-contributions { color: #94a3b8; font-style: italic; font-size: 0.85rem; }
+
+        .empty-state { text-align: center; padding: 30px; color: #6b7280; font-style: italic; }
+
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            padding: 12px 24px; border-radius: 10px; color: #fff; font-weight: 600;
+            z-index: 100; opacity: 0; transition: opacity 0.3s;
+        }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+
+        @media (max-width: 640px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .item-row-top { flex-direction: column; }
+            .item-actions { align-self: flex-end; }
+        }
+    </style>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="title-icon" />
+    </div>
+    <h1 class="title-bar">Wishlist Admin</h1>
+    <div class="nav-links">
+        <a href="wishlist.html" class="nav-btn">Wishlist</a>
+        <a href="index.html" class="nav-btn">Schedule</a>
+    </div>
+</header>
+
+<!-- Auth Gate -->
+<div id="authGate" class="auth-gate">
+    <h2>Admin Access Required</h2>
+    <p>Sign in with your Google account to manage the wishlist.</p>
+    <button class="sign-in-btn" onclick="signIn()">Sign in with Google</button>
+    <p id="accessDenied" class="access-denied" style="display:none;">Access denied. Only admins can manage the wishlist.</p>
+</div>
+
+<!-- Admin Content (hidden until authenticated) -->
+<main id="adminContent" class="container" style="display:none;">
+    <!-- Add/Edit Form -->
+    <div class="form-card">
+        <h2 id="formTitle">Add New Item</h2>
+        <form id="itemForm" onsubmit="handleSubmit(event)">
+            <div class="form-grid">
+                <div class="form-group full">
+                    <label for="itemName">Item Name *</label>
+                    <input type="text" id="itemName" required placeholder="e.g. Instant Pot Duo 8-qt" />
+                </div>
+                <div class="form-group">
+                    <label for="itemStore">Store</label>
+                    <select id="itemStore">
+                        <option value="amazon">Amazon</option>
+                        <option value="walmart">Walmart</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="itemGoal">Goal Amount ($) *</label>
+                    <input type="number" id="itemGoal" required min="1" step="0.01" placeholder="e.g. 150" />
+                </div>
+                <div class="form-group full">
+                    <label for="itemUrl">Product URL</label>
+                    <input type="url" id="itemUrl" placeholder="https://www.amazon.com/..." />
+                </div>
+                <div class="form-group full">
+                    <label for="itemImage">Image URL</label>
+                    <input type="url" id="itemImage" placeholder="https://..." />
+                </div>
+                <div class="form-group full">
+                    <label for="itemNotes">Notes</label>
+                    <textarea id="itemNotes" placeholder="e.g. Queen size, gray preferred"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="itemStatus">Status Override</label>
+                    <select id="itemStatus">
+                        <option value="open">Open</option>
+                        <option value="secured">Secured</option>
+                    </select>
+                </div>
+                <div class="form-group full checkbox-label">
+                    <input type="checkbox" id="itemAdEnabled" />
+                    <label for="itemAdEnabled" style="text-transform:none;letter-spacing:normal;">Feature as ad on schedule page</label>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" id="cancelBtn" style="display:none;" onclick="cancelEdit()">Cancel</button>
+                <button type="submit" class="btn primary" id="submitBtn">Add Item</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Existing Items -->
+    <div class="items-list">
+        <h2>All Wishlist Items</h2>
+        <div id="itemsList">
+            <p class="empty-state">Loading items...</p>
+        </div>
+    </div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<!--
+  Recommended Firestore security rules (console-side; not versioned in this repo —
+  add inside the top-level `match /databases/{database}/documents { ... }` block):
+
+  match /wishlistItems/{itemId} {
+    allow read: if true;
+
+    allow create, delete: if request.auth != null &&
+      request.auth.token.email in [
+        "jue.george@gmail.com", "binoybt@gmail.com",
+        "geojins@gmail.com", "b.ajaymathews@gmail.com"
+      ];
+
+    // Admin can change anything; anyone else may only touch raisedAmount/status/updatedAt
+    // (this is what the public contribution transaction updates)
+    allow update: if (
+      request.auth != null &&
+      request.auth.token.email in [
+        "jue.george@gmail.com", "binoybt@gmail.com",
+        "geojins@gmail.com", "b.ajaymathews@gmail.com"
+      ]
+    ) || (
+      request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['raisedAmount', 'status', 'updatedAt']) &&
+      request.resource.data.raisedAmount is number &&
+      request.resource.data.raisedAmount >= resource.data.raisedAmount
+    );
+
+    match /contributions/{contributionId} {
+      allow read: if true;
+      allow create: if request.resource.data.contributorName is string &&
+        request.resource.data.contributorName.size() > 0 &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount > 0;
+      allow update, delete: if request.auth != null &&
+        request.auth.token.email in [
+          "jue.george@gmail.com", "binoybt@gmail.com",
+          "geojins@gmail.com", "b.ajaymathews@gmail.com"
+        ];
+    }
+  }
+-->
+<script src="firebase-config.js?v=9"></script>
+<script>
+let currentUser = null;
+let editingId = null;
+const contributionUnsubscribers = {};
+
+function showToast(message, type = 'success') {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function signIn() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(err => {
+        console.error('Sign-in error:', err);
+        showToast('Sign-in failed. Please try again.', 'error');
+    });
+}
+
+SmashAuth.onChange(s => {
+    currentUser = s.user;
+    const gate = document.getElementById('authGate');
+    const content = document.getElementById('adminContent');
+    const denied = document.getElementById('accessDenied');
+
+    if (!s.user) {
+        gate.style.display = '';
+        content.style.display = 'none';
+        denied.style.display = 'none';
+        return;
+    }
+    if (s.loading) return;
+    if (s.isAdmin) {
+        gate.style.display = 'none';
+        content.style.display = '';
+        denied.style.display = 'none';
+        loadItems();
+    } else {
+        gate.style.display = '';
+        content.style.display = 'none';
+        denied.style.display = '';
+    }
+});
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function formatMoney(n) {
+    return (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function formatDate(ts) {
+    if (!ts || !ts.toDate) return '';
+    return ts.toDate().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function storeBadgeLabel(store) {
+    return store === 'walmart' ? 'Walmart' : 'Amazon';
+}
+
+function loadItems() {
+    db.collection('wishlistItems').orderBy('createdAt', 'asc').onSnapshot(snapshot => {
+        const list = document.getElementById('itemsList');
+        if (snapshot.empty) {
+            list.innerHTML = '<p class="empty-state">No wishlist items yet. Add one above!</p>';
+            return;
+        }
+
+        list.innerHTML = '';
+        snapshot.forEach(doc => {
+            const item = doc.data();
+            const goal = Number(item.goalAmount) || 0;
+            const raised = Number(item.raisedAmount) || 0;
+            const status = item.status || 'open';
+
+            const row = document.createElement('div');
+            row.className = 'item-row';
+            row.innerHTML = `
+                <div class="item-row-top">
+                    <div class="item-info">
+                        <div class="name">
+                            ${escapeHtml(item.name)}
+                            <span class="store-tag ${item.store === 'walmart' ? 'walmart' : 'amazon'}">${storeBadgeLabel(item.store)}</span>
+                            <span class="status-tag ${status}">${status === 'secured' ? 'Secured' : 'Open'}</span>
+                            ${item.adEnabled ? '<span class="ad-tag">📣 Ad</span>' : ''}
+                        </div>
+                        <div class="amounts">$${formatMoney(raised)} of $${formatMoney(goal)} raised</div>
+                        ${item.notes ? `<div class="notes">${escapeHtml(item.notes)}</div>` : ''}
+                    </div>
+                    <div class="item-actions">
+                        <button class="icon-btn" title="Edit" onclick="startEdit('${doc.id}')">✏️</button>
+                        <button class="icon-btn delete" title="Delete" onclick="deleteItem('${doc.id}', '${escapeHtml(item.name).replace(/'/g, "\\'")}')">🗑️</button>
+                    </div>
+                </div>
+                <button class="contributions-toggle" onclick="toggleContributions('${doc.id}')" id="ctoggle-${doc.id}">Show contributions</button>
+                <div class="contributions-panel" id="cpanel-${doc.id}"><p class="no-contributions">Loading...</p></div>
+            `;
+            list.appendChild(row);
+        });
+    }, err => {
+        console.error('Error loading items:', err);
+        document.getElementById('itemsList').innerHTML =
+            '<p class="empty-state">Error loading items. Please refresh.</p>';
+    });
+}
+
+function toggleContributions(itemId) {
+    const panel = document.getElementById(`cpanel-${itemId}`);
+    const toggle = document.getElementById(`ctoggle-${itemId}`);
+    const showing = panel.classList.toggle('show');
+    toggle.textContent = showing ? 'Hide contributions' : 'Show contributions';
+
+    if (showing && !contributionUnsubscribers[itemId]) {
+        contributionUnsubscribers[itemId] = db.collection('wishlistItems').doc(itemId)
+            .collection('contributions').orderBy('createdAt', 'desc')
+            .onSnapshot(snapshot => {
+                if (snapshot.empty) {
+                    panel.innerHTML = '<p class="no-contributions">No contributions yet.</p>';
+                    return;
+                }
+                panel.innerHTML = snapshot.docs.map(doc => {
+                    const c = doc.data();
+                    return `
+                    <div class="contribution-row">
+                        <span>
+                            <span class="c-name">${escapeHtml(c.contributorName)}</span>
+                            <span class="c-amount">$${formatMoney(c.amount)}</span>
+                            <span class="c-date">${formatDate(c.createdAt)}</span>
+                        </span>
+                        <button class="icon-btn delete" title="Delete contribution" onclick="deleteContribution('${itemId}', '${doc.id}', ${c.amount})">🗑️</button>
+                    </div>`;
+                }).join('');
+            }, err => console.error('Error loading contributions:', err));
+    }
+}
+
+async function deleteContribution(itemId, contributionId, amount) {
+    if (!confirm('Delete this contribution? This will reduce the raised total.')) return;
+
+    const itemRef = db.collection('wishlistItems').doc(itemId);
+    const contributionRef = itemRef.collection('contributions').doc(contributionId);
+
+    try {
+        await db.runTransaction(async tx => {
+            const itemDoc = await tx.get(itemRef);
+            if (!itemDoc.exists) throw new Error('Item no longer exists.');
+
+            const item = itemDoc.data();
+            const goal = Number(item.goalAmount) || 0;
+            const newRaised = Math.max(0, (Number(item.raisedAmount) || 0) - Number(amount));
+            const newStatus = goal > 0 && newRaised >= goal ? 'secured' : 'open';
+
+            tx.update(itemRef, {
+                raisedAmount: newRaised,
+                status: newStatus,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            tx.delete(contributionRef);
+        });
+        showToast('Contribution deleted.');
+    } catch (err) {
+        console.error('Delete contribution error:', err);
+        showToast(err.message || 'Failed to delete contribution.', 'error');
+    }
+}
+
+async function handleSubmit(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+
+    const data = {
+        name: document.getElementById('itemName').value.trim(),
+        store: document.getElementById('itemStore').value,
+        goalAmount: parseFloat(document.getElementById('itemGoal').value) || 0,
+        productUrl: document.getElementById('itemUrl').value.trim(),
+        imageUrl: document.getElementById('itemImage').value.trim(),
+        notes: document.getElementById('itemNotes').value.trim(),
+        status: document.getElementById('itemStatus').value,
+        adEnabled: document.getElementById('itemAdEnabled').checked,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try {
+        if (editingId) {
+            await db.collection('wishlistItems').doc(editingId).update(data);
+            showToast('Item updated!');
+            cancelEdit();
+        } else {
+            data.raisedAmount = 0;
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('wishlistItems').add(data);
+            showToast('Item added!');
+        }
+        document.getElementById('itemForm').reset();
+        document.getElementById('itemStore').value = 'amazon';
+        document.getElementById('itemStatus').value = 'open';
+        document.getElementById('itemAdEnabled').checked = false;
+    } catch (err) {
+        console.error('Save error:', err);
+        showToast('Failed to save item.', 'error');
+    }
+    btn.disabled = false;
+}
+
+async function startEdit(id) {
+    const doc = await db.collection('wishlistItems').doc(id).get();
+    if (!doc.exists) return showToast('Item not found.', 'error');
+
+    const item = doc.data();
+    editingId = id;
+    document.getElementById('itemName').value = item.name || '';
+    document.getElementById('itemStore').value = item.store || 'amazon';
+    document.getElementById('itemGoal').value = item.goalAmount || '';
+    document.getElementById('itemUrl').value = item.productUrl || '';
+    document.getElementById('itemImage').value = item.imageUrl || '';
+    document.getElementById('itemNotes').value = item.notes || '';
+    document.getElementById('itemStatus').value = item.status || 'open';
+    document.getElementById('itemAdEnabled').checked = !!item.adEnabled;
+
+    document.getElementById('formTitle').textContent = 'Edit Item';
+    document.getElementById('submitBtn').textContent = 'Update Item';
+    document.getElementById('cancelBtn').style.display = '';
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function cancelEdit() {
+    editingId = null;
+    document.getElementById('itemForm').reset();
+    document.getElementById('itemStore').value = 'amazon';
+    document.getElementById('itemStatus').value = 'open';
+    document.getElementById('itemAdEnabled').checked = false;
+    document.getElementById('formTitle').textContent = 'Add New Item';
+    document.getElementById('submitBtn').textContent = 'Add Item';
+    document.getElementById('cancelBtn').style.display = 'none';
+}
+
+async function deleteItem(id, name) {
+    if (!confirm(`Delete "${name}"? This cannot be undone and will remove all its contributions history.`)) return;
+    try {
+        const contributionsSnap = await db.collection('wishlistItems').doc(id).collection('contributions').get();
+        const batch = db.batch();
+        contributionsSnap.forEach(doc => batch.delete(doc.ref));
+        batch.delete(db.collection('wishlistItems').doc(id));
+        await batch.commit();
+
+        showToast('Item deleted.');
+        if (editingId === id) cancelEdit();
+    } catch (err) {
+        console.error('Delete error:', err);
+        showToast('Failed to delete item.', 'error');
+    }
+}
+</script>
+</body>
+</html>

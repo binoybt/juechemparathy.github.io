@@ -6,203 +6,220 @@
     <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
     <meta name="theme-color" content="#3b82f6">
     <title>SMASH Patrons - Thank You</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap">
     <style>
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+            background: #f1f5f9;
             min-height: 100vh;
-            padding: 20px;
+            -webkit-font-smoothing: antialiased;
         }
-        
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-        }
-        
-        .header {
+
+        /* Hero header */
+        .page-hero {
+            background: #0f172a;
+            padding: 48px 20px 60px;
             text-align: center;
-            margin-bottom: 40px;
+            position: relative;
+            overflow: hidden;
         }
-        
+        .page-hero::before {
+            content: '';
+            position: absolute; inset: 0;
+            background: radial-gradient(ellipse at 30% 50%, rgba(59,130,246,.25) 0%, transparent 60%),
+                        radial-gradient(ellipse at 70% 30%, rgba(124,58,237,.2) 0%, transparent 60%);
+        }
+        .page-hero > * { position: relative; }
+
         .logo {
-            width: 80px;
-            height: 80px;
-            border-radius: 20px;
+            width: 76px; height: 76px; border-radius: 20px;
             margin-bottom: 20px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            box-shadow: 0 8px 24px rgba(0,0,0,.35), 0 0 0 2px rgba(255,255,255,.12);
         }
-        
+
         h1 {
-            font-size: 2.5rem;
-            background: linear-gradient(120deg, #ff8a00, #ff3d7f, #7b2ff7);
+            font-family: 'Barlow Condensed', system-ui, sans-serif;
+            font-size: clamp(2.2rem, 6vw, 3.5rem);
+            font-weight: 800;
+            letter-spacing: .08em;
+            text-transform: uppercase;
+            background: linear-gradient(120deg, #fbbf24, #f87171, #a78bfa);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            margin-bottom: 20px;
-            font-weight: 800;
-            letter-spacing: 0.02em;
+            margin-bottom: 16px;
         }
-        
+
         .gratitude {
-            font-size: 1.1rem;
-            color: #4b5563;
-            line-height: 1.8;
-            margin-bottom: 30px;
-            text-align: center;
-            max-width: 700px;
-            margin-left: auto;
-            margin-right: auto;
+            font-size: 1rem;
+            color: rgba(255,255,255,.7);
+            line-height: 1.75;
+            max-width: 620px;
+            margin: 0 auto;
         }
-        
+
+        /* Content */
+        .container {
+            max-width: 1020px;
+            margin: -24px auto 0;
+            padding: 0 16px 48px;
+        }
+
+        .content-card {
+            background: #fff;
+            border-radius: 20px;
+            padding: 36px 32px;
+            box-shadow: 0 4px 24px rgba(0,0,0,.08), 0 1px 4px rgba(0,0,0,.04);
+            border: 1px solid #e2e8f0;
+        }
+
         .quote {
             font-style: italic;
             color: #7c3aed;
-            font-size: 1.2rem;
+            font-size: 1.05rem;
             text-align: center;
-            margin: 30px 0;
-            padding: 20px;
-            background: #f3e8ff;
-            border-radius: 12px;
+            margin-bottom: 32px;
+            padding: 20px 24px;
+            background: #f5f3ff;
+            border-radius: 14px;
             border-left: 4px solid #7c3aed;
+            line-height: 1.6;
         }
-        
+
         .patrons-title {
-            font-size: 1.8rem;
-            color: #1f2937;
-            text-align: center;
-            margin: 40px 0 30px;
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1.6rem;
             font-weight: 700;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: #0f172a;
+            text-align: center;
+            margin-bottom: 24px;
         }
-        
+
         .patrons-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 16px;
+            grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+            gap: 12px;
             margin-bottom: 40px;
         }
-        
+
         .patron-card {
-            background: linear-gradient(135deg, #667eea15, #764ba215);
-            padding: 20px;
-            border-radius: 12px;
-            border: 2px solid #e5e7eb;
+            background: #fafbfd;
+            padding: 16px 18px;
+            border-radius: 14px;
+            border: 1.5px solid #e2e8f0;
             display: flex;
             align-items: center;
             gap: 12px;
-            transition: all 0.3s ease;
+            transition: all 0.25s ease;
         }
-        
+
         .patron-card:hover {
-            border-color: #7c3aed;
+            border-color: #a78bfa;
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(124, 58, 237, 0.2);
+            box-shadow: 0 4px 16px rgba(124, 58, 237, 0.15);
+            background: #fff;
         }
-        
+
         .patron-icon {
-            font-size: 2rem;
+            font-size: 1.6rem;
             flex-shrink: 0;
+            width: 40px; height: 40px;
+            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, #ede9fe, #dbeafe);
+            border-radius: 10px;
         }
-        
+
         .patron-name {
-            font-size: 1.05rem;
-            color: #1f2937;
+            font-size: 0.95rem;
+            color: #0f172a;
             font-weight: 600;
         }
-        
+
         .footer {
             text-align: center;
-            margin-top: 50px;
-            padding-top: 30px;
-            border-top: 2px solid #e5e7eb;
+            margin-top: 32px;
+            padding-top: 28px;
+            border-top: 1px solid #e2e8f0;
         }
-        
+
         .footer-message {
-            font-size: 1.1rem;
-            color: #6b7280;
+            font-size: 0.95rem;
+            color: #64748b;
             margin-bottom: 20px;
+            line-height: 1.6;
         }
-        
+
         .back-btn {
-            display: inline-block;
-            padding: 12px 30px;
-            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 12px 28px;
+            background: #0f172a;
             color: white;
             text-decoration: none;
-            border-radius: 10px;
+            border-radius: 12px;
             font-weight: 600;
-            font-size: 1rem;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            font-size: 0.95rem;
+            font-family: inherit;
+            transition: all 0.25s ease;
+            box-shadow: 0 4px 14px rgba(15,23,42,.25);
         }
-        
+
         .back-btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+            box-shadow: 0 6px 20px rgba(15,23,42,.35);
         }
-        
-        .heart {
-            color: #ef4444;
-            animation: heartbeat 1.5s ease-in-out infinite;
-        }
-        
+
+        .heart { color: #ef4444; animation: heartbeat 1.5s ease-in-out infinite; display: inline-block; }
+
         @keyframes heartbeat {
             0%, 100% { transform: scale(1); }
-            10%, 30% { transform: scale(1.1); }
-            20%, 40% { transform: scale(1); }
+            15%, 35% { transform: scale(1.15); }
+            25%, 45% { transform: scale(1); }
         }
-        
+
         @media (max-width: 768px) {
-            .container {
-                padding: 30px 20px;
-            }
-            
-            h1 {
-                font-size: 2rem;
-            }
-            
-            .patrons-grid {
-                grid-template-columns: 1fr;
-            }
+            .content-card { padding: 24px 18px; }
+            .patrons-grid { grid-template-columns: 1fr; }
+            h1 { font-size: 2.2rem; }
         }
     </style>
 </head>
 <body>
+    <div class="page-hero">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="logo" />
+        <h1>Our Patrons</h1>
+        <p class="gratitude">
+            SMASH is more than just a group—it's a community built on dedication, passion, and generosity.
+            We are deeply grateful to these incredible individuals who have contributed their time,
+            resources, and energy to make SMASH a vibrant and welcoming space for all.
+        </p>
+    </div>
+
     <div class="container">
-        <div class="header">
-            <img src="icons/smash-logo.png" alt="SMASH Logo" class="logo" />
-            <h1>Our Patrons</h1>
-            <p class="gratitude">
-                SMASH is more than just a group—it's a community built on dedication, passion, and generosity. 
-                We are deeply grateful to these incredible individuals who have contributed their time, 
-                resources, and energy to make SMASH a vibrant and welcoming space for all.
-            </p>
-        </div>
-        
-        <div class="quote">
-            "Alone we can do so little; together we can do so much."
-            <div style="margin-top: 10px; font-size: 0.9rem; color: #5b21b6;">— Helen Keller</div>
-        </div>
-        
-        <h2 class="patrons-title">With Heartfelt Thanks To</h2>
-        
-        <div class="patrons-grid" id="patronsGrid"></div>
-        
-        <div class="footer">
-            <div class="footer-message">
-                Your contributions have helped create lasting memories and fostered a spirit of 
-                community, health, and friendship. Thank you for being the heart <span class="heart">❤️</span> of SMASH!
+        <div class="content-card">
+            <div class="quote">
+                "Alone we can do so little; together we can do so much."
+                <div style="margin-top: 10px; font-size: 0.88rem; color: #7c3aed; font-style: normal; font-weight: 600;">— Helen Keller</div>
             </div>
-            <a href="index.html" class="back-btn">← Back to Schedule</a>
+
+            <h2 class="patrons-title">With Heartfelt Thanks To</h2>
+
+            <div class="patrons-grid" id="patronsGrid"></div>
+
+            <div class="footer">
+                <div class="footer-message">
+                    Your contributions have helped create lasting memories and fostered a spirit of
+                    community, health, and friendship. Thank you for being the heart <span class="heart">❤️</span> of SMASH!
+                </div>
+                <a href="index.html" class="back-btn">← Back to Schedule</a>
+            </div>
         </div>
     </div>
     

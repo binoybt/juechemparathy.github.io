@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="SMASH">
+    <link rel="apple-touch-icon" href="icons/smash-logo.png">
+    <title>SMASH RSVP</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+            background: #f1f5f9; color: #0f172a; min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .topbar {
+            position: sticky; top: 0; z-index: 100;
+            display: grid; grid-template-columns: auto 1fr auto;
+            align-items: center; padding: 10px 18px;
+            background: #0f172a;
+            border-bottom: 1px solid rgba(255,255,255,.07);
+            gap: 14px; box-shadow: 0 2px 20px rgba(0,0,0,.3);
+        }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .title-icon {
+            width: 44px; height: 44px; border-radius: 12px; object-fit: cover;
+            box-shadow: 0 4px 12px rgba(0,0,0,.35), 0 0 0 1.5px rgba(255,255,255,.12);
+        }
+        .title-bar {
+            text-align: center; margin: 0;
+            font-family: 'Barlow Condensed', system-ui, sans-serif;
+            font-size: clamp(1.4rem,4vw,2rem);
+            font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+            background: linear-gradient(120deg, #fbbf24, #f87171, #a78bfa);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+        .nav-links { display: flex; align-items: center; gap: 10px; }
+        .auth-btn {
+            padding: 7px 14px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,.15);
+            background: rgba(255,255,255,.08);
+            font-weight: 600; font-size: 13px; color: #e2e8f0;
+            cursor: pointer; transition: all 0.2s; white-space: nowrap;
+            font-family: inherit;
+        }
+        .auth-btn:hover { background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.3); }
+        .auth-btn.signin { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        .auth-btn.signin:hover { background: #2563eb; }
+        .user-name {
+            font-size: 13px; font-weight: 600; color: #cbd5e1;
+            max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+
+        .container { max-width: 600px; margin: 0 auto; padding: 20px 14px; }
+
+        /* Event header */
+        .event-header {
+            background: #0f172a;
+            border-radius: 20px; padding: 28px 24px; color: #fff; margin-bottom: 24px;
+            text-align: center; position: relative; overflow: hidden;
+        }
+        .event-header::before {
+            content: '';
+            position: absolute; inset: 0;
+            background: linear-gradient(135deg, rgba(59,130,246,.3), rgba(124,58,237,.3));
+        }
+        .event-header > * { position: relative; }
+        .event-header h2 {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1.8rem; font-weight: 700; letter-spacing: .06em; margin-bottom: 8px;
+        }
+        .event-header .event-desc { opacity: 0.85; font-size: 0.92rem; margin-bottom: 14px; line-height: 1.5; }
+        .event-header .event-time {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: rgba(255,255,255,.15); backdrop-filter: blur(4px);
+            padding: 6px 16px; border-radius: 999px;
+            font-weight: 600; font-size: 0.88rem; border: 1px solid rgba(255,255,255,.2);
+        }
+
+        /* Form card */
+        .form-card {
+            background: #fff; border: 1px solid #e2e8f0; border-radius: 20px;
+            padding: 24px; margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 16px rgba(0,0,0,.04);
+        }
+        .form-card h3 {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1.3rem; font-weight: 700; letter-spacing: .04em;
+            margin-bottom: 20px; color: #0f172a;
+        }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-group { display: flex; flex-direction: column; gap: 5px; }
+        .form-group.full { grid-column: 1 / -1; }
+        .form-group label {
+            font-weight: 700; font-size: 0.75rem; color: #64748b;
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .form-group input, .form-group select {
+            padding: 10px 14px; border: 1.5px solid #e2e8f0; border-radius: 10px;
+            font-size: 0.9rem; font-family: inherit; color: #0f172a;
+            transition: border-color 0.2s, box-shadow 0.2s; background: #fafbfd;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none; border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59,130,246,.15);
+            background: #fff;
+        }
+        .form-group input:disabled, .form-group select:disabled {
+            background: #f1f5f9; color: #94a3b8; cursor: not-allowed;
+        }
+        .form-group small { font-size: 0.78rem; color: #64748b; }
+        .form-actions { margin-top: 20px; display: flex; gap: 10px; }
+        .submit-btn {
+            flex: 1; padding: 13px; border-radius: 12px; border: none;
+            background: #0f172a;
+            color: #fff; font-weight: 700; font-size: 1rem; cursor: pointer;
+            font-family: inherit;
+            transition: all 0.25s ease;
+            box-shadow: 0 4px 14px rgba(15,23,42,.25);
+        }
+        .submit-btn:hover { background: #1e293b; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(15,23,42,.3); }
+        .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        /* Banners */
+        .error-banner {
+            background: #fef2f2; border: 1px solid #fca5a5; border-radius: 14px;
+            padding: 16px 20px; margin-bottom: 24px; display: none;
+        }
+        .error-banner .error-title { font-weight: 700; color: #991b1b; font-size: 0.95rem; margin-bottom: 4px; }
+        .error-banner .error-msg { color: #b91c1c; font-size: 0.88rem; line-height: 1.5; }
+
+        .info-banner {
+            background: #fefce8; border: 1px solid #fde68a; border-radius: 14px;
+            padding: 16px 20px; margin-bottom: 24px; display: none;
+        }
+        .info-banner .info-title { font-weight: 700; color: #92400e; font-size: 0.95rem; margin-bottom: 4px; }
+        .info-banner .info-msg { color: #a16207; font-size: 0.88rem; line-height: 1.5; }
+
+        /* States */
+        .state-message { text-align: center; padding: 60px 20px; }
+        .state-message h2 {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 2rem; font-weight: 700; margin-bottom: 12px;
+        }
+        .state-message p { color: #64748b; margin-bottom: 20px; }
+        .state-message.error h2 { color: #ef4444; }
+        .state-message.success h2 { color: #10b981; }
+        .success-icon { font-size: 3rem; margin-bottom: 12px; }
+
+        .footer { text-align: center; margin-top: 40px; padding: 20px; }
+        .back-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 11px 26px; background: #0f172a;
+            color: white; text-decoration: none; border-radius: 12px;
+            font-weight: 600; font-family: inherit; transition: all 0.25s ease;
+            box-shadow: 0 4px 14px rgba(15,23,42,.25); border: none; cursor: pointer;
+        }
+        .back-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(15,23,42,.35); }
+
+        /* My RSVPs */
+        .my-rsvps {
+            background: #fff; border: 1px solid #e2e8f0; border-radius: 20px;
+            padding: 24px; margin-bottom: 24px; display: none;
+            box-shadow: 0 1px 3px rgba(0,0,0,.06);
+        }
+        .my-rsvps h3 {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1.2rem; font-weight: 700; letter-spacing: .04em;
+            color: #0f172a; margin-bottom: 16px;
+        }
+        .rsvp-card {
+            background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 14px;
+            padding: 14px; margin-bottom: 10px; transition: box-shadow .2s;
+        }
+        .rsvp-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+        .rsvp-card .rsvp-event-name { font-weight: 700; color: #0f172a; font-size: 0.95rem; }
+        .rsvp-card .rsvp-event-time { color: #7c3aed; font-size: 0.83rem; font-weight: 600; margin-top: 3px; }
+        .rsvp-card .rsvp-details { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 10px; font-size: 0.83rem; color: #475569; }
+        .rsvp-card .rsvp-details span { display: flex; align-items: center; gap: 4px; }
+        .rsvp-card .rsvp-details strong { color: #0f172a; }
+        .rsvp-card .rsvp-edit-link {
+            display: inline-block; margin-top: 8px; color: #3b82f6;
+            font-weight: 600; font-size: 0.83rem; text-decoration: none; cursor: pointer;
+        }
+        .rsvp-card .rsvp-edit-link:hover { text-decoration: underline; }
+        .rsvp-card.current { border-color: #93c5fd; background: #eff6ff; }
+        .editing-badge {
+            display: inline-block; padding: 2px 9px; border-radius: 999px;
+            background: #dbeafe; color: #1d4ed8; font-size: 0.72rem; font-weight: 700; margin-left: 8px;
+        }
+
+        @media (max-width: 640px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .user-name { display: none; }
+        }
+    </style>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <a class="brand" href="https://syrosmash.com">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="title-icon" />
+    </a>
+    <h1 class="title-bar">SMASH RSVP</h1>
+    <div class="nav-links">
+        <div id="authArea">
+            <button class="auth-btn signin" onclick="signIn()">Sign In</button>
+        </div>
+    </div>
+</header>
+
+<!-- Loading State -->
+<div id="loadingState" class="state-message">
+    <h2>Loading event...</h2>
+</div>
+
+<!-- Error State -->
+<div id="errorState" class="state-message error" style="display:none;">
+    <h2>Event Not Found</h2>
+    <p>This event link is invalid or the event no longer exists.</p>
+</div>
+
+<!-- Success State -->
+<div id="successState" class="state-message success" style="display:none;">
+    <div class="success-icon">&#10003;</div>
+    <h2 id="successTitle">RSVP Submitted!</h2>
+    <p id="successMsg">Thank you for your response. We look forward to seeing you!</p>
+    <div class="footer">
+        <button class="back-btn" onclick="resetForm()" style="border:none;cursor:pointer;">Submit Another Response</button>
+    </div>
+</div>
+
+<!-- Main Content -->
+<main id="mainContent" class="container" style="display:none;">
+    <div class="event-header" id="eventHeader"></div>
+
+    <!-- Error banner -->
+    <div class="error-banner" id="errorBanner">
+        <div class="error-title" id="errorBannerTitle"></div>
+        <div class="error-msg" id="errorBannerMsg"></div>
+    </div>
+
+    <!-- Info banner (existing RSVP) -->
+    <div class="info-banner" id="infoBanner">
+        <div class="info-title">Existing RSVP Found</div>
+        <div class="info-msg">An RSVP has already been submitted for this Family ID. You can update the counts below.</div>
+    </div>
+
+    <!-- RSVP Form -->
+    <div class="form-card" id="formCard">
+        <h3 id="formTitle">Your Response</h3>
+        <form id="rsvpForm" onsubmit="handleSubmit(event)">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="firstName">First Name *</label>
+                    <input type="text" id="firstName" required placeholder="e.g. John" onblur="checkExistingRsvp()" />
+                </div>
+                <div class="form-group">
+                    <label for="lastName">Last Name *</label>
+                    <input type="text" id="lastName" required placeholder="e.g. Smith" onblur="checkExistingRsvp()" />
+                </div>
+                <div class="form-group full">
+                    <label for="familyId">Family ID</label>
+                    <input type="number" id="familyId" min="1" placeholder="Optional" onblur="checkExistingRsvp()" />
+                </div>
+                <div class="form-group">
+                    <label for="adults">Adults</label>
+                    <select id="adults"></select>
+                </div>
+                <div class="form-group">
+                    <label for="kids">Kids</label>
+                    <select id="kids"></select>
+                </div>
+            </div>
+            <div class="form-actions" style="display:flex; gap:10px;">
+                <button type="button" id="deleteBtn" style="display:none; background:#ef4444; color:#fff; border:none; border-radius:8px; padding:10px 14px; font-size:0.85rem; font-weight:600; cursor:pointer;" onclick="deleteRsvp()">Delete</button>
+                <button type="submit" class="submit-btn" id="submitBtn" style="flex:1;">Submit RSVP</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- My RSVPs (shown when logged in) -->
+    <div class="my-rsvps" id="myRsvps">
+        <h3>Events You're Attending</h3>
+        <div id="myRsvpsList"></div>
+    </div>
+</main>
+
+<script src="firebase-config.js?v=9"></script>
+<script>
+var params = new URLSearchParams(window.location.search);
+var eventId = params.get('id');
+var currentEvent = null;
+var currentUser = null;
+var editingDocId = null; // Set when editing own existing RSVP
+
+// Populate dropdowns
+(function() {
+    var adultsSelect = document.getElementById('adults');
+    var kidsSelect = document.getElementById('kids');
+    for (var i = 1; i <= 10; i++) {
+        adultsSelect.innerHTML += '<option value="' + i + '">' + i + '</option>';
+    }
+    for (var i = 0; i <= 10; i++) {
+        kidsSelect.innerHTML += '<option value="' + i + '">' + i + '</option>';
+    }
+})();
+
+function escapeHtml(str) {
+    if (!str) return '';
+    var div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function formatEventTime(timeStr) {
+    var d = new Date(timeStr);
+    return d.toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+    });
+}
+
+function showState(stateId) {
+    ['loadingState', 'errorState', 'successState', 'mainContent'].forEach(function(id) {
+        document.getElementById(id).style.display = id === stateId ? '' : 'none';
+    });
+}
+
+// Auth
+function signIn() {
+    var provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(function(err) {
+        console.error('Sign-in error:', err);
+    });
+}
+
+function signOut() {
+    auth.signOut();
+}
+
+auth.onAuthStateChanged(function(user) {
+    currentUser = user;
+    var authArea = document.getElementById('authArea');
+    if (user) {
+        authArea.innerHTML =
+            '<span class="user-name">' + escapeHtml(user.displayName || user.email) + '</span>' +
+            '<button class="auth-btn" onclick="signOut()">Sign Out</button>';
+        // If event is already loaded, check for user's existing RSVP
+        if (currentEvent && eventId) {
+            loadUserRsvps();
+        }
+    } else {
+        authArea.innerHTML = '<button class="auth-btn signin" onclick="signIn()">Sign In</button>';
+        editingDocId = null;
+        document.getElementById('formTitle').textContent = 'Your Response';
+        document.getElementById('submitBtn').textContent = 'Submit RSVP';
+        document.getElementById('myRsvps').style.display = 'none';
+    }
+});
+
+async function loadEvent() {
+    if (!eventId) { showState('errorState'); return; }
+
+    try {
+        var doc = await db.collection('rsvpEvents').doc(eventId).get();
+        if (!doc.exists) { showState('errorState'); return; }
+
+        currentEvent = doc.data();
+        document.getElementById('eventHeader').innerHTML =
+            '<h2>' + escapeHtml(currentEvent.name) + '</h2>' +
+            (currentEvent.description ? '<div class="event-desc">' + escapeHtml(currentEvent.description) + '</div>' : '') +
+            '<div class="event-time">&#128197; ' + formatEventTime(currentEvent.eventTime) + '</div>';
+        document.title = 'RSVP - ' + currentEvent.name;
+        showState('mainContent');
+
+        // If already logged in, load user's RSVPs
+        if (currentUser) {
+            loadUserRsvps();
+        }
+    } catch (err) {
+        console.error('Error loading event:', err);
+        showState('errorState');
+    }
+}
+
+// Load user's RSVPs — match by name from Google profile
+async function loadUserRsvps() {
+    if (!currentUser) return;
+
+    try {
+        var displayName = currentUser.displayName || '';
+        var parts = displayName.trim().split(/\s+/);
+        if (parts.length < 2) {
+            document.getElementById('myRsvps').style.display = 'none';
+            return;
+        }
+        var userFirst = parts[0].toLowerCase();
+        var userLast = parts.slice(1).join(' ').toLowerCase();
+
+        // Find all RSVPs matching by firstName+lastName in responses
+        var allResponses = await db.collection('rsvpResponses').get();
+        var myRsvps = [];
+        var seenIds = {};
+        allResponses.forEach(function(doc) {
+            var d = doc.data();
+            var nameMatch = d.firstName && d.lastName
+                && d.firstName.toLowerCase() === userFirst
+                && d.lastName.toLowerCase() === userLast;
+            if (nameMatch && !seenIds[doc.id]) {
+                seenIds[doc.id] = true;
+                myRsvps.push({ id: doc.id, ...d });
+            }
+        });
+
+        if (myRsvps.length === 0) {
+            document.getElementById('myRsvps').style.display = 'none';
+            return;
+        }
+
+        // Fetch event details
+        var eventCache = {};
+        for (var i = 0; i < myRsvps.length; i++) {
+            var eid = myRsvps[i].eventId;
+            if (!eventCache[eid]) {
+                try {
+                    var eDoc = await db.collection('rsvpEvents').doc(eid).get();
+                    eventCache[eid] = eDoc.exists ? eDoc.data() : null;
+                } catch (e) {
+                    eventCache[eid] = null;
+                }
+            }
+        }
+
+        var listHtml = '';
+        myRsvps.forEach(function(r) {
+            var ev = eventCache[r.eventId];
+            if (!ev) return;
+            var isCurrent = r.eventId === eventId;
+            listHtml +=
+                '<div class="rsvp-card' + (isCurrent ? ' current' : '') + '">' +
+                    '<div class="rsvp-event-name">' + escapeHtml(ev.name) + (isCurrent ? '<span class="editing-badge">Current Event</span>' : '') + '</div>' +
+                    (isCurrent ? '' : '<div class="rsvp-event-time">&#128197; ' + formatEventTime(ev.eventTime) + '</div>') +
+                    '<div class="rsvp-details">' +
+                        (r.familyId ? '<span><strong>Family ID:</strong> ' + escapeHtml(String(r.familyId)) + '</span>' : '') +
+                        '<span><strong>Adults:</strong> ' + r.adults + '</span>' +
+                        '<span><strong>Kids:</strong> ' + r.kids + '</span>' +
+                    '</div>' +
+                    (isCurrent ? '' : '<a class="rsvp-edit-link" href="rsvp.html?id=' + r.eventId + '">Edit this RSVP</a>') +
+                '</div>';
+        });
+
+        document.getElementById('myRsvpsList').innerHTML = listHtml;
+        document.getElementById('myRsvps').style.display = '';
+    } catch (err) {
+        console.error('Error loading user RSVPs:', err);
+    }
+}
+
+function showError(title, message) {
+    var banner = document.getElementById('errorBanner');
+    document.getElementById('errorBannerTitle').textContent = title;
+    document.getElementById('errorBannerMsg').textContent = message;
+    banner.style.display = 'block';
+    banner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function hideError() {
+    document.getElementById('errorBanner').style.display = 'none';
+}
+
+function showInfo(show) {
+    document.getElementById('infoBanner').style.display = show ? 'block' : 'none';
+}
+
+// Find an existing RSVP for this event matching the entered Family ID (if any)
+// or, failing that, the entered First + Last Name.
+async function findExistingRsvp(familyId, firstName, lastName) {
+    var fn = firstName.toLowerCase();
+    var ln = lastName.toLowerCase();
+
+    var snapshot = await db.collection('rsvpResponses')
+        .where('eventId', '==', eventId)
+        .get();
+
+    var existingDoc = null;
+    snapshot.forEach(function(doc) {
+        var d = doc.data();
+        var fidMatch = familyId && d.familyId == familyId;
+        var nameMatch = d.firstName && d.lastName
+            && d.firstName.toLowerCase() === fn
+            && d.lastName.toLowerCase() === ln;
+        if (fidMatch || nameMatch) {
+            existingDoc = { id: doc.id, ...d };
+        }
+    });
+    return existingDoc;
+}
+
+// Re-check for an existing RSVP whenever Family ID or Name changes
+async function checkExistingRsvp() {
+    var fn = document.getElementById('firstName').value.trim();
+    var ln = document.getElementById('lastName').value.trim();
+    if (!fn || !ln) return;
+
+    var familyIdVal = document.getElementById('familyId').value.trim();
+    var familyId = familyIdVal ? parseInt(familyIdVal) : null;
+
+    hideError();
+
+    try {
+        var existingDoc = await findExistingRsvp(familyId, fn, ln);
+
+        if (existingDoc) {
+            // Existing RSVP found — offer update
+            showInfo(true);
+            editingDocId = existingDoc.id;
+            document.getElementById('adults').value = existingDoc.adults || 1;
+            document.getElementById('kids').value = existingDoc.kids || 0;
+            enableFormFields(false);
+            document.getElementById('formTitle').textContent = 'Update Response';
+            document.getElementById('submitBtn').textContent = 'Update RSVP';
+            document.getElementById('deleteBtn').style.display = '';
+        } else {
+            // No existing RSVP
+            showInfo(false);
+            editingDocId = null;
+            enableFormFields(true);
+            document.getElementById('formTitle').textContent = 'Your Response';
+            document.getElementById('submitBtn').textContent = 'Submit RSVP';
+            document.getElementById('deleteBtn').style.display = 'none';
+        }
+    } catch (err) {
+        console.error('Error checking existing RSVP:', err);
+    }
+}
+
+function enableFormFields(enabled) {
+    document.getElementById('firstName').disabled = !enabled;
+    document.getElementById('lastName').disabled = !enabled;
+    document.getElementById('familyId').disabled = !enabled;
+    // Adults and Kids are always editable
+}
+
+async function handleSubmit(ev) {
+    ev.preventDefault();
+    var btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = editingDocId ? 'Updating...' : 'Submitting...';
+
+    hideError();
+
+    var firstName = document.getElementById('firstName').value.trim();
+    var lastName = document.getElementById('lastName').value.trim();
+    var familyIdVal = document.getElementById('familyId').value.trim();
+    var familyId = familyIdVal ? parseInt(familyIdVal) : null;
+
+    // If not already in edit mode, check for existing RSVP on submit
+    if (!editingDocId) {
+        try {
+            var existingDoc = await findExistingRsvp(familyId, firstName, lastName);
+
+            if (existingDoc) {
+                // Existing RSVP found — switch to update mode
+                editingDocId = existingDoc.id;
+                document.getElementById('adults').value = existingDoc.adults || 1;
+                document.getElementById('kids').value = existingDoc.kids || 0;
+                enableFormFields(false);
+                showInfo(true);
+                document.getElementById('formTitle').textContent = 'Update Response';
+                document.getElementById('deleteBtn').style.display = '';
+                btn.disabled = false;
+                btn.textContent = 'Update RSVP';
+                return; // Don't submit yet — let user review and update counts
+            }
+        } catch (err) {
+            console.error('Error checking existing RSVP:', err);
+        }
+    }
+
+    var data = {
+        adults: parseInt(document.getElementById('adults').value),
+        kids: parseInt(document.getElementById('kids').value),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    // Record who is updating if logged in
+    if (currentUser) {
+        data.updatedBy = currentUser.email;
+    }
+
+    try {
+        if (editingDocId) {
+            // Update existing RSVP (only adults, kids)
+            await db.collection('rsvpResponses').doc(editingDocId).update(data);
+            showState('successState');
+            document.getElementById('successTitle').textContent = 'RSVP Updated!';
+            document.getElementById('successMsg').textContent = 'Your response has been updated successfully.';
+        } else {
+            // Create new RSVP
+            data.eventId = eventId;
+            data.firstName = firstName;
+            data.lastName = lastName;
+            if (familyId) {
+                data.familyId = familyId;
+            }
+            data.submittedAt = firebase.firestore.FieldValue.serverTimestamp();
+            if (currentUser) {
+                data.uid = currentUser.uid;
+                data.email = currentUser.email;
+            }
+            await db.collection('rsvpResponses').add(data);
+            showState('successState');
+            document.getElementById('successTitle').textContent = 'RSVP Submitted!';
+            document.getElementById('successMsg').textContent = 'Thank you for your response. We look forward to seeing you!';
+        }
+    } catch (err) {
+        console.error('Submit error:', err);
+        showError('Submission Failed', 'Failed to submit. Please try again.');
+        btn.disabled = false;
+        btn.textContent = editingDocId ? 'Update RSVP' : 'Submit RSVP';
+    }
+}
+
+async function deleteRsvp() {
+    if (!editingDocId) return;
+    if (!confirm('Are you sure you want to delete this RSVP?')) return;
+
+    try {
+        await db.collection('rsvpResponses').doc(editingDocId).delete();
+        showState('successState');
+        document.getElementById('successTitle').textContent = 'RSVP Deleted';
+        document.getElementById('successMsg').textContent = 'Your RSVP has been removed successfully.';
+    } catch (err) {
+        console.error('Delete error:', err);
+        showError('Delete Failed', 'Failed to delete RSVP. Please try again.');
+    }
+}
+
+function resetForm() {
+    document.getElementById('rsvpForm').reset();
+    document.getElementById('submitBtn').disabled = false;
+    document.getElementById('submitBtn').textContent = 'Submit RSVP';
+    hideError();
+    showInfo(false);
+    enableFormFields(true);
+    document.getElementById('deleteBtn').style.display = 'none';
+    editingDocId = null;
+    document.getElementById('formTitle').textContent = 'Your Response';
+    showState('mainContent');
+    if (currentUser) {
+        loadUserRsvps();
+    }
+}
+
+loadEvent();
+</script>
+</body>
+</html>

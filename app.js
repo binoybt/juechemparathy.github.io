@@ -26,19 +26,20 @@ const SPORT_META = {
 /* cutoff per slot (local time). Adjust as needed. */
 const DEFAULT_CUTOFF_HOUR = 12; // noon of the day
 
-/* Admin emails who can run seed / overrides (edit this) */
-const ADMIN_EMAILS = [
-  "jue.george@gmail.com",
-  "binoybt@gmail.com",
-  "geojins@gmail.com"
-  // "you@example.com"
-];
+/* Admin access is granted via users/{uid}.role === 'admin' — managed on the
+ * admin-users.html page. This file no longer contains any admin email list.
+ * `currentUserIsAdmin` is kept in sync by the SmashAuth.onChange handler
+ * further down. */
+let currentUserIsAdmin = false;
+function isCurrentUserAdmin() { return !!currentUserIsAdmin; }
 
 let currentUser = null;
 let showAllSignups = false; // Admin toggle state - default to show upcoming only
 let userPreferences = null; // User's sport preferences
 let deepLinkHandled = false; // Track if deep link has been handled
 let initialTabSet = false; // Track if initial tab has been determined
+let blockedDays = {}; // Store blocked days: { dayIndex: { note: "reason", blockedAt: timestamp } }
+let blockedSlots = {}; // Store blocked slots: { slotId_prio: { note: "reason", blockedAt: timestamp } }
 
 // Global function to clear all caches (can be called from console)
 window.clearAllCaches = async function() {
@@ -137,7 +138,7 @@ const patronsBox = document.getElementById("patronsBox");
 
 function renderUser() {
   if (currentUser) {
-    const isAdmin = ADMIN_EMAILS.includes(currentUser.email);
+    const isAdmin = isCurrentUserAdmin();
     
     // Show Patrons button to all logged-in users
     patronsBox.innerHTML = `
@@ -158,8 +159,15 @@ function renderUser() {
             <span>⚙️</span> Sport Preferences
           </button>
           ${isAdmin ? `
+            <div class="dropdown-divider"></div>
+            <a class="dropdown-item admin-item" href="ledger.html" style="display: flex; align-items: center; gap: 8px; text-decoration: none; color: inherit;">
+              <span>💰</span> Financial Ledger
+            </a>
             <button class="dropdown-item" onclick="toggleViewMode()">
               <span>${showAllSignups ? '📅' : '📋'}</span> ${showAllSignups ? 'Upcoming Only' : 'All Sign-ups'}
+            </button>
+            <button class="dropdown-item admin-item" onclick="openBlockDaysModal()">
+              <span>🚫</span> Block Days
             </button>
             <div class="dropdown-divider"></div>
             <button class="dropdown-item admin-item" onclick="seedWeeklyIfEmpty()">
@@ -229,6 +237,15 @@ function toggleViewMode() {
 }
 
 
+// Keep admin state up-to-date whenever role changes in Firestore.
+if (window.SmashAuth) {
+  SmashAuth.onChange(s => {
+    const was = currentUserIsAdmin;
+    currentUserIsAdmin = !!(s.user && s.isAdmin);
+    if (was !== currentUserIsAdmin && currentUser) renderUser();
+  });
+}
+
 auth.onAuthStateChanged(u => {
   currentUser = u;
   renderUser();
@@ -244,7 +261,10 @@ auth.onAuthStateChanged(u => {
     if (legend) legend.style.display = "flex";
     if (filtersSection) filtersSection.style.display = "flex";
     loadUserPreferences(); // Load preferences
+    subscribeBlockedDays(); // Load blocked days
+    subscribeBlockedSlots(); // Load blocked slots
     subscribeSchedule();
+    subscribeWishlistAds();
     // Handle deep link after login (in case user clicked link before logging in)
     setTimeout(() => handleDeepLink(), 500);
   } else {
@@ -252,7 +272,12 @@ auth.onAuthStateChanged(u => {
     if (legend) legend.style.display = "none";
     if (filtersSection) filtersSection.style.display = "none";
     if (unsubscribe) unsubscribe();
+    if (unsubscribeBlockedDays) unsubscribeBlockedDays();
+    if (unsubscribeBlockedSlots) unsubscribeBlockedSlots();
+    if (unsubscribeAds) unsubscribeAds();
     userPreferences = null;
+    blockedDays = {};
+    blockedSlots = {};
     tabs.innerHTML = "";
     tabContent.innerHTML = `
       <div class="title-bar" style="text-align: center; padding: 40px;">
@@ -399,7 +424,7 @@ async function savePreferences() {
 
 function shouldShowSport(sport) {
   // Admin override: if showing all sign-ups, ignore preferences
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
+  if (currentUser && isCurrentUserAdmin() && showAllSignups) {
     console.log(`Admin mode: showing ${sport}`); // Debug
     return true;
   }
@@ -417,6 +442,375 @@ function shouldShowSport(sport) {
   
   console.log(`Filter check for "${sport}" (normalized: "${normalizedSport}"):`, shouldShow, "| Preferences:", normalizedPrefs); // Debug
   return shouldShow;
+}
+
+/*********************
+ * BLOCKED DAYS MANAGEMENT
+ *********************/
+function subscribeBlockedDays() {
+  if (unsubscribeBlockedDays) unsubscribeBlockedDays();
+  
+  unsubscribeBlockedDays = db.collection("blockedDays")
+    .onSnapshot(snap => {
+      blockedDays = {};
+      snap.forEach(doc => {
+        const data = doc.data();
+        blockedDays[data.dayIndex] = {
+          note: data.note,
+          blockedAt: data.blockedAt,
+          blockedBy: data.blockedBy
+        };
+      });
+      console.log("Blocked days loaded:", blockedDays);
+      // Re-render content to show blocked days
+      if (latestSlots.length > 0) {
+        renderTabContent();
+      }
+    }, err => {
+      console.error("Error loading blocked days:", err);
+    });
+}
+
+function isDayBlocked(dayIndex) {
+  return blockedDays.hasOwnProperty(dayIndex);
+}
+
+function subscribeBlockedSlots() {
+  if (unsubscribeBlockedSlots) unsubscribeBlockedSlots();
+  
+  unsubscribeBlockedSlots = db.collection("blockedSlots")
+    .onSnapshot(snap => {
+      blockedSlots = {};
+      snap.forEach(doc => {
+        const data = doc.data();
+        const key = `${data.slotId}_${data.prio}`;
+        blockedSlots[key] = {
+          note: data.note,
+          blockedAt: data.blockedAt,
+          blockedBy: data.blockedBy
+        };
+      });
+      console.log("Blocked slots loaded:", blockedSlots);
+      // Re-render content to show blocked slots
+      if (latestSlots.length > 0) {
+        renderTabContent();
+      }
+    }, err => {
+      console.error("Error loading blocked slots:", err);
+    });
+}
+
+function isSlotBlocked(slotId, prio) {
+  const key = `${slotId}_${prio}`;
+  return blockedSlots.hasOwnProperty(key);
+}
+
+async function toggleBlockSlot(slotId, prio, slot, p, block) {
+  if (!currentUser || !isCurrentUserAdmin()) {
+    return alert("Admins only.");
+  }
+  
+  const key = `${slotId}_${prio}`;
+  const docRef = db.collection("blockedSlots").doc(key);
+  
+  try {
+    if (block) {
+      // Block the slot - prompt for reason
+      const note = prompt(`Block this ${p.sport} slot?\nEnter reason (e.g., "Maintenance", "Special Event"):`);
+      if (!note || !note.trim()) {
+        return; // User cancelled or entered empty note
+      }
+      
+      await docRef.set({
+        slotId: slotId,
+        prio: prio,
+        dayIndex: slot.dayIndex,
+        dayName: DAYS[slot.dayIndex],
+        blockId: slot.blockId,
+        sport: p.sport,
+        note: note.trim(),
+        blockedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        blockedBy: currentUser.email
+      });
+      
+      console.log(`Blocked slot: ${key}`);
+    } else {
+      // Unblock the slot
+      if (confirm(`Unblock this ${p.sport} slot?`)) {
+        await docRef.delete();
+        console.log(`Unblocked slot: ${key}`);
+      }
+    }
+  } catch (error) {
+    console.error("Error toggling block slot:", error);
+    alert("❌ Failed to update: " + error.message);
+  }
+}
+
+function openBlockDaysModal() {
+  const modal = document.getElementById("blockDaysModal");
+  const checkboxContainer = document.getElementById("dayCheckboxes");
+  
+  if (!modal || !checkboxContainer) {
+    console.error("Modal elements not found");
+    return;
+  }
+  
+  // Close dropdown
+  const dropdown = document.getElementById("userDropdown");
+  if (dropdown) dropdown.classList.remove("show");
+  
+  // Build controls for each day
+  checkboxContainer.innerHTML = "";
+  DAYS.forEach((day, dayIndex) => {
+    const isBlocked = isDayBlocked(dayIndex);
+    const blockInfo = blockedDays[dayIndex];
+    
+    // Day container
+    const dayContainer = document.createElement("div");
+    dayContainer.className = "day-block-container";
+    
+    // Day header with checkbox and note
+    const dayHeader = document.createElement("div");
+    dayHeader.className = "day-checkbox-item";
+    
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.name = "day";
+    checkbox.value = dayIndex;
+    checkbox.checked = isBlocked;
+    checkbox.id = `day_${dayIndex}`;
+    
+    const label = document.createElement("label");
+    label.htmlFor = `day_${dayIndex}`;
+    label.textContent = day;
+    label.style.fontWeight = "600";
+    label.style.cursor = "pointer";
+    label.style.flex = "1";
+    
+    const noteInput = document.createElement("input");
+    noteInput.type = "text";
+    noteInput.placeholder = "Reason (e.g., Christmas break)";
+    noteInput.value = blockInfo?.note || "";
+    noteInput.id = `note_${dayIndex}`;
+    noteInput.disabled = !isBlocked;
+    noteInput.style.flex = "2";
+    noteInput.style.padding = "6px 10px";
+    noteInput.style.border = "1px solid var(--border)";
+    noteInput.style.borderRadius = "6px";
+    noteInput.style.fontSize = "13px";
+    
+    // Enable/disable note input based on checkbox
+    checkbox.addEventListener("change", () => {
+      noteInput.disabled = !checkbox.checked;
+      if (checkbox.checked) {
+        noteInput.focus();
+      }
+    });
+    
+    dayHeader.appendChild(checkbox);
+    dayHeader.appendChild(label);
+    dayHeader.appendChild(noteInput);
+    dayContainer.appendChild(dayHeader);
+    
+    // Time slots section
+    const slotsSection = document.createElement("div");
+    slotsSection.className = "time-slots-section";
+    slotsSection.id = `slots_${dayIndex}`;
+    
+    // Get all slots for this day (check if latestSlots is loaded)
+    const daySlots = (latestSlots && latestSlots.length > 0) 
+      ? latestSlots.filter(slot => slot.dayIndex === dayIndex) 
+      : [];
+    
+    if (daySlots.length > 0) {
+      const slotsTitle = document.createElement("div");
+      slotsTitle.className = "slots-title";
+      slotsTitle.textContent = "Time Slots:";
+      slotsSection.appendChild(slotsTitle);
+      
+      // Sort slots by time block order
+      daySlots.sort((a, b) => {
+        const orderA = TIME_BLOCKS.findIndex(t => t.id === a.blockId);
+        const orderB = TIME_BLOCKS.findIndex(t => t.id === b.blockId);
+        return orderA - orderB;
+      });
+      
+      daySlots.forEach(slot => {
+        const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
+        
+        // Create slot items for P0 and P1
+        [0, 1].forEach(prio => {
+          const p = slot[`p${prio}`];
+          if (!p || !p.sport || p.sport === "No Games") return;
+          
+          const slotKey = `${slot.id}_${prio}`;
+          const isSlotBlockedNow = isSlotBlocked(slot.id, prio);
+          const slotBlockInfo = blockedSlots[slotKey];
+          
+          const slotItem = document.createElement("div");
+          slotItem.className = "slot-block-item";
+          
+          const slotCheckbox = document.createElement("input");
+          slotCheckbox.type = "checkbox";
+          slotCheckbox.checked = isSlotBlockedNow;
+          slotCheckbox.id = `slot_${slotKey}`;
+          slotCheckbox.dataset.slotId = slot.id;
+          slotCheckbox.dataset.prio = prio;
+          
+          const slotLabel = document.createElement("label");
+          slotLabel.htmlFor = `slot_${slotKey}`;
+          slotLabel.innerHTML = `<span class="time-label">${block?.label || slot.blockId}</span> <span class="priority-badge ${prio === 0 ? 'p0' : 'p1'}">${prio === 0 ? 'P0' : 'P1'}</span> <span class="sport-label">${p.sport}</span>`;
+          slotLabel.style.cursor = "pointer";
+          slotLabel.style.flex = "1";
+          
+          const slotNoteInput = document.createElement("input");
+          slotNoteInput.type = "text";
+          slotNoteInput.placeholder = "Reason";
+          slotNoteInput.value = slotBlockInfo?.note || "";
+          slotNoteInput.id = `slotnote_${slotKey}`;
+          slotNoteInput.disabled = !isSlotBlockedNow;
+          slotNoteInput.style.flex = "1.5";
+          slotNoteInput.style.padding = "4px 8px";
+          slotNoteInput.style.border = "1px solid var(--border)";
+          slotNoteInput.style.borderRadius = "4px";
+          slotNoteInput.style.fontSize = "12px";
+          
+          slotCheckbox.addEventListener("change", () => {
+            slotNoteInput.disabled = !slotCheckbox.checked;
+            if (slotCheckbox.checked) {
+              slotNoteInput.focus();
+            }
+          });
+          
+          slotItem.appendChild(slotCheckbox);
+          slotItem.appendChild(slotLabel);
+          slotItem.appendChild(slotNoteInput);
+          slotsSection.appendChild(slotItem);
+        });
+      });
+    }
+    
+    dayContainer.appendChild(slotsSection);
+    checkboxContainer.appendChild(dayContainer);
+  });
+  
+  modal.style.display = "flex";
+}
+
+function closeBlockDaysModal() {
+  document.getElementById("blockDaysModal").style.display = "none";
+}
+
+async function saveBlockedDays() {
+  if (!currentUser || !isCurrentUserAdmin()) {
+    return alert("Admins only.");
+  }
+  
+  try {
+    const batch = db.batch();
+    const blockedDaysRef = db.collection("blockedDays");
+    const blockedSlotsRef = db.collection("blockedSlots");
+    
+    // Get all current blocked days to clear removed ones
+    const currentDaysSnapshot = await blockedDaysRef.get();
+    const currentDayIndexes = new Set();
+    currentDaysSnapshot.forEach(doc => {
+      currentDayIndexes.add(doc.data().dayIndex);
+    });
+    
+    // Get all current blocked slots to clear removed ones
+    const currentSlotsSnapshot = await blockedSlotsRef.get();
+    const currentSlotKeys = new Set();
+    currentSlotsSnapshot.forEach(doc => {
+      currentSlotKeys.add(doc.id);
+    });
+    
+    // Process each day checkbox
+    const newBlockedDays = new Set();
+    DAYS.forEach((day, dayIndex) => {
+      const checkbox = document.getElementById(`day_${dayIndex}`);
+      const noteInput = document.getElementById(`note_${dayIndex}`);
+      
+      if (checkbox && checkbox.checked) {
+        const note = noteInput ? noteInput.value.trim() : "";
+        if (!note) {
+          throw new Error(`Please provide a reason for blocking ${day}`);
+        }
+        
+        newBlockedDays.add(dayIndex);
+        const docRef = blockedDaysRef.doc(`day_${dayIndex}`);
+        batch.set(docRef, {
+          dayIndex: dayIndex,
+          dayName: day,
+          note: note,
+          blockedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          blockedBy: currentUser.email
+        });
+      }
+    });
+    
+    // Delete days that were unblocked
+    currentDayIndexes.forEach(dayIndex => {
+      if (!newBlockedDays.has(dayIndex)) {
+        const docRef = blockedDaysRef.doc(`day_${dayIndex}`);
+        batch.delete(docRef);
+      }
+    });
+    
+    // Process slot checkboxes
+    const newBlockedSlots = new Set();
+    document.querySelectorAll('[id^="slot_"]').forEach(slotCheckbox => {
+      if (!slotCheckbox.dataset.slotId) return;
+      
+      const slotId = slotCheckbox.dataset.slotId;
+      const prio = parseInt(slotCheckbox.dataset.prio);
+      const slotKey = `${slotId}_${prio}`;
+      const noteInput = document.getElementById(`slotnote_${slotKey}`);
+      
+      if (slotCheckbox.checked) {
+        const note = noteInput ? noteInput.value.trim() : "";
+        if (!note) {
+          throw new Error(`Please provide a reason for blocking the slot`);
+        }
+        
+        newBlockedSlots.add(slotKey);
+        
+        // Find the slot data
+        const slot = latestSlots.find(s => s.id === slotId);
+        if (slot) {
+          const p = slot[`p${prio}`];
+          const docRef = blockedSlotsRef.doc(slotKey);
+          batch.set(docRef, {
+            slotId: slotId,
+            prio: prio,
+            dayIndex: slot.dayIndex,
+            dayName: DAYS[slot.dayIndex],
+            blockId: slot.blockId,
+            sport: p?.sport || "",
+            note: note,
+            blockedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            blockedBy: currentUser.email
+          });
+        }
+      }
+    });
+    
+    // Delete slots that were unblocked
+    currentSlotKeys.forEach(slotKey => {
+      if (!newBlockedSlots.has(slotKey)) {
+        const docRef = blockedSlotsRef.doc(slotKey);
+        batch.delete(docRef);
+      }
+    });
+    
+    await batch.commit();
+    closeBlockDaysModal();
+    alert("✅ Blocks updated successfully!");
+  } catch (error) {
+    console.error("Error saving blocks:", error);
+    alert("❌ Failed to save: " + error.message);
+  }
 }
 
 /*********************
@@ -447,8 +841,25 @@ const ALL_GAMES_TAB = "All Games";
 const tabs = document.getElementById("sportTabs");
 const tabContent = document.getElementById("tabContent");
 let unsubscribe = null;
+let unsubscribeBlockedDays = null;
+let unsubscribeBlockedSlots = null;
+let unsubscribeAds = null;
 let selectedSport = null;
 let latestSlots = [];
+let latestAdItems = [];
+
+function subscribeWishlistAds() {
+  if (unsubscribeAds) unsubscribeAds();
+
+  unsubscribeAds = db.collection("wishlistItems")
+    .where("adEnabled", "==", true)
+    .onSnapshot(snap => {
+      latestAdItems = snap.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(item => item.status !== "secured");
+      renderTabContent();
+    }, err => console.error(err));
+}
 
 function subscribeSchedule() {
   if (unsubscribe) unsubscribe();
@@ -569,11 +980,22 @@ function renderSportContent() {
 
     const daySection = document.createElement("section");
     daySection.className = `day-section${dayIndex === todayIndex ? " today" : ""}`;
+    if (isDayBlocked(dayIndex)) {
+      daySection.classList.add("blocked");
+    }
 
     const header = document.createElement("div");
     header.className = "day-header";
     header.innerHTML = `<span>${day}</span><span class="date">${getDateLabel(dayIndex)}</span>`;
     daySection.appendChild(header);
+    
+    // Show blocked day notice if day is blocked
+    if (isDayBlocked(dayIndex)) {
+      const blockNotice = document.createElement("div");
+      blockNotice.className = "block-notice";
+      blockNotice.innerHTML = `<span class="block-icon">🚫</span><span class="block-text">${blockedDays[dayIndex].note}</span>`;
+      daySection.appendChild(blockNotice);
+    }
 
     const matching = latestSlots
       .filter(slot => slot.dayIndex === dayIndex)
@@ -594,19 +1016,23 @@ function renderSportContent() {
         return orderA - orderB || a.prio - b.prio;
       });
 
-    const track = document.createElement("div");
-    track.className = "slot-track";
+    // Don't show slots if the entire day is blocked
+    if (!isDayBlocked(dayIndex)) {
+      const track = document.createElement("div");
+      track.className = "slot-track";
 
-    if (matching.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "empty";
-      empty.textContent = `No ${selectedSport} games.`;
-      track.appendChild(empty);
-    } else {
-      matching.forEach(entry => track.appendChild(renderSlotCard(entry.slot, entry.prio)));
+      if (matching.length === 0) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = `No ${selectedSport} games.`;
+        track.appendChild(empty);
+      } else {
+        appendToTrack(track, matching);
+      }
+
+      daySection.appendChild(track);
     }
 
-    daySection.appendChild(track);
     tabContent.appendChild(daySection);
   });
 }
@@ -656,17 +1082,31 @@ function renderMyGamesContent() {
     renderedDays += 1;
     const daySection = document.createElement("section");
     daySection.className = `day-section${dayIndex === todayIndex ? " today" : ""}`;
+    if (isDayBlocked(dayIndex)) {
+      daySection.classList.add("blocked");
+    }
 
     const header = document.createElement("div");
     header.className = "day-header";
     header.innerHTML = `<span>${day}</span><span class="date">${getDateLabel(dayIndex)}</span>`;
     daySection.appendChild(header);
+    
+    // Show blocked day notice if day is blocked
+    if (isDayBlocked(dayIndex)) {
+      const blockNotice = document.createElement("div");
+      blockNotice.className = "block-notice";
+      blockNotice.innerHTML = `<span class="block-icon">🚫</span><span class="block-text">${blockedDays[dayIndex].note}</span>`;
+      daySection.appendChild(blockNotice);
+    }
 
-    const track = document.createElement("div");
-    track.className = "slot-track";
-    entries.forEach(entry => track.appendChild(renderSlotCard(entry.slot, entry.prio)));
+    // Don't show slots if the entire day is blocked
+    if (!isDayBlocked(dayIndex)) {
+      const track = document.createElement("div");
+      track.className = "slot-track";
+      appendToTrack(track, entries);
+      daySection.appendChild(track);
+    }
 
-    daySection.appendChild(track);
     tabContent.appendChild(daySection);
   });
 
@@ -711,17 +1151,31 @@ function renderAllGamesContent() {
     renderedDays += 1;
     const daySection = document.createElement("section");
     daySection.className = `day-section${dayIndex === todayIndex ? " today" : ""}`;
+    if (isDayBlocked(dayIndex)) {
+      daySection.classList.add("blocked");
+    }
 
     const header = document.createElement("div");
     header.className = "day-header";
     header.innerHTML = `<span>${day}</span><span class="date">${getDateLabel(dayIndex)}</span>`;
     daySection.appendChild(header);
+    
+    // Show blocked day notice if day is blocked
+    if (isDayBlocked(dayIndex)) {
+      const blockNotice = document.createElement("div");
+      blockNotice.className = "block-notice";
+      blockNotice.innerHTML = `<span class="block-icon">🚫</span><span class="block-text">${blockedDays[dayIndex].note}</span>`;
+      daySection.appendChild(blockNotice);
+    }
 
-    const track = document.createElement("div");
-    track.className = "slot-track";
-    entries.forEach(entry => track.appendChild(renderSlotCard(entry.slot, entry.prio)));
+    // Don't show slots if the entire day is blocked
+    if (!isDayBlocked(dayIndex)) {
+      const track = document.createElement("div");
+      track.className = "slot-track";
+      appendToTrack(track, entries);
+      daySection.appendChild(track);
+    }
 
-    daySection.appendChild(track);
     tabContent.appendChild(daySection);
   });
 
@@ -735,6 +1189,9 @@ function renderSlotCard(slot, prio) {
   const meta = SPORT_META[p.sport] || { min: 0, max: 20, mainLimit: 10, waitingList: 10 };
   const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
   const active = computeActivePriority(slot) === prio;
+  const dayBlocked = isDayBlocked(slot.dayIndex);
+  const slotBlocked = isSlotBlocked(slot.id, prio);
+  const isAdmin = currentUser && isCurrentUserAdmin();
 
   const mainLimit = meta.mainLimit || 10;
   const totalPlayers = (p.players || []).length;
@@ -751,44 +1208,66 @@ function renderSlotCard(slot, prio) {
 
   const top = document.createElement("div");
   top.className = "slot-time";
-  top.innerHTML = `
-    <span>${block?.label ?? slot.blockId}</span>
-    <span class="priority-pill ${prio === 0 ? "p0" : "p1"}">${prio === 0 ? "P0" : "P1"}</span>
-  `;
+  top.innerHTML = `<span>${block?.label ?? slot.blockId}</span>`;
   
-  // Add guest button and share button next to priority pill
+  const ICON = {
+    share:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`,
+    block:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" x2="19.07" y1="4.93" y2="19.07"/></svg>`,
+    unblock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`,
+    guest:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+    join:    `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>`,
+    joined:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>`,
+    leave:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
+  };
+
+  // Action buttons row
   const buttonContainer = document.createElement("div");
   buttonContainer.style.display = "flex";
-  buttonContainer.style.gap = "4px";
+  buttonContainer.style.gap = "8px";
   buttonContainer.style.alignItems = "center";
-  
+
   // Share button (always visible)
   const shareBtn = document.createElement("button");
   shareBtn.className = "btn share-btn-top";
-  shareBtn.innerHTML = `
-                         <img src="icons/whatsapp-icon.ico" alt="Share" class="share-icon">
-                       `;
+  shareBtn.innerHTML = ICON.share;
   shareBtn.title = "Share on WhatsApp";
   shareBtn.onclick = () => shareSlotOnWhatsApp(slot, prio, p, block);
   buttonContainer.appendChild(shareBtn);
-  
+
+  // Block/Unblock button (admin only)
+  if (isAdmin && p.sport !== "No Games") {
+    const blockSlotBtn = document.createElement("button");
+    blockSlotBtn.className = slotBlocked ? "btn unblock-btn-top" : "btn block-btn-top";
+    blockSlotBtn.innerHTML = slotBlocked ? ICON.unblock : ICON.block;
+    blockSlotBtn.title = slotBlocked ? "Unblock this slot" : "Block this slot";
+    blockSlotBtn.onclick = () => toggleBlockSlot(slot.id, prio, slot, p, !slotBlocked);
+    buttonContainer.appendChild(blockSlotBtn);
+  }
+
   // Guest button (conditional)
-  if (canAddGuest) {
+  if (canAddGuest && !slotBlocked) {
     const addGuestBtn = document.createElement("button");
     addGuestBtn.className = "btn guest-btn-top";
-    addGuestBtn.innerHTML = "👥";
+    addGuestBtn.innerHTML = ICON.guest;
     addGuestBtn.title = "Add Guest";
     addGuestBtn.onclick = () => showGuestModal(slot.id, prio);
     buttonContainer.appendChild(addGuestBtn);
   }
   
-  top.appendChild(buttonContainer);
   card.appendChild(top);
 
   const sportTag = document.createElement("div");
   sportTag.className = "sport-tag";
-  sportTag.textContent = p.sport;
+  sportTag.innerHTML = `<span class="priority-pill ${prio === 0 ? "p0" : "p1"}">${prio === 0 ? "P0" : "P1"}</span><span>${p.sport}</span>`;
   card.appendChild(sportTag);
+  
+  // Show blocked slot notice if individual slot is blocked
+  if (slotBlocked) {
+    const slotBlockNotice = document.createElement("div");
+    slotBlockNotice.className = "slot-block-notice";
+    slotBlockNotice.innerHTML = `<span class="block-icon">🚫</span><span class="block-text">${blockedSlots[`${slot.id}_${prio}`].note}</span>`;
+    card.appendChild(slotBlockNotice);
+  }
 
   const metrics = document.createElement("div");
   metrics.className = "metrics";
@@ -807,53 +1286,49 @@ function renderSlotCard(slot, prio) {
 
   const playersList = document.createElement("div");
   playersList.className = "players";
-  const isAdmin = currentUser && ADMIN_EMAILS.includes(currentUser.email);
   
-  if ((p.players || []).length === 0) {
+  const allPlayers = p.players || [];
+  if (allPlayers.length === 0) {
     const empty = document.createElement("span");
     empty.className = "empty";
     empty.textContent = "No players yet";
     playersList.appendChild(empty);
   } else {
-    (p.players || []).forEach((pl, index) => {
-      const playerWrapper = document.createElement("span");
-      playerWrapper.className = "player-wrapper";
-      
-      const chip = document.createElement("span");
-      // Add waiting-list class if player is beyond mainLimit
-      if (index >= mainLimit) {
-        chip.className = "player waiting-list";
-      } else {
-        chip.className = "player";
-      }
-      // Add asterisk for guest players
-      const displayName = pl.isGuest ? `*${toCamelCase(pl.name)}` : toCamelCase(pl.name);
-      chip.textContent = displayName;
-      
-      // Add title tooltip for guest players
-      if (pl.isGuest) {
-        chip.title = `Guest - Parishioner: ${pl.parishionerName || 'N/A'}, Family ID: ${pl.familyId || 'N/A'}`;
-      }
-      
-      playerWrapper.appendChild(chip);
-      
-      // Add remove button for guest players (admin only)
-      if (pl.isGuest && isAdmin) {
-        const removeBtn = document.createElement("span");
-        removeBtn.className = "remove-guest";
-        removeBtn.textContent = "×";
-        removeBtn.title = "Remove guest player";
-        removeBtn.onclick = (e) => {
-          e.stopPropagation();
-          if (confirm(`Remove guest player ${pl.name}?`)) {
-            removeGuest(slot.id, prio, pl.uid);
-          }
-        };
-        playerWrapper.appendChild(removeBtn);
-      }
-      
-      playersList.appendChild(playerWrapper);
-    });
+    // Render in explicit rows of 4
+    for (let rowStart = 0; rowStart < allPlayers.length; rowStart += 4) {
+      const rowEl = document.createElement("div");
+      rowEl.className = "player-row";
+
+      allPlayers.slice(rowStart, rowStart + 4).forEach((pl, i) => {
+        const index = rowStart + i;
+        const playerWrapper = document.createElement("span");
+        playerWrapper.className = "player-wrapper";
+
+        const chip = document.createElement("span");
+        chip.className = index >= mainLimit ? "player waiting-list" : "player";
+        chip.textContent = pl.isGuest ? `*${toCamelCase(pl.name)}` : toCamelCase(pl.name);
+        if (pl.isGuest) {
+          chip.title = `Guest - Parishioner: ${pl.parishionerName || 'N/A'}, Family ID: ${pl.familyId || 'N/A'}`;
+        }
+        playerWrapper.appendChild(chip);
+
+        if (pl.isGuest && isAdmin) {
+          const removeBtn = document.createElement("span");
+          removeBtn.className = "remove-guest";
+          removeBtn.textContent = "×";
+          removeBtn.title = "Remove guest player";
+          removeBtn.onclick = (e) => {
+            e.stopPropagation();
+            if (confirm(`Remove guest player ${pl.name}?`)) removeGuest(slot.id, prio, pl.uid);
+          };
+          playerWrapper.appendChild(removeBtn);
+        }
+
+        rowEl.appendChild(playerWrapper);
+      });
+
+      playersList.appendChild(rowEl);
+    }
   }
   card.appendChild(playersList);
 
@@ -861,29 +1336,362 @@ function renderSlotCard(slot, prio) {
   btnbar.className = "btnbar";
 
   // Always use the current metadata max value, ignore stored maxPlayers
-  const canJoin = currentUser && p.sport !== "No Games" && (p.players || []).length < maxPlayers;
+  const blocked = dayBlocked || slotBlocked;
+  const canJoin = currentUser && p.sport !== "No Games" && (p.players || []).length < maxPlayers && !blocked;
   const isIn = !!currentUser && (p.players || []).some(pl => pl.uid === currentUser.uid);
 
   const joinBtn = document.createElement("button");
   joinBtn.className = "btn primary";
-  joinBtn.innerHTML = isIn ? "✓" : "➕";
-  joinBtn.title = isIn ? "Joined" : "Join";
-  joinBtn.disabled = !currentUser || isIn || !canJoin;
+  joinBtn.innerHTML = isIn ? ICON.joined : ICON.join;
+  joinBtn.title = blocked ? "Slot is blocked" : (isIn ? "Joined" : "Join");
+  joinBtn.disabled = !currentUser || isIn || !canJoin || blocked;
   joinBtn.onclick = () => updateSignup(slot.id, prio, "join");
 
   const leaveBtn = document.createElement("button");
   leaveBtn.className = "btn";
-  leaveBtn.innerHTML = "➖";
-  leaveBtn.title = "Leave";
-  leaveBtn.disabled = !currentUser || !isIn;
+  leaveBtn.innerHTML = ICON.leave;
+  leaveBtn.title = blocked ? "Slot is blocked" : "Leave";
+  leaveBtn.disabled = !currentUser || !isIn || blocked;
   leaveBtn.onclick = () => updateSignup(slot.id, prio, "leave");
 
   btnbar.appendChild(joinBtn);
   btnbar.appendChild(leaveBtn);
 
   card.appendChild(btnbar);
+  card.appendChild(buttonContainer);
 
   return card;
+}
+
+function escapeHtmlJs(str) {
+  const div = document.createElement("div");
+  div.textContent = str ?? "";
+  return div.innerHTML;
+}
+
+function formatMoneyJs(n) {
+  return (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function renderAdCard(item) {
+  const card = document.createElement("div");
+  card.className = "slot-card ad-card";
+
+  const goal = Number(item.goalAmount) || 0;
+  const raised = Number(item.raisedAmount) || 0;
+  const pct = goal > 0 ? Math.min(100, Math.round((raised / goal) * 100)) : 0;
+  const storeLabel = item.store === "walmart" ? "Walmart" : "Amazon";
+  const nameEsc = escapeHtmlJs(item.name).replace(/'/g, "\\'");
+
+  card.innerHTML = `
+    <div class="ad-card-image">
+      <span class="wishlist-pill">Wishlist</span>
+      ${item.imageUrl
+        ? `<img src="${escapeHtmlJs(item.imageUrl)}" alt="${escapeHtmlJs(item.name)}" onerror="this.remove()" />`
+        : `<span class="ad-card-placeholder">🎁</span>`}
+    </div>
+    <div class="ad-card-body">
+      <div class="ad-card-name">${escapeHtmlJs(item.name)}</div>
+      ${item.notes ? `<div class="ad-card-notes">${escapeHtmlJs(item.notes)}</div>` : ""}
+      ${item.productUrl ? `<a href="${escapeHtmlJs(item.productUrl)}" target="_blank" rel="noopener" class="ad-card-link">View on ${storeLabel} →</a>` : ""}
+      <div>
+        <div class="progress-label"><span>$${formatMoneyJs(raised)} of $${formatMoneyJs(goal)}</span><span>${pct}%</span></div>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%;"></div></div>
+      </div>
+      <button type="button" class="contribute-btn" onclick="openContributeModal('${item.id}', '${nameEsc}')">Contribute</button>
+      <a href="wishlist.html" class="ad-card-wishlist-link">Go to Wishlist →</a>
+    </div>
+  `;
+  return card;
+}
+
+let activeAdItemId = null;
+
+function openContributeModal(itemId, itemName) {
+  activeAdItemId = itemId;
+  document.getElementById("modalItemName").textContent = itemName;
+  document.getElementById("contributeForm").reset();
+  document.getElementById("contributeModal").style.display = "flex";
+}
+
+function closeContributeModal() {
+  document.getElementById("contributeModal").style.display = "none";
+  activeAdItemId = null;
+}
+
+async function submitContribution(ev) {
+  ev.preventDefault();
+  if (!activeAdItemId) return;
+
+  const contributorName = document.getElementById("contributorName").value.trim();
+  const amount = parseFloat(document.getElementById("contributionAmount").value);
+  const note = document.getElementById("contributionNote").value.trim();
+
+  if (!contributorName || !(amount > 0)) {
+    alert("Please enter your name and a valid amount.");
+    return;
+  }
+
+  const btn = document.getElementById("contributeSubmitBtn");
+  btn.disabled = true;
+
+  const itemRef = db.collection("wishlistItems").doc(activeAdItemId);
+  const contributionRef = itemRef.collection("contributions").doc();
+
+  try {
+    await db.runTransaction(async tx => {
+      const itemDoc = await tx.get(itemRef);
+      if (!itemDoc.exists) throw new Error("This item no longer exists.");
+
+      const item = itemDoc.data();
+      if (item.status === "secured") throw new Error("This item is already fully funded.");
+
+      const goal = Number(item.goalAmount) || 0;
+      const newRaised = (Number(item.raisedAmount) || 0) + amount;
+      const newStatus = goal > 0 && newRaised >= goal ? "secured" : "open";
+
+      tx.update(itemRef, {
+        raisedAmount: newRaised,
+        status: newStatus,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+      tx.set(contributionRef, {
+        contributorName,
+        amount,
+        note,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    alert("Thank you for your contribution!");
+    closeContributeModal();
+  } catch (err) {
+    console.error("Contribution error:", err);
+    alert(err.message || "Failed to record contribution.");
+  }
+  btn.disabled = false;
+}
+
+function appendToTrack(track, entries) {
+  // Group entries by slot.id so P0 + P1 of the same slot share a wrapper
+  const seen = new Map();
+  entries.forEach(e => {
+    if (!seen.has(e.slot.id)) seen.set(e.slot.id, []);
+    seen.get(e.slot.id).push(e);
+  });
+  let unitCount = 0;
+  let adIndex = 0;
+
+  seen.forEach(slotEntries => {
+    if (slotEntries.length === 1) {
+      track.appendChild(renderSlotCard(slotEntries[0].slot, slotEntries[0].prio));
+    } else {
+      const pair = document.createElement("div");
+      pair.className = "slot-pair";
+      const pairBlock = TIME_BLOCKS.find(b => b.id === slotEntries[0].slot.blockId);
+      const pairHeader = document.createElement("div");
+      pairHeader.className = "slot-pair-header";
+      pairHeader.textContent = pairBlock?.label ?? slotEntries[0].slot.blockId;
+      pair.appendChild(pairHeader);
+      slotEntries.forEach(e => pair.appendChild(renderSlotCard(e.slot, e.prio)));
+      track.appendChild(pair);
+    }
+
+    unitCount++;
+    if (unitCount % 2 === 0 && latestAdItems.length > 0) {
+      track.appendChild(renderAdCard(latestAdItems[adIndex % latestAdItems.length]));
+      adIndex++;
+    }
+  });
+}
+
+function renderSlotRow(slot, prio) {
+  const p = slot[`p${prio}`] || { sport: "No Games", players: [] };
+  const meta = SPORT_META[normalizeSportName(p.sport)] || { min: 0, max: 20, mainLimit: 10, waitingList: 10 };
+  const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
+  const active = computeActivePriority(slot) === prio;
+  const dayBlocked = isDayBlocked(slot.dayIndex);
+  const slotBlocked = isSlotBlocked(slot.id, prio);
+  const isAdmin = currentUser && isCurrentUserAdmin();
+  const blocked = dayBlocked || slotBlocked;
+
+  const mainLimit = meta.mainLimit || 10;
+  const maxPlayers = meta.max || 20;
+  const players = p.players || [];
+  const totalPlayers = players.length;
+  const mainPlayers = Math.min(totalPlayers, mainLimit);
+  const waitingPlayers = Math.max(0, totalPlayers - mainLimit);
+  const fillPct = mainLimit > 0 ? Math.min(100, Math.round(mainPlayers / mainLimit * 100)) : 0;
+  const canAddGuest = currentUser && p.sport !== "No Games" && totalPlayers < maxPlayers;
+  const canJoin = currentUser && p.sport !== "No Games" && totalPlayers < maxPlayers && !blocked;
+  const isIn = !!currentUser && players.some(pl => pl.uid === currentUser.uid);
+
+  const SVG = {
+    share:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`,
+    block:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" x2="19.07" y1="4.93" y2="19.07"/></svg>`,
+    unblock: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>`,
+    guest:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+    join:    `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>`,
+    joined:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>`,
+    leave:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`,
+  };
+
+  const row = document.createElement("div");
+  row.className = "slot-row";
+  row.setAttribute("data-slot-id", slot.id);
+  row.setAttribute("data-prio", prio);
+
+  // ── Main info ──
+  const mainInfo = document.createElement("div");
+  mainInfo.className = "slot-row-main";
+
+  const prioBadge = document.createElement("span");
+  prioBadge.className = `priority-pill ${prio === 0 ? "p0" : "p1"}`;
+  prioBadge.textContent = prio === 0 ? "P0" : "P1";
+  mainInfo.appendChild(prioBadge);
+
+  const sportEl = document.createElement("div");
+  sportEl.className = "slot-row-sport";
+  sportEl.textContent = p.sport;
+  mainInfo.appendChild(sportEl);
+
+  if (!dayBlocked) {
+    const fillSection = document.createElement("div");
+    fillSection.className = "slot-row-fill";
+
+    const barWrap = document.createElement("div");
+    barWrap.className = "fill-bar-wrap";
+    const bar = document.createElement("div");
+    bar.className = "fill-bar" + (waitingPlayers > 0 ? " waiting" : fillPct >= 100 ? " full" : "");
+    bar.style.width = fillPct + "%";
+    barWrap.appendChild(bar);
+    fillSection.appendChild(barWrap);
+
+    const countEl = document.createElement("span");
+    countEl.className = "fill-count";
+    countEl.textContent = `${mainPlayers}/${mainLimit}`;
+    fillSection.appendChild(countEl);
+
+    if (waitingPlayers > 0) {
+      const waitEl = document.createElement("span");
+      waitEl.className = "waiting-chip";
+      waitEl.textContent = `+${waitingPlayers}`;
+      fillSection.appendChild(waitEl);
+    }
+
+    mainInfo.appendChild(fillSection);
+  }
+
+  if (slotBlocked) {
+    const blockNotice = document.createElement("span");
+    blockNotice.className = "slot-row-block-notice";
+    blockNotice.textContent = blockedSlots[`${slot.id}_${prio}`]?.note || "Blocked";
+    mainInfo.appendChild(blockNotice);
+  }
+
+  row.appendChild(mainInfo);
+
+  // ── Action buttons ──
+  const actions = document.createElement("div");
+  actions.className = "slot-row-actions";
+
+  const shareBtn = document.createElement("button");
+  shareBtn.className = "btn share-btn-top";
+  shareBtn.innerHTML = SVG.share;
+  shareBtn.title = "Share on WhatsApp";
+  shareBtn.onclick = () => shareSlotOnWhatsApp(slot, prio, p, block);
+  actions.appendChild(shareBtn);
+
+  if (isAdmin && p.sport !== "No Games") {
+    const blockBtn = document.createElement("button");
+    blockBtn.className = slotBlocked ? "btn unblock-btn-top" : "btn block-btn-top";
+    blockBtn.innerHTML = slotBlocked ? SVG.unblock : SVG.block;
+    blockBtn.title = slotBlocked ? "Unblock this slot" : "Block this slot";
+    blockBtn.onclick = () => toggleBlockSlot(slot.id, prio, slot, p, !slotBlocked);
+    actions.appendChild(blockBtn);
+  }
+
+  if (canAddGuest && !slotBlocked) {
+    const guestBtn = document.createElement("button");
+    guestBtn.className = "btn guest-btn-top";
+    guestBtn.innerHTML = SVG.guest;
+    guestBtn.title = "Add Guest";
+    guestBtn.onclick = () => showGuestModal(slot.id, prio);
+    actions.appendChild(guestBtn);
+  }
+
+  const joinBtn = document.createElement("button");
+  joinBtn.className = "btn primary";
+  joinBtn.innerHTML = isIn ? SVG.joined : SVG.join;
+  joinBtn.title = blocked ? "Slot is blocked" : (isIn ? "Joined" : "Join");
+  joinBtn.disabled = !currentUser || isIn || !canJoin || blocked;
+  joinBtn.onclick = () => updateSignup(slot.id, prio, "join");
+  actions.appendChild(joinBtn);
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "btn";
+  leaveBtn.innerHTML = SVG.leave;
+  leaveBtn.title = blocked ? "Slot is blocked" : "Leave";
+  leaveBtn.disabled = !currentUser || !isIn || blocked;
+  leaveBtn.onclick = () => updateSignup(slot.id, prio, "leave");
+  actions.appendChild(leaveBtn);
+
+  row.appendChild(actions);
+  return row;
+}
+
+function renderTimeBlock(entries) {
+  // Group by blockId (TIME_BLOCKS order), then by slot.id within each block
+  const blockMap = new Map();
+  entries.forEach(({ slot, prio }) => {
+    if (!blockMap.has(slot.blockId)) blockMap.set(slot.blockId, new Map());
+    const slotMap = blockMap.get(slot.blockId);
+    if (!slotMap.has(slot.id)) slotMap.set(slot.id, []);
+    slotMap.get(slot.id).push({ slot, prio });
+  });
+
+  const fragment = document.createDocumentFragment();
+
+  TIME_BLOCKS.forEach(tb => {
+    if (!blockMap.has(tb.id)) return;
+
+    const timeBlock = document.createElement("div");
+    timeBlock.className = "time-block";
+
+    const label = document.createElement("div");
+    label.className = "time-block-label";
+    label.textContent = tb.label;
+    timeBlock.appendChild(label);
+
+    blockMap.get(tb.id).forEach((slotEntries, slotId) => {
+      const group = document.createElement("div");
+      group.className = "slot-group";
+
+      // Mark group active if any priority is the computed active one
+      const hasActive = slotEntries.some(e => computeActivePriority(e.slot) === e.prio);
+      if (hasActive) group.classList.add("active");
+
+      // Mark group blocked if the slot itself is blocked at day level
+      if (slotEntries.length && isDayBlocked(slotEntries[0].slot.dayIndex)) {
+        group.classList.add("slot-group-blocked");
+      }
+
+      slotEntries.forEach(({ slot, prio }, idx) => {
+        if (idx > 0) {
+          const divider = document.createElement("div");
+          divider.className = "slot-group-divider";
+          group.appendChild(divider);
+        }
+        group.appendChild(renderSlotRow(slot, prio));
+      });
+
+      timeBlock.appendChild(group);
+    });
+
+    fragment.appendChild(timeBlock);
+  });
+
+  return fragment;
 }
 
 function getDateLabel(dayIndex) {
@@ -896,7 +1704,7 @@ function getDateLabel(dayIndex) {
 
 function isDayInPast(dayIndex) {
   // Admins can see all days when toggle is on
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
+  if (currentUser && isCurrentUserAdmin() && showAllSignups) {
     return false;
   }
   
@@ -940,7 +1748,7 @@ function getBlockEndTime(blockId) {
 
 function isTimeSlotInPast(dayIndex, blockId) {
   // Admins can see all time slots when toggle is on
-  if (currentUser && ADMIN_EMAILS.includes(currentUser.email) && showAllSignups) {
+  if (currentUser && isCurrentUserAdmin() && showAllSignups) {
     return false;
   }
   
@@ -1055,7 +1863,7 @@ async function addGuest(slotId, prio, guestData) {
 }
 
 async function removeGuest(slotId, prio, guestUid) {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) {
+  if (!currentUser || !isCurrentUserAdmin()) {
     return alert("Only admins can remove guest players.");
   }
   
@@ -1121,7 +1929,7 @@ async function updateSignup(slotId, prio, action) {
  * OPTIONAL: seed if empty (admin only)
  *********************/
 async function seedWeeklyIfEmpty() {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) return alert("Admins only");
+  if (!currentUser || !isCurrentUserAdmin()) return alert("Admins only");
   const col = await db.collection("slots").limit(1).get();
   if (!col.empty) return alert("Slots already exist");
 
@@ -1233,10 +2041,15 @@ function shareSlotOnWhatsApp(slot, prio, p, block) {
   
   // Create share message
   // Add space before URL to help WhatsApp Web recognize it as clickable
-  const message = `🏸 *${sport}* - ${dayName}, ${dateLabel}\n` +
+  const playerNames = (p.players || [])
+    .map(pl => toCamelCase(pl.name || "Player"))
+    .join(", ");
+  const message = `🏸 *Come join us for ${sport}!* 🎉\n` +
+    `📅 ${dayName}, ${dateLabel}\n` +
     `⏰ ${timeLabel}\n` +
-    `👥 ${totalPlayers} players joined\n` +
-    `\nJoin this game:\n \n${deepLink}`;
+    `👥 ${totalPlayers}/${maxPlayers} spots filled\n` +
+    (playerNames ? `\n${playerNames}\n` : "") +
+    `\nTap to join:\n \n${deepLink}`;
   
   // WhatsApp share URL
   const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
@@ -1296,7 +2109,7 @@ function handleDeepLink() {
 }
 
 async function backupAndResetWeekly() {
-  if (!currentUser || !ADMIN_EMAILS.includes(currentUser.email)) {
+  if (!currentUser || !isCurrentUserAdmin()) {
     alert("Admins only.");
     return;
   }

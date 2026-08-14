@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
+    <meta name="theme-color" content="#3b82f6">
+    <title>SMASH Events - Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f6f7fb; color: #1f2937; min-height: 100vh;
+        }
+
+        .topbar {
+            position: sticky; top: 0; z-index: 5;
+            display: grid; grid-template-columns: auto 1fr auto;
+            align-items: center; padding: 10px 14px;
+            background: #fff; border-bottom: 1px solid #e5e7eb; gap: 12px;
+        }
+        .brand { display: flex; align-items: center; gap: 8px; }
+        .title-icon { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; box-shadow: 0 6px 12px rgba(0,0,0,.15); }
+        .title-bar {
+            text-align: center; margin: 0; font-size: clamp(1.2rem,4vw,1.8rem);
+            letter-spacing: .08em; text-transform: uppercase;
+            background: linear-gradient(120deg,#ff8a00,#ff3d7f,#7b2ff7);
+            -webkit-background-clip: text; color: transparent;
+        }
+        .nav-links { display: flex; align-items: center; gap: 10px; }
+        .nav-btn {
+            padding: 8px 14px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 14px; color: #1f2937;
+            text-decoration: none; cursor: pointer; transition: all 0.2s;
+        }
+        .nav-btn:hover { background: #f9fafb; border-color: #3b82f6; }
+
+        .container { max-width: 900px; margin: 0 auto; padding: 20px 12px; }
+
+        /* Auth gate */
+        .auth-gate { text-align: center; padding: 60px 20px; }
+        .auth-gate h2 { margin-bottom: 16px; }
+        .auth-gate p { color: #6b7280; margin-bottom: 24px; }
+        .sign-in-btn {
+            padding: 12px 28px; border-radius: 10px; border: none;
+            background: #3b82f6; color: #fff; font-weight: 600; font-size: 1rem;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .sign-in-btn:hover { background: #2563eb; }
+        .access-denied { color: #ef4444; font-weight: 600; margin-top: 16px; }
+
+        /* Form */
+        .form-card {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 16px;
+            padding: 24px; margin-bottom: 24px;
+        }
+        .form-card h2 { font-size: 1.3rem; margin-bottom: 20px; color: #1e293b; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.full { grid-column: 1 / -1; }
+        .form-group label { font-weight: 600; font-size: 0.85rem; color: #374151; text-transform: uppercase; letter-spacing: 0.03em; }
+        .form-group input, .form-group textarea {
+            padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px;
+            font-size: 0.95rem; font-family: inherit; transition: border-color 0.2s;
+        }
+        .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+        .form-group textarea { resize: vertical; min-height: 80px; }
+        .form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+        .btn {
+            padding: 10px 20px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s;
+        }
+        .btn:hover { background: #f9fafb; }
+        .btn.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        .btn.primary:hover { background: #2563eb; }
+        .btn.danger { background: #ef4444; color: #fff; border-color: #ef4444; }
+        .btn.danger:hover { background: #dc2626; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Events list */
+        .events-list h2 { font-size: 1.3rem; margin-bottom: 16px; color: #1e293b; }
+        .event-item {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+            padding: 16px; margin-bottom: 10px; display: flex;
+            justify-content: space-between; align-items: flex-start; gap: 12px;
+        }
+        .event-item:hover { border-color: #3b82f6; }
+        .event-info { flex: 1; }
+        .event-info .name { font-weight: 700; font-size: 1rem; color: #1e293b; }
+        .event-info .date { color: #7c3aed; font-weight: 500; font-size: 0.9rem; margin-top: 2px; }
+        .event-info .details { color: #6b7280; font-size: 0.85rem; margin-top: 4px; }
+        .event-actions { display: flex; gap: 6px; flex-shrink: 0; }
+        .icon-btn {
+            width: 36px; height: 36px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; cursor: pointer; font-size: 1rem; display: flex;
+            align-items: center; justify-content: center; transition: all 0.2s;
+        }
+        .icon-btn:hover { background: #f3f4f6; }
+        .icon-btn.delete:hover { background: #fef2f2; border-color: #fca5a5; }
+
+        .empty-state { text-align: center; padding: 30px; color: #6b7280; font-style: italic; }
+
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            padding: 12px 24px; border-radius: 10px; color: #fff; font-weight: 600;
+            z-index: 100; opacity: 0; transition: opacity 0.3s;
+        }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+
+        @media (max-width: 640px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .event-item { flex-direction: column; }
+            .event-actions { align-self: flex-end; }
+        }
+    </style>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="title-icon" />
+    </div>
+    <h1 class="title-bar">Events Admin</h1>
+    <div class="nav-links">
+        <a href="rsvp-admin.html" class="nav-btn">RSVP</a>
+        <a href="events.html" class="nav-btn">Events</a>
+        <a href="index.html" class="nav-btn">Schedule</a>
+    </div>
+</header>
+
+<!-- Auth Gate -->
+<div id="authGate" class="auth-gate">
+    <h2>Admin Access Required</h2>
+    <p>Sign in with your Google account to manage events.</p>
+    <button class="sign-in-btn" onclick="signIn()">Sign in with Google</button>
+    <p id="accessDenied" class="access-denied" style="display:none;">Access denied. Only admins can manage events.</p>
+</div>
+
+<!-- Admin Content (hidden until authenticated) -->
+<main id="adminContent" class="container" style="display:none;">
+    <!-- Add/Edit Form -->
+    <div class="form-card">
+        <h2 id="formTitle">Add New Event</h2>
+        <form id="eventForm" onsubmit="handleSubmit(event)">
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="eventName">Event Name *</label>
+                    <input type="text" id="eventName" required placeholder="e.g. SMASH Annual Tournament" />
+                </div>
+                <div class="form-group">
+                    <label for="eventDate">Start Date *</label>
+                    <input type="date" id="eventDate" required />
+                </div>
+                <div class="form-group">
+                    <label for="eventEndDate">End Date</label>
+                    <input type="date" id="eventEndDate" />
+                </div>
+                <div class="form-group full">
+                    <label for="eventDesc">Description</label>
+                    <textarea id="eventDesc" placeholder="Brief description of the event..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="eventVenue">Venue</label>
+                    <input type="text" id="eventVenue" placeholder="e.g. Community Center Gym" />
+                </div>
+                <div class="form-group">
+                    <label for="eventContact">Contact Name</label>
+                    <input type="text" id="eventContact" placeholder="e.g. John" />
+                </div>
+                <div class="form-group">
+                    <label for="eventPhone">Contact Phone</label>
+                    <input type="tel" id="eventPhone" placeholder="e.g. 555-1234" />
+                </div>
+                <div class="form-group full">
+                    <label for="eventReg">Registration Link</label>
+                    <input type="url" id="eventReg" placeholder="https://..." />
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" id="cancelBtn" style="display:none;" onclick="cancelEdit()">Cancel</button>
+                <button type="submit" class="btn primary" id="submitBtn">Add Event</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Existing Events -->
+    <div class="events-list">
+        <h2>All Events</h2>
+        <div id="eventsList">
+            <p class="empty-state">Loading events...</p>
+        </div>
+    </div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="firebase-config.js?v=9"></script>
+<script>
+
+let currentUser = null;
+let editingId = null;
+
+function showToast(message, type = 'success') {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function signIn() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(err => {
+        console.error('Sign-in error:', err);
+        showToast('Sign-in failed. Please try again.', 'error');
+    });
+}
+
+SmashAuth.onChange(s => {
+    currentUser = s.user;
+    const gate = document.getElementById('authGate');
+    const content = document.getElementById('adminContent');
+    const denied = document.getElementById('accessDenied');
+
+    if (!s.user) {
+        gate.style.display = '';
+        content.style.display = 'none';
+        denied.style.display = 'none';
+        return;
+    }
+    if (s.loading) return;
+    if (s.isAdmin) {
+        gate.style.display = 'none';
+        content.style.display = '';
+        denied.style.display = 'none';
+        loadEvents();
+    } else {
+        gate.style.display = '';
+        content.style.display = 'none';
+        denied.style.display = '';
+    }
+});
+
+function formatDate(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function loadEvents() {
+    db.collection('events').orderBy('date', 'asc').onSnapshot(snapshot => {
+        const list = document.getElementById('eventsList');
+        if (snapshot.empty) {
+            list.innerHTML = '<p class="empty-state">No events yet. Add one above!</p>';
+            return;
+        }
+
+        list.innerHTML = '';
+        snapshot.forEach(doc => {
+            const e = doc.data();
+            const item = document.createElement('div');
+            item.className = 'event-item';
+            item.innerHTML = `
+                <div class="event-info">
+                    <div class="name">${escapeHtml(e.name)}</div>
+                    <div class="date">${formatDate(e.date)}</div>
+                    <div class="details">
+                        ${e.venue ? escapeHtml(e.venue) : ''}
+                        ${e.venue && e.contact ? ' · ' : ''}
+                        ${e.contact ? escapeHtml(e.contact) : ''}
+                        ${e.phone ? ' (' + escapeHtml(e.phone) + ')' : ''}
+                    </div>
+                </div>
+                <div class="event-actions">
+                    <button class="icon-btn" title="Edit" onclick="startEdit('${doc.id}')">✏️</button>
+                    <button class="icon-btn delete" title="Delete" onclick="deleteEvent('${doc.id}', '${escapeHtml(e.name).replace(/'/g, "\\'")}')">🗑️</button>
+                </div>
+            `;
+            list.appendChild(item);
+        });
+    });
+}
+
+async function handleSubmit(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+
+    const data = {
+        name: document.getElementById('eventName').value.trim(),
+        date: document.getElementById('eventDate').value,
+        endDate: document.getElementById('eventEndDate').value || '',
+        description: document.getElementById('eventDesc').value.trim(),
+        venue: document.getElementById('eventVenue').value.trim(),
+        contact: document.getElementById('eventContact').value.trim(),
+        phone: document.getElementById('eventPhone').value.trim(),
+        registration: document.getElementById('eventReg').value.trim(),
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try {
+        if (editingId) {
+            await db.collection('events').doc(editingId).update(data);
+            showToast('Event updated!');
+            cancelEdit();
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            await db.collection('events').add(data);
+            showToast('Event added!');
+        }
+        document.getElementById('eventForm').reset();
+    } catch (err) {
+        console.error('Save error:', err);
+        showToast('Failed to save event.', 'error');
+    }
+    btn.disabled = false;
+}
+
+async function startEdit(id) {
+    const doc = await db.collection('events').doc(id).get();
+    if (!doc.exists) return showToast('Event not found.', 'error');
+
+    const e = doc.data();
+    editingId = id;
+    document.getElementById('eventName').value = e.name || '';
+    document.getElementById('eventDate').value = e.date || '';
+    document.getElementById('eventEndDate').value = e.endDate || '';
+    document.getElementById('eventDesc').value = e.description || '';
+    document.getElementById('eventVenue').value = e.venue || '';
+    document.getElementById('eventContact').value = e.contact || '';
+    document.getElementById('eventPhone').value = e.phone || '';
+    document.getElementById('eventReg').value = e.registration || '';
+
+    document.getElementById('formTitle').textContent = 'Edit Event';
+    document.getElementById('submitBtn').textContent = 'Update Event';
+    document.getElementById('cancelBtn').style.display = '';
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function cancelEdit() {
+    editingId = null;
+    document.getElementById('eventForm').reset();
+    document.getElementById('formTitle').textContent = 'Add New Event';
+    document.getElementById('submitBtn').textContent = 'Add Event';
+    document.getElementById('cancelBtn').style.display = 'none';
+}
+
+async function deleteEvent(id, name) {
+    if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+    try {
+        await db.collection('events').doc(id).delete();
+        showToast('Event deleted.');
+        if (editingId === id) cancelEdit();
+    } catch (err) {
+        console.error('Delete error:', err);
+        showToast('Failed to delete event.', 'error');
+    }
+}
+</script>
+</body>
+</html>

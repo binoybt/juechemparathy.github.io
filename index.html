@@ -23,7 +23,10 @@
     <link rel="apple-touch-icon" href="icons/smash-logo.png">
 
     <title>SMASH Game Sign Up</title>
-    <link rel="stylesheet" href="style.css?v=6" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="style.css?v=7" />
 
     <!-- Firebase SDKs (Compat builds for simple <script> use) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -39,11 +42,19 @@
         SMASH Game SignUp
     </h1>
     <div style="display: flex; align-items: center; gap: 12px;">
-        <div id="patronsBox"></div>
         <a href="tournament.html" class="patrons-link" style="background:linear-gradient(135deg,#fbbf24,#ef4444);" title="Church Tournament">
             <span style="font-size:1.1rem;">🏆</span>
             <span class="patrons-text">Tournament</span>
         </a>
+        <a href="events.html" class="patrons-link" style="background:linear-gradient(135deg,#3b82f6,#7c3aed);" title="Community Events">
+            <span style="font-size:1.1rem;">📅</span>
+            <span class="patrons-text">Events</span>
+        </a>
+        <a href="wishlist.html" class="patrons-link" style="background:linear-gradient(135deg,#ff8a00,#7c3aed);" title="Community Wishlist">
+            <span style="font-size:1.1rem;">🎁</span>
+            <span class="patrons-text">Wishlist</span>
+        </a>
+        <div id="patronsBox"></div>
         <div id="userBox"></div>
     </div>
 </header>
@@ -106,6 +117,33 @@
     </div>
 </div>
 
+<!-- Contribute Modal -->
+<div id="contributeModal" class="modal">
+    <div class="modal-content">
+        <span class="modal-close" onclick="closeContributeModal()">&times;</span>
+        <h2>Contribute</h2>
+        <div class="modal-item-name" id="modalItemName" style="color:#7c3aed;font-weight:600;font-size:0.9rem;margin-bottom:18px;"></div>
+        <form id="contributeForm" onsubmit="submitContribution(event)">
+            <div class="form-group">
+                <label for="contributorName">Your Name *</label>
+                <input type="text" id="contributorName" required placeholder="e.g. Jane Doe" />
+            </div>
+            <div class="form-group">
+                <label for="contributionAmount">Amount ($) *</label>
+                <input type="number" id="contributionAmount" required min="1" step="0.01" placeholder="e.g. 25" />
+            </div>
+            <div class="form-group">
+                <label for="contributionNote">Note (optional)</label>
+                <input type="text" id="contributionNote" placeholder="Happy to help!" />
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeContributeModal()">Cancel</button>
+                <button type="submit" class="btn primary" id="contributeSubmitBtn">Submit Contribution</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <!-- Preferences Modal -->
 <div id="preferencesModal" class="modal">
     <div class="modal-content">
@@ -122,8 +160,22 @@
     </div>
 </div>
 
+<!-- Block Days Modal (Admin Only) -->
+<div id="blockDaysModal" class="modal">
+    <div class="modal-content" style="max-width: 700px; max-height: 80vh; overflow-y: auto;">
+        <span class="modal-close" onclick="closeBlockDaysModal()">&times;</span>
+        <h2>Block Days & Time Slots</h2>
+        <p style="color:#6b7280;font-size:14px;margin-bottom:16px;">Block entire days or individual time slots. Provide a reason for each block.</p>
+        <div id="dayCheckboxes" class="day-checkboxes"></div>
+        <div class="form-actions">
+            <button type="button" class="btn" onclick="closeBlockDaysModal()">Cancel</button>
+            <button type="button" class="btn primary" onclick="saveBlockedDays()">Save All</button>
+        </div>
+    </div>
+</div>
+
 <!-- Your Firebase config -->
-<script src="firebase-config.js?v=6"></script>
+<script src="firebase-config.js?v=9"></script>
 
 <!-- App logic -->
 <script src="app.js?v=6"></script>

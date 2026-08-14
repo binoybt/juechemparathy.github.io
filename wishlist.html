@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
+    <meta name="theme-color" content="#3b82f6">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="SMASH">
+    <link rel="apple-touch-icon" href="icons/smash-logo.png">
+    <title>SMASH Wishlist</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+            background: #f1f5f9;
+            color: #0f172a;
+            min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .topbar {
+            position: sticky; top: 0; z-index: 100;
+            display: grid; grid-template-columns: auto 1fr auto;
+            align-items: center; padding: 10px 18px;
+            background: #0f172a;
+            border-bottom: 1px solid rgba(255,255,255,.07);
+            gap: 14px;
+            box-shadow: 0 2px 20px rgba(0,0,0,.3);
+        }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .title-icon {
+            width: 44px; height: 44px; border-radius: 12px; object-fit: cover;
+            box-shadow: 0 4px 12px rgba(0,0,0,.35), 0 0 0 1.5px rgba(255,255,255,.12);
+        }
+        .title-bar {
+            text-align: center; margin: 0;
+            font-family: 'Barlow Condensed', system-ui, sans-serif;
+            font-size: clamp(1.4rem,4vw,2rem);
+            font-weight: 800; letter-spacing: .12em; text-transform: uppercase;
+            background: linear-gradient(120deg, #fbbf24, #f87171, #a78bfa);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+        .nav-links { display: flex; align-items: center; gap: 10px; }
+        .nav-btn {
+            padding: 7px 14px; border-radius: 8px;
+            border: 1px solid rgba(255,255,255,.15);
+            background: rgba(255,255,255,.08);
+            font-weight: 600; font-size: 13px; color: #e2e8f0;
+            text-decoration: none; cursor: pointer; transition: all 0.2s;
+            font-family: inherit;
+        }
+        .nav-btn:hover { background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.3); }
+        .nav-btn.admin { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        .nav-btn.admin:hover { background: #2563eb; }
+
+        .container { max-width: 1100px; margin: 0 auto; padding: 20px 14px 48px; }
+
+        .page-header { text-align: center; margin-bottom: 20px; }
+        .page-header h2 {
+            font-family: 'Barlow Condensed', sans-serif;
+            font-size: 1.8rem; font-weight: 700; letter-spacing: .06em;
+            color: #0f172a; margin-bottom: 6px;
+        }
+        .page-header p { color: #64748b; font-size: 0.95rem; }
+
+        .offline-note {
+            background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b;
+            border-radius: 12px; padding: 14px 18px; margin-bottom: 28px;
+            font-size: 0.88rem; color: #78350f; line-height: 1.6;
+        }
+        .offline-note strong { color: #92400e; }
+
+        .no-items { text-align: center; padding: 40px; color: #64748b; font-style: italic; }
+
+        .items-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 18px;
+        }
+
+        .item-card {
+            background: #fff; border-radius: 18px; border: 1px solid #e2e8f0;
+            box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+            overflow: hidden; display: flex; flex-direction: column;
+            transition: box-shadow .2s;
+        }
+        .item-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,.1); }
+        .item-card.secured { opacity: 0.85; }
+
+        .item-image-wrap {
+            width: 100%; height: 170px; background: #f8fafc;
+            display: flex; align-items: center; justify-content: center;
+            border-bottom: 1px solid #f1f5f9; position: relative;
+        }
+        .item-image-wrap img { width: 100%; height: 100%; object-fit: contain; }
+        .item-image-placeholder { font-size: 3rem; }
+
+        .store-badge {
+            position: absolute; top: 10px; left: 10px;
+            padding: 4px 10px; border-radius: 999px;
+            font-size: 0.72rem; font-weight: 700; letter-spacing: .03em;
+            color: #fff;
+        }
+        .store-badge.amazon { background: #ff9900; }
+        .store-badge.walmart { background: #0071ce; }
+
+        .secured-badge {
+            position: absolute; top: 10px; right: 10px;
+            padding: 4px 10px; border-radius: 999px;
+            font-size: 0.72rem; font-weight: 700;
+            background: #dcfce7; color: #166534;
+        }
+
+        .item-body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 10px; flex: 1; }
+        .item-name { font-weight: 700; font-size: 1.02rem; color: #0f172a; line-height: 1.3; }
+        .item-notes { font-size: 0.85rem; color: #64748b; }
+
+        .item-link {
+            font-size: 0.85rem; font-weight: 600; color: #3b82f6; text-decoration: none;
+        }
+        .item-link:hover { text-decoration: underline; }
+
+        .progress-track {
+            width: 100%; height: 10px; border-radius: 999px; background: #f1f5f9; overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%; border-radius: 999px;
+            background: linear-gradient(90deg, #3b82f6, #7c3aed);
+            transition: width .3s ease;
+        }
+        .progress-fill.secured { background: linear-gradient(90deg, #10b981, #059669); }
+        .progress-label { font-size: 0.82rem; color: #475569; font-weight: 600; display: flex; justify-content: space-between; }
+
+        .item-actions { display: flex; gap: 8px; margin-top: 4px; }
+
+        .contribute-btn {
+            flex: 1; padding: 10px 16px; border-radius: 10px; border: none;
+            background: #0f172a; color: #fff; font-weight: 700; font-size: 0.9rem;
+            cursor: pointer; transition: all 0.2s; font-family: inherit;
+        }
+        .contribute-btn:hover { background: #1e293b; transform: translateY(-1px); }
+        .contribute-btn:disabled { background: #cbd5e1; cursor: not-allowed; transform: none; }
+
+        .share-btn {
+            flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+            padding: 10px 14px; border-radius: 10px;
+            border: 1px solid #25d366; background: #25d366; color: #fff;
+            cursor: pointer; transition: all 0.2s; font-family: inherit;
+        }
+        .share-btn:hover { background: #20ba5a; border-color: #20ba5a; transform: translateY(-1px); }
+
+        .contributors-toggle {
+            font-size: 0.8rem; color: #7c3aed; background: none; border: none; cursor: pointer;
+            font-family: inherit; font-weight: 600; text-align: left; padding: 0;
+        }
+        .contributors-toggle:hover { text-decoration: underline; }
+        .contributors-list { display: none; flex-direction: column; gap: 6px; margin-top: 4px; max-height: 150px; overflow-y: auto; }
+        .contributors-list.show { display: flex; }
+        .contributor-row {
+            display: flex; justify-content: space-between; font-size: 0.82rem;
+            padding: 6px 10px; background: #fafbfd; border-radius: 8px; border: 1px solid #f1f5f9;
+        }
+        .contributor-name { color: #0f172a; font-weight: 600; }
+        .contributor-amount { color: #059669; font-weight: 700; }
+        .no-contributors { font-size: 0.8rem; color: #94a3b8; font-style: italic; }
+
+        /* Modal */
+        .modal { display: none; position: fixed; inset: 0; background: rgba(15,23,42,.5); z-index: 200; align-items: center; justify-content: center; padding: 16px; }
+        .modal.show { display: flex; }
+        .modal-content { background: #fff; border-radius: 18px; padding: 26px 24px; max-width: 420px; width: 100%; position: relative; }
+        .modal-close { position: absolute; top: 14px; right: 18px; font-size: 1.4rem; cursor: pointer; color: #94a3b8; line-height: 1; }
+        .modal-close:hover { color: #0f172a; }
+        .modal-content h2 { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; margin-bottom: 6px; color: #0f172a; }
+        .modal-item-name { color: #7c3aed; font-weight: 600; font-size: 0.9rem; margin-bottom: 18px; }
+        .form-group { margin-bottom: 14px; }
+        .form-group label { display: block; font-weight: 600; font-size: 0.82rem; color: #374151; margin-bottom: 5px; text-transform: uppercase; letter-spacing: .03em; }
+        .form-group input, .form-group textarea {
+            width: 100%; padding: 10px 12px; border: 1px solid #e2e8f0; border-radius: 8px;
+            font-size: 0.95rem; font-family: inherit;
+        }
+        .form-group input:focus, .form-group textarea:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.1); }
+        .form-group textarea { resize: vertical; min-height: 60px; }
+        .form-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+        .btn { padding: 10px 18px; border-radius: 8px; border: 1px solid #e2e8f0; background: #fff; font-weight: 600; font-size: 0.9rem; cursor: pointer; transition: all .2s; font-family: inherit; }
+        .btn:hover { background: #f9fafb; }
+        .btn.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        .btn.primary:hover { background: #2563eb; }
+        .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            padding: 12px 24px; border-radius: 10px; color: #fff; font-weight: 600;
+            z-index: 300; opacity: 0; transition: opacity 0.3s; pointer-events: none;
+            max-width: 90vw; text-align: center;
+        }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+
+        .footer { text-align: center; margin-top: 40px; }
+        .back-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 11px 26px; background: #0f172a; color: white; text-decoration: none;
+            border-radius: 10px; font-weight: 600; transition: all 0.25s ease;
+            box-shadow: 0 4px 14px rgba(15,23,42,.25); font-family: inherit;
+        }
+        .back-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(15,23,42,.35); }
+    </style>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="title-icon" />
+    </div>
+    <h1 class="title-bar">🎁 SMASH Wishlist</h1>
+    <div class="nav-links">
+        <a href="index.html" class="nav-btn">Schedule</a>
+        <a href="tournament.html" class="nav-btn">🏆 Tournament</a>
+        <a href="events.html" class="nav-btn">Events</a>
+        <a href="wishlist-admin.html" class="nav-btn admin" id="adminLink" style="display:none;">Admin</a>
+    </div>
+</header>
+
+<main class="container">
+    <div class="page-header">
+        <p>Help us secure these items — every contribution brings us closer to the goal</p>
+    </div>
+
+    <div class="offline-note">
+        <strong>Note:</strong> Payments are handled through <a href="https://stthomas.parishon.net/sfo/site" target="_blank" rel="noopener">https://stthomas.parishon.net/sfo/site</a> &gt; Donate &gt; Fund: SMASH Donations. Please include your name and the item you are contributing towards in the "Note" section of your payment. Thank you for your support!
+    </div>
+
+    <div class="items-grid" id="itemsGrid">
+        <p class="no-items">Loading wishlist...</p>
+    </div>
+
+    <div class="footer">
+        <a href="index.html" class="back-btn">&larr; Back to Schedule</a>
+    </div>
+</main>
+
+<!-- Contribute Modal -->
+<div id="contributeModal" class="modal">
+    <div class="modal-content">
+        <span class="modal-close" onclick="closeContributeModal()">&times;</span>
+        <h2>Contribute</h2>
+        <div class="modal-item-name" id="modalItemName"></div>
+        <form id="contributeForm" onsubmit="submitContribution(event)">
+            <div class="form-group">
+                <label for="contributorName">Your Name *</label>
+                <input type="text" id="contributorName" required placeholder="e.g. Jane Doe" />
+            </div>
+            <div class="form-group">
+                <label for="contributionAmount">Amount ($) *</label>
+                <input type="number" id="contributionAmount" required min="1" step="0.01" placeholder="e.g. 25" />
+            </div>
+            <div class="form-group">
+                <label for="contributionNote">Note (optional)</label>
+                <textarea id="contributionNote" placeholder="Happy to help!"></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" onclick="closeContributeModal()">Cancel</button>
+                <button type="submit" class="btn primary" id="contributeSubmitBtn">Submit Contribution</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<!--
+  Recommended Firestore security rules (console-side; not versioned in this repo —
+  add inside the top-level `match /databases/{database}/documents { ... }` block):
+
+  match /wishlistItems/{itemId} {
+    allow read: if true;
+
+    allow create, delete: if request.auth != null &&
+      request.auth.token.email in [
+        "jue.george@gmail.com", "binoybt@gmail.com",
+        "geojins@gmail.com", "b.ajaymathews@gmail.com"
+      ];
+
+    // Admin can change anything; anyone else may only touch raisedAmount/status/updatedAt
+    // (this is what the public contribution transaction updates)
+    allow update: if (
+      request.auth != null &&
+      request.auth.token.email in [
+        "jue.george@gmail.com", "binoybt@gmail.com",
+        "geojins@gmail.com", "b.ajaymathews@gmail.com"
+      ]
+    ) || (
+      request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['raisedAmount', 'status', 'updatedAt']) &&
+      request.resource.data.raisedAmount is number &&
+      request.resource.data.raisedAmount >= resource.data.raisedAmount
+    );
+
+    match /contributions/{contributionId} {
+      allow read: if true;
+      allow create: if request.resource.data.contributorName is string &&
+        request.resource.data.contributorName.size() > 0 &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount > 0;
+      allow update, delete: if request.auth != null &&
+        request.auth.token.email in [
+          "jue.george@gmail.com", "binoybt@gmail.com",
+          "geojins@gmail.com", "b.ajaymathews@gmail.com"
+        ];
+    }
+  }
+-->
+<script src="firebase-config.js?v=9"></script>
+<script>
+let currentUser = null;
+let activeItemId = null;
+let deepLinkHandled = false;
+const contributionUnsubscribers = {};
+
+SmashAuth.onChange(s => {
+    currentUser = s.user;
+    document.getElementById('adminLink').style.display =
+        (s.user && s.isAdmin) ? '' : 'none';
+});
+
+function showToast(message, type = 'success') {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function formatMoney(n) {
+    return (Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+}
+
+function storeBadgeLabel(store) {
+    return store === 'walmart' ? 'Walmart' : 'Amazon';
+}
+
+function shareItem(itemId, itemName) {
+    const baseUrl = window.location.origin + window.location.pathname;
+    const deepLink = `${baseUrl}?item=${encodeURIComponent(itemId)}`;
+    // Add space before URL to help WhatsApp Web recognize it as clickable
+    const message = `🎁 *Help us get the "${itemName}" for SMASH!* 🎉\n` +
+        `Every contribution counts.\n` +
+        `\nView & contribute:\n \n${deepLink}`;
+
+    const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(whatsappUrl, '_self');
+}
+
+function handleItemDeepLink() {
+    if (deepLinkHandled) return;
+    const params = new URLSearchParams(window.location.search);
+    const itemId = params.get('item');
+    if (!itemId) return;
+
+    const card = document.querySelector(`.item-card[data-id="${itemId}"]`);
+    if (!card) return;
+
+    deepLinkHandled = true;
+    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    card.style.boxShadow = '0 0 0 4px rgba(59,130,246,.5)';
+    setTimeout(() => { card.style.boxShadow = ''; }, 2000);
+    window.history.replaceState({}, document.title, window.location.pathname);
+}
+
+function renderItems(items) {
+    const grid = document.getElementById('itemsGrid');
+
+    if (items.length === 0) {
+        grid.innerHTML = '<p class="no-items">No wishlist items yet. Check back soon!</p>';
+        return;
+    }
+
+    grid.innerHTML = items.map(item => {
+        const goal = Number(item.goalAmount) || 0;
+        const raised = Number(item.raisedAmount) || 0;
+        const pct = goal > 0 ? Math.min(100, Math.round((raised / goal) * 100)) : 0;
+        const secured = item.status === 'secured';
+
+        return `
+        <div class="item-card ${secured ? 'secured' : ''}" data-id="${item.id}">
+            <div class="item-image-wrap">
+                <span class="store-badge ${item.store === 'walmart' ? 'walmart' : 'amazon'}">${storeBadgeLabel(item.store)}</span>
+                ${secured ? '<span class="secured-badge">Secured ✓</span>' : ''}
+                ${item.imageUrl
+                    ? `<img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'item-image-placeholder',textContent:'🎁'}))" />`
+                    : '<span class="item-image-placeholder">🎁</span>'}
+            </div>
+            <div class="item-body">
+                <div class="item-name">${escapeHtml(item.name)}</div>
+                ${item.notes ? `<div class="item-notes">${escapeHtml(item.notes)}</div>` : ''}
+                ${item.productUrl ? `<a href="${escapeHtml(item.productUrl)}" target="_blank" rel="noopener" class="item-link">View on ${storeBadgeLabel(item.store)} →</a>` : ''}
+
+                <div>
+                    <div class="progress-label"><span>$${formatMoney(raised)} of $${formatMoney(goal)}</span><span>${pct}%</span></div>
+                    <div class="progress-track"><div class="progress-fill ${secured ? 'secured' : ''}" style="width:${pct}%;"></div></div>
+                </div>
+
+                <button class="contributors-toggle" onclick="toggleContributors('${item.id}')" id="toggle-${item.id}">Show contributors</button>
+                <div class="contributors-list" id="contributors-${item.id}"><p class="no-contributors">Loading...</p></div>
+
+                <div class="item-actions">
+                    <button class="contribute-btn" ${secured ? 'disabled' : ''} onclick="openContributeModal('${item.id}', '${escapeHtml(item.name).replace(/'/g, "\\'")}')">
+                        ${secured ? 'Fully Funded' : 'Contribute'}
+                    </button>
+                    <button class="share-btn" title="Share on WhatsApp" onclick="shareItem('${item.id}', '${escapeHtml(item.name).replace(/'/g, "\\'")}')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></button>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+
+    handleItemDeepLink();
+}
+
+function toggleContributors(itemId) {
+    const list = document.getElementById(`contributors-${itemId}`);
+    const toggle = document.getElementById(`toggle-${itemId}`);
+    const showing = list.classList.toggle('show');
+    toggle.textContent = showing ? 'Hide contributors' : 'Show contributors';
+
+    if (showing && !contributionUnsubscribers[itemId]) {
+        contributionUnsubscribers[itemId] = db.collection('wishlistItems').doc(itemId)
+            .collection('contributions').orderBy('createdAt', 'desc')
+            .onSnapshot(snapshot => {
+                if (snapshot.empty) {
+                    list.innerHTML = '<p class="no-contributors">No contributions yet — be the first!</p>';
+                    return;
+                }
+                list.innerHTML = snapshot.docs.map(doc => {
+                    const c = doc.data();
+                    return `<div class="contributor-row">
+                        <span class="contributor-name">${escapeHtml(c.contributorName)}</span>
+                        <span class="contributor-amount">$${formatMoney(c.amount)}</span>
+                    </div>`;
+                }).join('');
+            }, err => console.error('Error loading contributions:', err));
+    }
+}
+
+function openContributeModal(itemId, itemName) {
+    activeItemId = itemId;
+    document.getElementById('modalItemName').textContent = itemName;
+    document.getElementById('contributeForm').reset();
+    document.getElementById('contributeModal').classList.add('show');
+}
+
+function closeContributeModal() {
+    document.getElementById('contributeModal').classList.remove('show');
+    activeItemId = null;
+}
+
+async function submitContribution(ev) {
+    ev.preventDefault();
+    if (!activeItemId) return;
+
+    const contributorName = document.getElementById('contributorName').value.trim();
+    const amount = parseFloat(document.getElementById('contributionAmount').value);
+    const note = document.getElementById('contributionNote').value.trim();
+
+    if (!contributorName || !(amount > 0)) {
+        showToast('Please enter your name and a valid amount.', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('contributeSubmitBtn');
+    btn.disabled = true;
+
+    const itemRef = db.collection('wishlistItems').doc(activeItemId);
+    const contributionRef = itemRef.collection('contributions').doc();
+
+    try {
+        await db.runTransaction(async tx => {
+            const itemDoc = await tx.get(itemRef);
+            if (!itemDoc.exists) throw new Error('This item no longer exists.');
+
+            const item = itemDoc.data();
+            if (item.status === 'secured') throw new Error('This item is already fully funded.');
+
+            const goal = Number(item.goalAmount) || 0;
+            const newRaised = (Number(item.raisedAmount) || 0) + amount;
+            const newStatus = goal > 0 && newRaised >= goal ? 'secured' : 'open';
+
+            tx.update(itemRef, {
+                raisedAmount: newRaised,
+                status: newStatus,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            tx.set(contributionRef, {
+                contributorName,
+                amount,
+                note,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        });
+
+        showToast('Thank you for your contribution!');
+        closeContributeModal();
+    } catch (err) {
+        console.error('Contribution error:', err);
+        showToast(err.message || 'Failed to record contribution.', 'error');
+    }
+    btn.disabled = false;
+}
+
+// Load wishlist items, ordered by creation date
+db.collection('wishlistItems').orderBy('createdAt', 'asc').onSnapshot(snapshot => {
+    const items = [];
+    snapshot.forEach(doc => items.push({ id: doc.id, ...doc.data() }));
+    renderItems(items);
+}, err => {
+    console.error('Error loading wishlist:', err);
+    document.getElementById('itemsGrid').innerHTML =
+        '<p class="no-items">Error loading wishlist. Please refresh.</p>';
+});
+</script>
+</body>
+</html>

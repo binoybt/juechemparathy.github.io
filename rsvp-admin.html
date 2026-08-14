@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico">
+    <meta name="theme-color" content="#3b82f6">
+    <title>SMASH RSVP - Admin</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+            background: #f6f7fb; color: #1f2937; min-height: 100vh;
+        }
+
+        .topbar {
+            position: sticky; top: 0; z-index: 5;
+            display: grid; grid-template-columns: auto 1fr auto;
+            align-items: center; padding: 10px 14px;
+            background: #fff; border-bottom: 1px solid #e5e7eb; gap: 12px;
+        }
+        .brand { display: flex; align-items: center; gap: 8px; }
+        .title-icon { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; box-shadow: 0 6px 12px rgba(0,0,0,.15); }
+        .title-bar {
+            text-align: center; margin: 0; font-size: clamp(1.2rem,4vw,1.8rem);
+            letter-spacing: .08em; text-transform: uppercase;
+            background: linear-gradient(120deg,#ff8a00,#ff3d7f,#7b2ff7);
+            -webkit-background-clip: text; color: transparent;
+        }
+        .nav-links { display: flex; align-items: center; gap: 10px; }
+        .nav-btn {
+            padding: 8px 14px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 14px; color: #1f2937;
+            text-decoration: none; cursor: pointer; transition: all 0.2s;
+        }
+        .nav-btn:hover { background: #f9fafb; border-color: #3b82f6; }
+
+        .container { max-width: 1000px; margin: 0 auto; padding: 20px 12px; }
+
+        /* Auth gate */
+        .auth-gate { text-align: center; padding: 60px 20px; }
+        .auth-gate h2 { margin-bottom: 16px; }
+        .auth-gate p { color: #6b7280; margin-bottom: 24px; }
+        .sign-in-btn {
+            padding: 12px 28px; border-radius: 10px; border: none;
+            background: #3b82f6; color: #fff; font-weight: 600; font-size: 1rem;
+            cursor: pointer; transition: background 0.2s;
+        }
+        .sign-in-btn:hover { background: #2563eb; }
+        .access-denied { color: #ef4444; font-weight: 600; margin-top: 16px; }
+
+        /* Form */
+        .form-card {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 16px;
+            padding: 24px; margin-bottom: 24px;
+        }
+        .form-card h2 { font-size: 1.3rem; margin-bottom: 20px; color: #1e293b; }
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group.full { grid-column: 1 / -1; }
+        .form-group label {
+            font-weight: 600; font-size: 0.85rem; color: #374151;
+            text-transform: uppercase; letter-spacing: 0.03em;
+        }
+        .form-group input, .form-group textarea {
+            padding: 10px 14px; border: 1px solid #e5e7eb; border-radius: 8px;
+            font-size: 0.95rem; font-family: inherit; transition: border-color 0.2s;
+        }
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1);
+        }
+        .form-group textarea { resize: vertical; min-height: 80px; }
+        .form-actions { display: flex; gap: 10px; margin-top: 20px; justify-content: flex-end; }
+        .btn {
+            padding: 10px 20px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; font-weight: 600; font-size: 0.95rem; cursor: pointer; transition: all 0.2s;
+        }
+        .btn:hover { background: #f9fafb; }
+        .btn.primary { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+        .btn.primary:hover { background: #2563eb; }
+        .btn.danger { background: #ef4444; color: #fff; border-color: #ef4444; }
+        .btn.danger:hover { background: #dc2626; }
+        .btn.success { background: #10b981; color: #fff; border-color: #10b981; }
+        .btn.success:hover { background: #059669; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        /* Events list */
+        .events-list h2 { font-size: 1.3rem; margin-bottom: 16px; color: #1e293b; }
+        .event-item {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+            padding: 16px; margin-bottom: 10px;
+        }
+        .event-item:hover { border-color: #3b82f6; }
+        .event-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+        .event-info { flex: 1; }
+        .event-info .name { font-weight: 700; font-size: 1rem; color: #1e293b; }
+        .event-info .time { color: #7c3aed; font-weight: 500; font-size: 0.9rem; margin-top: 2px; }
+        .event-info .desc { color: #6b7280; font-size: 0.85rem; margin-top: 4px; }
+        .event-info .response-count {
+            display: inline-block; margin-top: 6px; padding: 2px 10px;
+            background: #dbeafe; color: #1d4ed8; border-radius: 999px;
+            font-size: 0.8rem; font-weight: 600;
+        }
+        .event-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; }
+        .action-btn {
+            padding: 6px 12px; border-radius: 8px; border: 1px solid #e5e7eb;
+            background: #fff; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+            display: flex; align-items: center; gap: 4px; transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .action-btn:hover { background: #f3f4f6; border-color: #3b82f6; }
+        .action-btn.view { background: #dbeafe; color: #1d4ed8; border-color: #93c5fd; }
+        .action-btn.view:hover { background: #bfdbfe; }
+        .action-btn.qr { background: #f3e8ff; color: #7c3aed; border-color: #c4b5fd; }
+        .action-btn.qr:hover { background: #e9d5ff; }
+        .action-btn.delete { color: #ef4444; }
+        .action-btn.delete:hover { background: #fef2f2; border-color: #fca5a5; }
+
+        /* URL bar */
+        .event-url-bar {
+            display: flex; align-items: center; gap: 8px; margin-top: 10px;
+            padding: 8px 12px; background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px;
+        }
+        .event-url {
+            flex: 1; font-size: 0.8rem; color: #3b82f6; word-break: break-all;
+            font-family: monospace;
+        }
+        .copy-btn {
+            padding: 4px 12px; border-radius: 6px; border: 1px solid #e5e7eb;
+            background: #fff; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+            white-space: nowrap; transition: all 0.2s;
+        }
+        .copy-btn:hover { background: #f3f4f6; border-color: #3b82f6; }
+
+        .empty-state { text-align: center; padding: 30px; color: #6b7280; font-style: italic; }
+
+        /* QR Modal */
+        .modal-overlay {
+            display: none; position: fixed; z-index: 1000; left: 0; top: 0;
+            width: 100%; height: 100%; background: rgba(0,0,0,.5);
+            align-items: center; justify-content: center;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal-box {
+            background: #fff; padding: 28px; border-radius: 16px;
+            max-width: 400px; width: 90%; text-align: center;
+            box-shadow: 0 10px 25px rgba(0,0,0,.2);
+        }
+        .modal-box h3 { margin-bottom: 16px; color: #1e293b; }
+        .modal-close {
+            float: right; font-size: 28px; font-weight: 700; color: #6b7280;
+            cursor: pointer; line-height: 1;
+        }
+        .modal-close:hover { color: #1f2937; }
+        #qrCanvas { margin: 16px auto; }
+        .qr-url { font-size: 0.8rem; color: #6b7280; word-break: break-all; margin-top: 12px; }
+
+        .toast {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            padding: 12px 24px; border-radius: 10px; color: #fff; font-weight: 600;
+            z-index: 1001; opacity: 0; transition: opacity 0.3s;
+        }
+        .toast.show { opacity: 1; }
+        .toast.success { background: #10b981; }
+        .toast.error { background: #ef4444; }
+
+        @media (max-width: 640px) {
+            .form-grid { grid-template-columns: 1fr; }
+            .event-top { flex-direction: column; }
+            .event-actions { align-self: flex-end; }
+            .responses-header { flex-direction: column; align-items: flex-start; }
+        }
+    </style>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+    <!-- QRCode.js -->
+    <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <div class="brand">
+        <img src="icons/smash-logo.png" alt="SMASH Logo" class="title-icon" />
+    </div>
+    <h1 class="title-bar">RSVP Admin</h1>
+    <div class="nav-links">
+        <a href="events.html" class="nav-btn">Events</a>
+        <a href="index.html" class="nav-btn">Schedule</a>
+    </div>
+</header>
+
+<!-- Auth Gate -->
+<div id="authGate" class="auth-gate">
+    <h2>Admin Access Required</h2>
+    <p>Sign in with your Google account to manage RSVP events.</p>
+    <button class="sign-in-btn" onclick="signIn()">Sign in with Google</button>
+    <p id="accessDenied" class="access-denied" style="display:none;">Access denied. Only admins can manage RSVP events.</p>
+</div>
+
+<!-- Admin Content -->
+<main id="adminContent" class="container" style="display:none;">
+    <!-- Create Event Form -->
+    <div class="form-card">
+        <h2 id="formTitle">Create RSVP Event</h2>
+        <form id="eventForm" onsubmit="handleEventSubmit(event)">
+            <div class="form-grid">
+                <div class="form-group full">
+                    <label for="eventName">Event Name *</label>
+                    <input type="text" id="eventName" required placeholder="e.g. Parish Picnic 2026" />
+                </div>
+                <div class="form-group full">
+                    <label for="eventDesc">Description</label>
+                    <textarea id="eventDesc" placeholder="Brief description of the event..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="eventDate">Event Date *</label>
+                    <input type="date" id="eventDate" required />
+                </div>
+                <div class="form-group">
+                    <label for="eventTime">Event Time *</label>
+                    <input type="time" id="eventTime" required />
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn" id="cancelBtn" style="display:none;" onclick="cancelEdit()">Cancel</button>
+                <button type="submit" class="btn primary" id="submitBtn">Create Event</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Events List -->
+    <div class="events-list">
+        <h2>All RSVP Events</h2>
+        <div id="eventsList">
+            <p class="empty-state">Loading events...</p>
+        </div>
+    </div>
+</main>
+
+<!-- QR Code Modal -->
+<div class="modal-overlay" id="qrModal">
+    <div class="modal-box">
+        <span class="modal-close" onclick="closeQrModal()">&times;</span>
+        <h3 id="qrTitle">QR Code</h3>
+        <div id="qrCanvas"></div>
+        <p class="qr-url" id="qrUrl"></p>
+    </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="firebase-config.js?v=9"></script>
+<script>
+
+let currentUser = null;
+let editingId = null;
+
+function getBaseUrl() {
+    return window.location.origin + window.location.pathname.replace(/[^/]*$/, '');
+}
+
+function getRsvpUrl(eventId) {
+    return getBaseUrl() + 'rsvp.html?id=' + eventId;
+}
+
+function showToast(message, type = 'success') {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+    setTimeout(() => toast.classList.remove('show'), 3000);
+}
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function formatDateTime(dateStr, timeStr) {
+    const d = new Date(dateStr + 'T' + timeStr);
+    return d.toLocaleDateString('en-US', {
+        weekday: 'short', year: 'numeric', month: 'short', day: 'numeric',
+        hour: 'numeric', minute: '2-digit'
+    });
+}
+
+// Auth
+function signIn() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    auth.signInWithPopup(provider).catch(err => {
+        console.error('Sign-in error:', err);
+        showToast('Sign-in failed. Please try again.', 'error');
+    });
+}
+
+SmashAuth.onChange(s => {
+    currentUser = s.user;
+    const gate = document.getElementById('authGate');
+    const content = document.getElementById('adminContent');
+    const denied = document.getElementById('accessDenied');
+
+    if (!s.user) {
+        gate.style.display = '';
+        content.style.display = 'none';
+        denied.style.display = 'none';
+        return;
+    }
+    if (s.loading) return;
+    if (s.isAdmin) {
+        gate.style.display = 'none';
+        content.style.display = '';
+        denied.style.display = 'none';
+        loadEvents();
+    } else {
+        gate.style.display = '';
+        content.style.display = 'none';
+        denied.style.display = '';
+    }
+});
+
+// Load events
+function loadEvents() {
+    db.collection('rsvpEvents').orderBy('createdAt', 'desc').onSnapshot(async snapshot => {
+        const list = document.getElementById('eventsList');
+        if (snapshot.empty) {
+            list.innerHTML = '<p class="empty-state">No RSVP events yet. Create one above!</p>';
+            return;
+        }
+
+        // Get response counts for all events
+        const eventIds = [];
+        snapshot.forEach(doc => eventIds.push(doc.id));
+
+        const countMap = {};
+        for (const eid of eventIds) {
+            try {
+                const snap = await db.collection('rsvpResponses').where('eventId', '==', eid).get();
+                countMap[eid] = snap.size;
+            } catch (e) {
+                console.error('Error counting responses for', eid, e);
+                countMap[eid] = 0;
+            }
+        }
+
+        list.innerHTML = '';
+        snapshot.forEach(doc => {
+            const e = doc.data();
+            const id = doc.id;
+            const url = getRsvpUrl(id);
+            const count = countMap[id] || 0;
+            const item = document.createElement('div');
+            item.className = 'event-item';
+            item.innerHTML = `
+                <div class="event-top">
+                    <div class="event-info">
+                        <div class="name">${escapeHtml(e.name)}</div>
+                        <div class="time">${formatDateTime(e.eventDate, e.eventTimeStr)}</div>
+                        ${e.description ? `<div class="desc">${escapeHtml(e.description)}</div>` : ''}
+                        <span class="response-count">${count} response${count !== 1 ? 's' : ''}</span>
+                    </div>
+                    <div class="event-actions">
+                        <a class="action-btn view" href="rsvp-responses.html?id=${id}" style="text-decoration:none;">&#128202; Responses</a>
+                        <button class="action-btn qr" data-action="qr">QR Code</button>
+                        <button class="action-btn" data-action="edit">&#9998; Edit</button>
+                        <button class="action-btn delete" data-action="delete">&#128465; Delete</button>
+                    </div>
+                </div>
+                <div class="event-url-bar">
+                    <span class="event-url">${escapeHtml(url)}</span>
+                    <button class="copy-btn" data-action="copy">Copy Link</button>
+                </div>
+            `;
+            // Bind click handlers using closures (avoids HTML escaping issues)
+            item.querySelector('[data-action="qr"]').addEventListener('click', () => showQr(id, e.name));
+            item.querySelector('[data-action="edit"]').addEventListener('click', () => startEdit(id));
+            item.querySelector('[data-action="delete"]').addEventListener('click', () => deleteEvent(id, e.name));
+            item.querySelector('[data-action="copy"]').addEventListener('click', () => copyUrl(url));
+            list.appendChild(item);
+        });
+    }, err => {
+        console.error('Error loading RSVP events:', err);
+        document.getElementById('eventsList').innerHTML =
+            '<p class="empty-state">Error loading events. Check console for details.</p>';
+    });
+}
+
+// Create / Edit event
+async function handleEventSubmit(ev) {
+    ev.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+
+    const dateVal = document.getElementById('eventDate').value;
+    const timeVal = document.getElementById('eventTime').value;
+
+    const data = {
+        name: document.getElementById('eventName').value.trim(),
+        description: document.getElementById('eventDesc').value.trim(),
+        eventDate: dateVal,
+        eventTimeStr: timeVal,
+        eventTime: dateVal + 'T' + timeVal,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+
+    try {
+        if (editingId) {
+            await db.collection('rsvpEvents').doc(editingId).update(data);
+            showToast('Event updated!');
+            cancelEdit();
+        } else {
+            data.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+            data.createdBy = currentUser.email;
+            const docRef = await db.collection('rsvpEvents').add(data);
+            showToast('Event created! Link is ready below.');
+        }
+        document.getElementById('eventForm').reset();
+    } catch (err) {
+        console.error('Save error:', err);
+        showToast('Failed to save event.', 'error');
+    }
+    btn.disabled = false;
+}
+
+async function startEdit(id) {
+    const doc = await db.collection('rsvpEvents').doc(id).get();
+    if (!doc.exists) return showToast('Event not found.', 'error');
+
+    const e = doc.data();
+    editingId = id;
+    document.getElementById('eventName').value = e.name || '';
+    document.getElementById('eventDesc').value = e.description || '';
+    document.getElementById('eventDate').value = e.eventDate || '';
+    document.getElementById('eventTime').value = e.eventTimeStr || '';
+
+    document.getElementById('formTitle').textContent = 'Edit Event';
+    document.getElementById('submitBtn').textContent = 'Update Event';
+    document.getElementById('cancelBtn').style.display = '';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function cancelEdit() {
+    editingId = null;
+    document.getElementById('eventForm').reset();
+    document.getElementById('formTitle').textContent = 'Create RSVP Event';
+    document.getElementById('submitBtn').textContent = 'Create Event';
+    document.getElementById('cancelBtn').style.display = 'none';
+}
+
+async function deleteEvent(id, name) {
+    if (!confirm(`Delete "${name}" and all its responses? This cannot be undone.`)) return;
+    try {
+        // Delete responses first
+        const respSnap = await db.collection('rsvpResponses').where('eventId', '==', id).get();
+        const batch = db.batch();
+        respSnap.forEach(doc => batch.delete(doc.ref));
+        batch.delete(db.collection('rsvpEvents').doc(id));
+        await batch.commit();
+        showToast('Event and responses deleted.');
+        if (editingId === id) cancelEdit();
+    } catch (err) {
+        console.error('Delete error:', err);
+        showToast('Failed to delete event.', 'error');
+    }
+}
+
+// Copy URL
+function copyUrl(url) {
+    navigator.clipboard.writeText(url).then(() => {
+        showToast('Link copied!');
+    }).catch(() => {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast('Link copied!');
+    });
+}
+
+// QR Code
+function showQr(eventId, eventName) {
+    const url = getRsvpUrl(eventId);
+    document.getElementById('qrTitle').textContent = eventName;
+    document.getElementById('qrUrl').textContent = url;
+    const container = document.getElementById('qrCanvas');
+    container.innerHTML = '';
+    new QRCode(container, {
+        text: url,
+        width: 220,
+        height: 220,
+        colorDark: '#1e293b',
+        colorLight: '#ffffff'
+    });
+    document.getElementById('qrModal').classList.add('show');
+}
+
+function closeQrModal() {
+    document.getElementById('qrModal').classList.remove('show');
+}
+
+// Close modal on outside click
+document.getElementById('qrModal').addEventListener('click', function(e) {
+    if (e.target === this) closeQrModal();
+});
+
+</script>
+</body>
+</html>

@@ -1,13 +1,22 @@
-const CACHE_NAME = 'smash-signup-v6'; // Increment version on each deployment
+const CACHE_NAME = 'smash-signup-v7'; // Increment version on each deployment
 
 // Install event - activate immediately
 self.addEventListener('install', (event) => {
-  console.log('Service Worker: Installing v6 with network-first strategy');
+  console.log('Service Worker: Installing v7 with network-first strategy');
   self.skipWaiting(); // Activate immediately
 });
 
 // Fetch event - NETWORK FIRST, cache as fallback only
 self.addEventListener('fetch', (event) => {
+  // Skip Firebase/Firestore API calls — let them pass through directly
+  const url = event.request.url;
+  if (url.includes('firestore.googleapis.com') ||
+      url.includes('firebase') ||
+      url.includes('googleapis.com/identitytoolkit') ||
+      url.includes('googleapis.com/securetoken')) {
+    return;
+  }
+
   event.respondWith(
     fetch(event.request)
       .then((response) => {
@@ -54,7 +63,7 @@ self.addEventListener('activate', (event) => {
         })
       );
     }).then(() => {
-      console.log('Service Worker: Activated v6, taking control of all pages');
+      console.log('Service Worker: Activated v7, taking control of all pages');
       return self.clients.claim(); // Take control of all pages immediately
     })
   );
