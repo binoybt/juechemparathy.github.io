@@ -2181,6 +2181,12 @@
       });
     }
     modal.querySelector('[data-title]').textContent = title;
+    // Re-append to end of <body> so this modal always stacks on top of any
+    // other .t-modal that's currently open (they share z-index: 1000, so
+    // DOM order breaks the tie). This is what makes "Add from directory"
+    // open on top of the roster modal, and the captain picker on top of the
+    // roster modal, etc.
+    document.body.appendChild(modal);
     return { modal: modal, body: modal.querySelector('[data-body]') };
   }
 
