@@ -1756,10 +1756,108 @@
     return String(obj.text || '');
   }
 
+  function looksLikeHtml(s) {
+    return /<\/?[a-z][\s\S]*>/i.test(String(s || ''));
+  }
+
+  function sanitizeRulesHtml(html) {
+    const allowed = {
+      B: 1, STRONG: 1, I: 1, EM: 1, U: 1, UL: 1, OL: 1, LI: 1,
+      BR: 1, P: 1, DIV: 1, SPAN: 1, MARK: 1
+    };
+    const wrap = document.createElement('div');
+    wrap.innerHTML = String(html || '');
+    function cleanStyle(el) {
+      const bg = el.style && (el.style.backgroundColor || el.style.background);
+      el.removeAttribute('style');
+      const raw = String(bg || '');
+      if (!raw || /url\(|expression|javascript/i.test(raw)) return;
+      el.style.backgroundColor = raw;
+    }
+    function walk(node) {
+      const kids = Array.prototype.slice.call(node.childNodes);
+      kids.forEach(function (child) {
+        if (child.nodeType === 3) return;
+        if (child.nodeType !== 1) { child.parentNode.removeChild(child); return; }
+        let el = child;
+        if (el.tagName === 'FONT') {
+          const span = document.createElement('span');
+          const bg = (el.style && (el.style.backgroundColor || el.style.background)) || el.getAttribute('bgcolor') || '';
+          while (el.firstChild) span.appendChild(el.firstChild);
+          el.parentNode.replaceChild(span, el);
+          if (bg && !/url\(|expression|javascript/i.test(String(bg))) {
+            span.style.backgroundColor = bg;
+          }
+          el = span;
+        }
+        const tag = el.tagName;
+        if (!allowed[tag]) {
+          const ref = el.nextSibling;
+          const holder = document.createElement('div');
+          while (el.firstChild) holder.appendChild(el.firstChild);
+          el.parentNode.removeChild(el);
+          walk(holder);
+          while (holder.firstChild) node.insertBefore(holder.firstChild, ref);
+          return;
+        }
+        const attrs = Array.prototype.slice.call(el.attributes || []);
+        attrs.forEach(function (a) {
+          if (a.name.toLowerCase() === 'style' && (tag === 'SPAN' || tag === 'MARK')) {
+            cleanStyle(el);
+          } else {
+            el.removeAttribute(a.name);
+          }
+        });
+        walk(el);
+      });
+    }
+    walk(wrap);
+    return wrap.innerHTML;
+  }
+
+  function rulesToDisplayHtml(text) {
+    const raw = String(text || '');
+    if (!raw.trim()) return '';
+    if (looksLikeHtml(raw)) return sanitizeRulesHtml(raw);
+    return escapeHtml(raw).replace(/\n/g, '<br>');
+  }
+
   function formatRulesHtml(text) {
-    const raw = String(text || '').trim();
-    if (!raw) return '<p class="t-empty">No rules posted yet.</p>';
-    return '<div class="t-rules-text">' + escapeHtml(raw).replace(/\n/g, '<br>') + '</div>';
+    const html = rulesToDisplayHtml(text);
+    if (!String(html).trim()) return '<p class="t-empty">No rules posted yet.</p>';
+    return '<div class="t-rules-text">' + html + '</div>';
+  }
+
+  function readRulesEditor(editorId) {
+    const box = document.getElementById(editorId);
+    if (!box) return '';
+    return sanitizeRulesHtml(box.innerHTML || '');
+  }
+
+  function formatRules(editorId, cmd) {
+    const box = document.getElementById(editorId);
+    if (!box) return;
+    box.focus();
+    try {
+      document.execCommand('styleWithCSS', false, true);
+      if (cmd === 'highlight') {
+        document.execCommand('hiliteColor', false, '#fde047');
+        document.execCommand('backColor', false, '#fde047');
+      } else {
+        document.execCommand(cmd, false, null);
+      }
+    } catch (_) {}
+  }
+
+  function rulesToolbarHtml(editorId) {
+    const id = escapeHtml(editorId);
+    return `
+      <div class="t-rules-toolbar">
+        <button type="button" class="t-btn sm" title="Bold" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','bold')"><b>B</b></button>
+        <button type="button" class="t-btn sm" title="Underline" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','underline')"><u>U</u></button>
+        <button type="button" class="t-btn sm" title="Highlight" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','highlight')" style="background:#fde047;">Highlight</button>
+        <button type="button" class="t-btn sm" title="Bulleted list" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','insertUnorderedList')">• List</button>
+      </div>`;
   }
 
   function renderRulesCard(opts) {
@@ -1767,6 +1865,7 @@
     if (!state.isAdmin && !String(text).trim()) return '';
     const title = escapeHtml(opts.title || 'Rules');
     const subtitle = escapeHtml(opts.subtitle || '');
+    const editorId = escapeHtml(opts.textareaId);
     if (state.isAdmin) {
       return `
       <section class="t-section">
@@ -1775,8 +1874,9 @@
           <button class="t-btn sm primary" type="button" onclick="window.__tournament.${opts.saveCall}">Save rules</button>
         </div>
         <div class="t-card"><div class="t-card-body">
-          <textarea class="t-input t-rules-textarea" id="${escapeHtml(opts.textareaId)}" rows="6" placeholder="${escapeHtml(opts.placeholder || '')}">${escapeHtml(text)}</textarea>
-          <div class="t-schedule-note" style="margin-top:8px;">Only admins can edit. Everyone else can read these rules.</div>
+          ${rulesToolbarHtml(opts.textareaId)}
+          <div class="t-rules-editor" id="${editorId}" contenteditable="true" data-placeholder="${escapeHtml(opts.placeholder || '')}">${rulesToDisplayHtml(text)}</div>
+          <div class="t-schedule-note" style="margin-top:8px;">Select text, then Bold, Underline, Highlight, or List. Only admins can edit.</div>
         </div></div>
       </section>`;
     }
@@ -1793,10 +1893,8 @@
     if (!state.isAdmin) return toast('Admin only', 'error');
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
-    const box = document.getElementById('tTournamentRules');
-    if (!box) return;
     const rules = {
-      text: box.value || '',
+      text: readRulesEditor('tTournamentRules'),
       updatedAt: new Date().toISOString(),
       updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
     };
@@ -1818,10 +1916,8 @@
     if (!state.isAdmin) return toast('Admin only', 'error');
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const box = document.getElementById('tSportRules');
-    if (!box) return;
     const rules = {
-      text: box.value || '',
+      text: readRulesEditor('tSportRules'),
       updatedAt: new Date().toISOString(),
       updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
     };
@@ -1845,6 +1941,7 @@
   window.__tournament.clearSchedule = clearSchedule;
   window.__tournament.saveTournamentRules = saveTournamentRules;
   window.__tournament.saveSportRules = saveSportRules;
+  window.__tournament.formatRules = formatRules;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
