@@ -98,10 +98,11 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //         allow write: if isAdmin();
 //       }
 //
-//       // Tournament visibility toggle. Public read so the nav link can
-//       // appear for signed-out visitors once admins open the page.
-//       // Missing doc = admin testing only.
-//       match /siteConfig/{id} {
+//       // Tournament page only. Collection "siteConfig" is just a folder
+//       // name; document "tournament" is the one yes/no switch for whether
+//       // members can open Tournament. This does not affect any other page.
+//       // Missing doc / openToEveryone != true = admin testing only.
+//       match /siteConfig/tournament {
 //         allow read:  if true;
 //         allow write: if isAdmin();
 //       }
@@ -212,9 +213,12 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   };
 
   // ── Tournament visibility (admin testing vs everyone) ─────────────────
-  // Default is admin-only. A missing siteConfig/tournament doc, a failed
-  // read, or openToEveryone !== true all keep the page private. Admins
-  // flip the flag from the banner on tournament.html.
+  // Only the Tournament page is gated. Firestore path:
+  //   collection "siteConfig"  (a settings folder; unused for other pages)
+  //   document   "tournament"  (one field: openToEveryone true/false)
+  // Default is admin-only. A missing doc, a failed read, or
+  // openToEveryone !== true all keep Tournament private. Admins flip the
+  // flag from the banner on tournament.html.
   const tournamentAccess = {
     openToEveryone: false,
     loaded: false,
