@@ -146,7 +146,7 @@
     <h1 class="title-bar">Members &amp; Admins</h1>
     <div class="nav-links">
         <a href="index.html" class="nav-btn">Home</a>
-        <a href="tournament.html" class="nav-btn">Tournament</a>
+        <a href="tournament.html" class="nav-btn js-tournament-nav" hidden>Tournament</a>
         <a href="pending-users.html" class="nav-btn">Pending Reviews</a>
         <button id="signOutBtn" class="nav-btn" style="display:none;" onclick="signOut()">Sign out</button>
     </div>
@@ -202,7 +202,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=9"></script>
+<script src="firebase-config.js?v=10"></script>
 <script>
 let allUsers = [];
 let currentFilter = 'all';

@@ -51,6 +51,9 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //   5. exposes a role-aware SmashAuth API on window.SmashAuth that all
 //      other pages use to gate admin UI (see JSDoc below for the shape)
 //   6. shows a small admin banner if there are pending reviews
+//   7. tracks Tournament page visibility (admin-only vs everyone) via
+//      siteConfig/tournament.openToEveryone and hides .js-tournament-nav
+//      links until an admin opens it
 //
 // FIRESTORE RULES (paste into your rules editor):
 //
@@ -92,6 +95,14 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //
 //       match /additionalMembers/{docId} {
 //         allow read:  if isSignedIn();
+//         allow write: if isAdmin();
+//       }
+//
+//       // Tournament visibility toggle. Public read so the nav link can
+//       // appear for signed-out visitors once admins open the page.
+//       // Missing doc = admin testing only.
+//       match /siteConfig/{id} {
+//         allow read:  if true;
 //         allow write: if isAdmin();
 //       }
 //     }
@@ -164,6 +175,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     isAdmin: function () { return state.isAdmin; },
     /** Convenience: SmashAuth.isSignedIn() */
     isSignedIn: function () { return !!state.user; },
+    /** True until the users/{uid} role snapshot has resolved. */
+    isLoading: function () { return state.loading; },
     /** Register a callback; fires immediately with current state, then
      *  on every auth or role change. Returns an unsubscribe fn. */
     onChange: function (cb) {
@@ -197,6 +210,89 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       }, { merge: true });
     }
   };
+
+  // ── Tournament visibility (admin testing vs everyone) ─────────────────
+  // Default is admin-only. A missing siteConfig/tournament doc, a failed
+  // read, or openToEveryone !== true all keep the page private. Admins
+  // flip the flag from the banner on tournament.html.
+  const tournamentAccess = {
+    openToEveryone: false,
+    loaded: false,
+    listeners: [],
+    unsub: null
+  };
+
+  function applyTournamentNavVisibility() {
+    const show = !!(window.SmashAuth && SmashAuth.isAdmin()) || tournamentAccess.openToEveryone;
+    document.querySelectorAll('.js-tournament-nav').forEach(function (el) {
+      el.hidden = !show;
+    });
+  }
+
+  function notifyTournamentAccess() {
+    const payload = {
+      openToEveryone: tournamentAccess.openToEveryone,
+      loaded: tournamentAccess.loaded
+    };
+    tournamentAccess.listeners.forEach(function (fn) {
+      try { fn(payload); } catch (err) { console.error('[TournamentAccess] listener threw:', err); }
+    });
+    applyTournamentNavVisibility();
+  }
+
+  function subscribeTournamentAccess() {
+    if (tournamentAccess.unsub) {
+      try { tournamentAccess.unsub(); } catch (_) {}
+      tournamentAccess.unsub = null;
+    }
+    tournamentAccess.unsub = db.collection('siteConfig').doc('tournament').onSnapshot(function (snap) {
+      tournamentAccess.loaded = true;
+      const d = snap.exists ? (snap.data() || {}) : {};
+      tournamentAccess.openToEveryone = d.openToEveryone === true;
+      notifyTournamentAccess();
+    }, function (err) {
+      console.warn('[TournamentAccess] siteConfig/tournament read failed:', err);
+      tournamentAccess.loaded = true;
+      tournamentAccess.openToEveryone = false;
+      notifyTournamentAccess();
+    });
+  }
+
+  window.TournamentAccess = {
+    isOpenToEveryone: function () { return tournamentAccess.openToEveryone; },
+    isLoaded: function () { return tournamentAccess.loaded; },
+    canSeeNav: function (isAdmin) { return !!isAdmin || tournamentAccess.openToEveryone; },
+    onChange: function (fn) {
+      if (typeof fn !== 'function') return function () {};
+      tournamentAccess.listeners.push(fn);
+      if (tournamentAccess.loaded) {
+        try { fn({ openToEveryone: tournamentAccess.openToEveryone, loaded: true }); } catch (err) { console.error(err); }
+      }
+      return function () {
+        const i = tournamentAccess.listeners.indexOf(fn);
+        if (i !== -1) tournamentAccess.listeners.splice(i, 1);
+      };
+    },
+    setOpenToEveryone: function (open) {
+      if (!window.SmashAuth || !SmashAuth.isAdmin()) {
+        return Promise.reject(new Error('Only admins can change tournament visibility.'));
+      }
+      return db.collection('siteConfig').doc('tournament').set({
+        openToEveryone: !!open,
+        updatedAt: FV.serverTimestamp(),
+        updatedBy: (auth.currentUser && auth.currentUser.uid) || null
+      }, { merge: true });
+    }
+  };
+
+  subscribeTournamentAccess();
+  auth.onAuthStateChanged(function () { subscribeTournamentAccess(); });
+  window.SmashAuth.onChange(function () { applyTournamentNavVisibility(); });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyTournamentNavVisibility);
+  } else {
+    applyTournamentNavVisibility();
+  }
 
   // ── Members directory (members.csv + additionalMembers) ───────────────
   let membersCache = null;
