@@ -374,6 +374,17 @@ body.tournament {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, .12);
 }
 .t-input.sm, .t-select.sm { padding: 6px 8px; font-size: .82rem; }
+.t-rules-textarea {
+  min-height: 140px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.t-rules-text {
+  white-space: pre-wrap;
+  color: var(--t-fg);
+  font-size: .95rem;
+  line-height: 1.55;
+}
 
 .t-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .t-form-field { display: flex; flex-direction: column; gap: 4px; }

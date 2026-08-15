@@ -16,6 +16,8 @@
  *       schedule    { draft, published }            — per-sport fixture list
  *                     draft.entries[]     working copy (admin only)
  *                     published.entries[] public copy (visible after Publish)
+ *       rules       { text, updatedAt, updatedBy }  — sport-specific, admin-edit
+ *     rules         { text, updatedAt, updatedBy }  — tournament-wide, admin-edit
  *     archived      bool
  *     createdAt / updatedAt / createdBy
  *
@@ -1748,6 +1750,87 @@
     });
   }
 
+  function rulesText(obj) {
+    if (!obj) return '';
+    if (typeof obj === 'string') return obj;
+    return String(obj.text || '');
+  }
+
+  function formatRulesHtml(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return '<p class="t-empty">No rules posted yet.</p>';
+    return '<div class="t-rules-text">' + escapeHtml(raw).replace(/\n/g, '<br>') + '</div>';
+  }
+
+  function renderRulesCard(opts) {
+    const text = opts.text || '';
+    if (!state.isAdmin && !String(text).trim()) return '';
+    const title = escapeHtml(opts.title || 'Rules');
+    const subtitle = escapeHtml(opts.subtitle || '');
+    if (state.isAdmin) {
+      return `
+      <section class="t-section">
+        <div class="t-section-header">
+          <h2 class="t-section-title">${title}${subtitle ? ' <small>' + subtitle + '</small>' : ''}</h2>
+          <button class="t-btn sm primary" type="button" onclick="window.__tournament.${opts.saveCall}">Save rules</button>
+        </div>
+        <div class="t-card"><div class="t-card-body">
+          <textarea class="t-input t-rules-textarea" id="${escapeHtml(opts.textareaId)}" rows="6" placeholder="${escapeHtml(opts.placeholder || '')}">${escapeHtml(text)}</textarea>
+          <div class="t-schedule-note" style="margin-top:8px;">Only admins can edit. Everyone else can read these rules.</div>
+        </div></div>
+      </section>`;
+    }
+    return `
+      <section class="t-section">
+        <div class="t-section-header">
+          <h2 class="t-section-title">${title}${subtitle ? ' <small>' + subtitle + '</small>' : ''}</h2>
+        </div>
+        <div class="t-card"><div class="t-card-body">${formatRulesHtml(text)}</div></div>
+      </section>`;
+  }
+
+  async function saveTournamentRules(tournamentId) {
+    if (!state.isAdmin) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const box = document.getElementById('tTournamentRules');
+    if (!box) return;
+    const rules = {
+      text: box.value || '',
+      updatedAt: new Date().toISOString(),
+      updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
+    };
+    try {
+      await db.collection('tournaments').doc(t.id).update({
+        rules: rules,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { rules: rules });
+      toast('Tournament rules saved', 'success');
+    } catch (err) {
+      console.error(err);
+      toast('Could not save rules: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  async function saveSportRules(tournamentId, sportId) {
+    if (!state.isAdmin) return toast('Admin only', 'error');
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const box = document.getElementById('tSportRules');
+    if (!box) return;
+    const rules = {
+      text: box.value || '',
+      updatedAt: new Date().toISOString(),
+      updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
+    };
+    try {
+      await writeSportPatch(t, sportId, { rules: rules });
+      toast((sport.label || 'Sport') + ' rules saved', 'success');
+    } catch (_) { /* writeSportPatch already toasted */ }
+  }
+
   window.__tournament.seedKoinonia = seedKoinonia;
   window.__tournament.setTournamentOpen = setTournamentOpen;
   window.__tournament.openCaptainPicker = openCaptainPicker;
@@ -1759,6 +1842,9 @@
   window.__tournament.generateLeagueSchedule = generateLeagueSchedule;
   window.__tournament.saveScheduleDraft = saveScheduleDraft;
   window.__tournament.publishSchedule = publishSchedule;
+  window.__tournament.clearSchedule = clearSchedule;
+  window.__tournament.saveTournamentRules = saveTournamentRules;
+  window.__tournament.saveSportRules = saveSportRules;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
@@ -1801,6 +1887,15 @@
 
       ${renderAccessBanner()}
 
+      ${renderRulesCard({
+        title: 'Tournament rules',
+        subtitle: 'applies to every sport',
+        text: rulesText(t.rules),
+        textareaId: 'tTournamentRules',
+        placeholder: 'Eligibility, conduct, scoring notes, prize rules…',
+        saveCall: "saveTournamentRules('" + t.id + "')"
+      })}
+
       ${state.isAdmin ? `
       <section class="t-section" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="t-btn" onclick="window.__tournament.navigate({view:'manage',tournamentId:'${t.id}'})">⚙️ Manage tournament</button>
@@ -1839,6 +1934,15 @@
           <div class="t-rosters-grid" id="tRostersGrid"></div>
         </section>
         ` : ''}
+
+        ${renderRulesCard({
+          title: (sport.label || 'Sport') + ' rules',
+          subtitle: 'this sport only',
+          text: rulesText(sport.rules),
+          textareaId: 'tSportRules',
+          placeholder: 'Format, scoring, substitutions, court rules for this sport…',
+          saveCall: "saveSportRules('" + t.id + "','" + sport.id + "')"
+        })}
 
         <section class="t-section" id="tScheduleSection">
           <div class="t-section-header">
@@ -2432,6 +2536,7 @@
             : ''}
           <button class="t-btn sm" type="button" onclick="window.__tournament.saveScheduleDraft('${tournament.id}','${sport.id}')">💾 Save draft</button>
           <button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule('${tournament.id}','${sport.id}')">📢 Publish</button>
+          <button class="t-btn sm danger" type="button" onclick="window.__tournament.clearSchedule('${tournament.id}','${sport.id}')">Clear schedule</button>
         `;
       } else if (published) {
         actions.innerHTML = '<span class="t-badge locked">Published</span>';
@@ -2694,6 +2799,49 @@
       toast('Schedule published', 'success');
       render();
     } catch (_) { /* already toasted */ }
+  }
+
+  async function deleteScheduleMatches(tournament, sport) {
+    const existing = state.matches.filter(function (m) { return m.sport === sport.id; });
+    const col = db.collection('tournament_matches');
+    for (let i = 0; i < existing.length; i++) {
+      const m = existing[i];
+      if (!m.fromSchedule && !m.scheduleEntryId) continue;
+      if (m.status && m.status !== 'scheduled') continue;
+      await col.doc(m.id).delete();
+    }
+  }
+
+  async function clearSchedule(tournamentId, sportId) {
+    if (!canEditSchedule()) return toast('Only admins can clear the schedule', 'error');
+    harvestScheduleEditor();
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const published = scheduleIsPublished(sport);
+    const sch = getSchedule(sport);
+    const local = scheduleEditByKey[scheduleKey(tournamentId, sportId)];
+    const hasDraft = !!(sch.draft && Array.isArray(sch.draft.entries) && sch.draft.entries.length);
+    const hasLocal = !!(local && Array.isArray(local.entries) && local.entries.length);
+    if (!published && !hasDraft && !hasLocal) return toast('Schedule is already empty');
+
+    if (published) {
+      if (!confirm('This schedule is published and everyone can see it. Clear it anyway?')) return;
+      if (!confirm('This cannot be undone. Remove all published fixtures and scheduled match cards for this sport? Live or completed matches will be kept.')) return;
+    } else if (!confirm('Clear this sport\'s schedule draft? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await deleteScheduleMatches(t, sport);
+      await writeSportPatch(t, sportId, { schedule: { draft: null, published: null } });
+      persistLocalEntries(tournamentId, sportId, [], false);
+      delete scheduleEditByKey[scheduleKey(tournamentId, sportId)];
+      toast('Schedule cleared', 'success');
+      if (published) {
+        confirm('The published schedule was cleared. Members will no longer see those fixtures. Click OK to continue.');
+      }
+      render();
+    } catch (_) { /* writeSportPatch already toasted */ }
   }
 
   function buildMatchData(tournament, sport, entry) {
