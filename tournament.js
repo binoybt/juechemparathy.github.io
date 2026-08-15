@@ -1807,12 +1807,45 @@
     };
     const wrap = document.createElement('div');
     wrap.innerHTML = String(html || '');
+    function isUnsafeCss(raw) {
+      return /url\(|expression|javascript/i.test(String(raw || ''));
+    }
+
+    function isBoldWeight(v) {
+      const s = String(v || '').toLowerCase().trim();
+      if (!s || s === 'normal' || s === 'lighter') return false;
+      if (s === 'bold' || s === 'bolder') return true;
+      const n = parseInt(s, 10);
+      return n >= 600;
+    }
+
+    function hasUnderline(v) {
+      return /underline/i.test(String(v || ''));
+    }
+
+    function wrapContents(el, tagName) {
+      if (!el) return;
+      if (el.childNodes.length === 1 && el.firstChild.nodeType === 1 && el.firstChild.tagName === tagName) return;
+      const wrap = document.createElement(tagName);
+      while (el.firstChild) wrap.appendChild(el.firstChild);
+      el.appendChild(wrap);
+    }
+
     function cleanStyle(el) {
-      const bg = el.style && (el.style.backgroundColor || el.style.background);
+      const st = el.style || {};
+      const bg = st.backgroundColor || st.background;
+      const bold = isBoldWeight(st.fontWeight);
+      const underline = hasUnderline(st.textDecoration) || hasUnderline(st.textDecorationLine);
       el.removeAttribute('style');
-      const raw = String(bg || '');
-      if (!raw || /url\(|expression|javascript/i.test(raw)) return;
-      el.style.backgroundColor = raw;
+      if (bg && !isUnsafeCss(bg)) el.style.backgroundColor = bg;
+      if (bold) {
+        el.style.fontWeight = '700';
+        wrapContents(el, 'B');
+      }
+      if (underline) {
+        el.style.textDecoration = 'underline';
+        wrapContents(el, 'U');
+      }
     }
     function walk(node) {
       const kids = Array.prototype.slice.call(node.childNodes);
@@ -1823,11 +1856,13 @@
         if (el.tagName === 'FONT') {
           const span = document.createElement('span');
           const bg = (el.style && (el.style.backgroundColor || el.style.background)) || el.getAttribute('bgcolor') || '';
+          const bold = isBoldWeight(el.style && el.style.fontWeight) || String(el.getAttribute('weight') || '') === 'bold';
+          const underline = hasUnderline(el.style && el.style.textDecoration);
           while (el.firstChild) span.appendChild(el.firstChild);
           el.parentNode.replaceChild(span, el);
-          if (bg && !/url\(|expression|javascript/i.test(String(bg))) {
-            span.style.backgroundColor = bg;
-          }
+          if (bg && !isUnsafeCss(bg)) span.style.backgroundColor = bg;
+          if (bold) span.style.fontWeight = '700';
+          if (underline) span.style.textDecoration = 'underline';
           el = span;
         }
         const tag = el.tagName;
@@ -1879,11 +1914,15 @@
     if (!box) return;
     box.focus();
     try {
-      document.execCommand('styleWithCSS', false, true);
       if (cmd === 'highlight') {
+        document.execCommand('styleWithCSS', false, true);
         document.execCommand('hiliteColor', false, '#fde047');
         document.execCommand('backColor', false, '#fde047');
       } else {
+        // Bold/underline must be real <b>/<u> tags. styleWithCSS would wrap
+        // them as <span style="font-weight/text-decoration">, which used to
+        // get stripped on save because only highlight color was kept.
+        document.execCommand('styleWithCSS', false, false);
         document.execCommand(cmd, false, null);
       }
     } catch (_) {}
