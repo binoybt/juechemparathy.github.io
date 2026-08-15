@@ -994,6 +994,7 @@
         ${homeCrumb}
         ${currentCrumb}
         <a href="index.html" class="t-nav-btn" title="Back to SMASH">← <span class="hide-sm">SMASH</span></a>
+        ${state.isAdmin ? '<a href="admin-users.html" class="t-nav-btn" title="Members &amp; Admins">👥 <span class="hide-sm">Members</span></a>' : ''}
         <div id="tUserBox"></div>
       </div>
     `;

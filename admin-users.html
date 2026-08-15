@@ -119,7 +119,7 @@
         .btn:disabled { opacity: .6; cursor: not-allowed; }
         .btn.self { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
 
-        .empty-state { text-align: center; padding: 40px; color: #6b7280; font-style: italic; }
+        .name-sub { display:block; color:#9ca3af; font-size:.78rem; font-weight:400; margin-top:2px; }
 
         .toast {
             position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
@@ -146,6 +146,7 @@
     <h1 class="title-bar">Members &amp; Admins</h1>
     <div class="nav-links">
         <a href="index.html" class="nav-btn">Home</a>
+        <a href="tournament.html" class="nav-btn">Tournament</a>
         <a href="pending-users.html" class="nav-btn">Pending Reviews</a>
         <button id="signOutBtn" class="nav-btn" style="display:none;" onclick="signOut()">Sign out</button>
     </div>
@@ -166,13 +167,13 @@
     <div id="mainContent" style="display:none;">
         <div class="header-card">
             <h2>All members</h2>
-            <p>Grant or revoke admin access. Everyone starts as a member; promote a person to admin to give them access to admin pages (RSVP, Events, Wishlist, Tournament controls, Pending Reviews, this page). You can't revoke your own admin access.</p>
+            <p>Everyone who has signed in to syrosmash.com is listed here from the users table. Grant or revoke admin access. You can't revoke your own admin access.</p>
         </div>
 
         <div class="toolbar">
             <div class="search-box">
                 <span>🔍</span>
-                <input type="text" id="searchInput" placeholder="Search by name or Family ID…" />
+                <input type="text" id="searchInput" placeholder="Search by first or last name…" />
             </div>
             <div class="filter-bar">
                 <button class="filter-btn active" data-filter="all"    onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
@@ -185,7 +186,6 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Family ID</th>
                         <th>First Name</th>
                         <th>Last Name</th>
                         <th>Role</th>
@@ -193,7 +193,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersBody">
-                    <tr><td colspan="5" class="empty-state">Loading users…</td></tr>
+                    <tr><td colspan="4" class="empty-state">Loading users…</td></tr>
                 </tbody>
             </table>
         </div>
@@ -220,6 +220,20 @@ function esc(s) {
     return String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function displayNames(u) {
+    let first = String(u.firstName || '').trim();
+    let last  = String(u.lastName  || '').trim();
+    if (!first && !last && u.displayName) {
+        const parts = String(u.displayName).trim().split(/\s+/).filter(Boolean);
+        if (parts.length === 1) first = parts[0];
+        else if (parts.length > 1) {
+            first = parts[0];
+            last = parts.slice(1).join(' ');
+        }
+    }
+    return { first: first, last: last };
 }
 
 function signIn() {
@@ -298,7 +312,7 @@ function subscribeUsers() {
     }, function (err) {
         console.error('users subscribe failed:', err);
         document.getElementById('usersBody').innerHTML =
-            '<tr><td colspan="5" class="empty-state" style="color:#b91c1c;">Failed to load users: ' +
+            '<tr><td colspan="4" class="empty-state" style="color:#b91c1c;">Failed to load users: ' +
             esc(err.message || err) + '</td></tr>';
     });
 }
@@ -326,31 +340,34 @@ function renderAll() {
         if (currentFilter === 'admin'  && role !== 'admin')  return false;
         if (currentFilter === 'member' && role === 'admin')  return false;
         if (!q) return true;
-        const hay = [u.firstName, u.lastName, u.familyId].join(' ').toLowerCase();
+        const names = displayNames(u);
+        const hay = [names.first, names.last, u.displayName, u.email].join(' ').toLowerCase();
         return hay.indexOf(q) !== -1;
     });
 
     const body = document.getElementById('usersBody');
     if (!filtered.length) {
-        body.innerHTML = '<tr><td colspan="5" class="empty-state">No users match.</td></tr>';
+        body.innerHTML = '<tr><td colspan="4" class="empty-state">No users match.</td></tr>';
         return;
     }
 
     body.innerHTML = '';
     filtered.forEach(function (u) {
+        const names = displayNames(u);
         const role = u.role || 'member';
         const isSelf = currentUser && currentUser.uid === u.__id;
         const btn = isSelf
             ? '<button class="btn self" disabled title="You can\'t change your own role">You</button>'
             : (role === 'admin'
                 ? '<button class="btn danger" data-action="demote">Revoke admin</button>'
-                : '<button class="btn primary" data-action="promote">Make admin</button>');
+                : '<button class="btn primary" data-action="promote">Grant admin</button>');
 
         const tr = document.createElement('tr');
         tr.innerHTML =
-            '<td>' + esc(u.familyId || '—') + '</td>' +
-            '<td>' + esc(u.firstName || '') + '</td>' +
-            '<td>' + esc(u.lastName  || '') + '</td>' +
+            '<td><strong>' + esc(names.first || '—') + '</strong>' +
+                (u.email ? '<span class="name-sub">' + esc(u.email) + '</span>' : '') +
+            '</td>' +
+            '<td>' + esc(names.last || '—') + '</td>' +
             '<td><span class="role-badge ' + role + '">' + role + '</span></td>' +
             '<td style="text-align:right;">' + btn + '</td>';
 
@@ -367,7 +384,8 @@ function renderAll() {
 }
 
 async function promote(u, btn) {
-    const label = ((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.email || u.__id;
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
     if (!confirm('Make ' + label + ' an admin? They will get access to all admin pages.')) return;
     btn.disabled = true; btn.textContent = 'Updating…';
     try {
@@ -376,12 +394,13 @@ async function promote(u, btn) {
     } catch (err) {
         console.error('promote failed:', err);
         toast('Promote failed: ' + (err.message || err), 'error');
-        btn.disabled = false; btn.textContent = 'Make admin';
+        btn.disabled = false; btn.textContent = 'Grant admin';
     }
 }
 
 async function demote(u, btn) {
-    const label = ((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.email || u.__id;
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
     if (!confirm('Revoke admin access for ' + label + '? They will lose access to admin pages.')) return;
     btn.disabled = true; btn.textContent = 'Updating…';
     try {
