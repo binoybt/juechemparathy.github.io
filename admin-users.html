@@ -84,6 +84,29 @@
         }
         .filter-btn:not(.active) .count-pill { background: #f3f4f6; color: #6b7280; }
 
+        .import-card {
+            background: #fffbeb;
+            border: 2px solid #f59e0b;
+            border-radius: 14px;
+            padding: 18px 20px;
+            margin-bottom: 18px;
+        }
+        .import-card h3 { font-size: 1.05rem; margin-bottom: 6px; color: #92400e; }
+        .import-card p { color: #78350f; font-size: .9rem; margin-bottom: 12px; line-height: 1.45; }
+        .import-actions { display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+        .import-file-row { display: flex; flex-direction: column; gap: 6px; width: 100%; }
+        .import-file-row label { font-weight: 700; font-size: .9rem; color: #92400e; }
+        .import-file-row input[type="file"] {
+            display: block;
+            width: 100%;
+            max-width: 420px;
+            padding: 10px;
+            background: #fff;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            font-size: 0.95rem;
+        }
+        .import-status { margin-top: 4px; font-size: .88rem; color: #374151; font-weight: 600; }
         .table-wrapper {
             overflow-x: auto; border-radius: 12px; border: 1px solid #e5e7eb;
             background: #fff;
@@ -119,7 +142,7 @@
         .btn:disabled { opacity: .6; cursor: not-allowed; }
         .btn.self { background: #f3f4f6; color: #6b7280; border-color: #e5e7eb; }
 
-        .empty-state { text-align: center; padding: 40px; color: #6b7280; font-style: italic; }
+        .name-sub { display:block; color:#9ca3af; font-size:.78rem; font-weight:400; margin-top:2px; }
 
         .toast {
             position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
@@ -146,6 +169,7 @@
     <h1 class="title-bar">Members &amp; Admins</h1>
     <div class="nav-links">
         <a href="index.html" class="nav-btn">Home</a>
+        <a href="tournament.html" class="nav-btn js-tournament-nav" hidden>Tournament</a>
         <a href="pending-users.html" class="nav-btn">Pending Reviews</a>
         <button id="signOutBtn" class="nav-btn" style="display:none;" onclick="signOut()">Sign out</button>
     </div>
@@ -166,13 +190,26 @@
     <div id="mainContent" style="display:none;">
         <div class="header-card">
             <h2>All members</h2>
-            <p>Grant or revoke admin access. Everyone starts as a member; promote a person to admin to give them access to admin pages (RSVP, Events, Wishlist, Tournament controls, Pending Reviews, this page). You can't revoke your own admin access.</p>
+            <p>Everyone who has signed in is listed here. Grant or revoke admin. FID is stored on the user after they match the parishioner directory. You can't revoke your own admin access.</p>
+        </div>
+
+        <div class="import-card">
+            <h3>Upload parishioner directory (CSV)</h3>
+            <p>Choose a CSV file with columns: Family ID, Firstname, Lastname, Family Name, Member ID. This loads the directory into Firestore so new signups can match FID + name.</p>
+            <div class="import-actions">
+                <div class="import-file-row">
+                    <label for="csvFile">Choose CSV file</label>
+                    <input type="file" id="csvFile" name="csvFile" accept=".csv,text/csv,text/plain" />
+                </div>
+                <button class="btn" id="btnImportBundled" type="button">Or import members.csv from this website</button>
+            </div>
+            <div class="import-status" id="importStatus"></div>
         </div>
 
         <div class="toolbar">
             <div class="search-box">
                 <span>🔍</span>
-                <input type="text" id="searchInput" placeholder="Search by name or Family ID…" />
+                <input type="text" id="searchInput" placeholder="Search by name, email, or FID…" />
             </div>
             <div class="filter-bar">
                 <button class="filter-btn active" data-filter="all"    onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
@@ -185,9 +222,9 @@
             <table>
                 <thead>
                     <tr>
-                        <th>Family ID</th>
                         <th>First Name</th>
                         <th>Last Name</th>
+                        <th>FID</th>
                         <th>Role</th>
                         <th style="text-align:right;">Actions</th>
                     </tr>
@@ -202,7 +239,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=9"></script>
+<script src="firebase-config.js?v=11"></script>
 <script>
 let allUsers = [];
 let currentFilter = 'all';
@@ -220,6 +257,20 @@ function esc(s) {
     return String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function displayNames(u) {
+    let first = String(u.firstName || '').trim();
+    let last  = String(u.lastName  || '').trim();
+    if (!first && !last && u.displayName) {
+        const parts = String(u.displayName).trim().split(/\s+/).filter(Boolean);
+        if (parts.length === 1) first = parts[0];
+        else if (parts.length > 1) {
+            first = parts[0];
+            last = parts.slice(1).join(' ');
+        }
+    }
+    return { first: first, last: last };
 }
 
 function signIn() {
@@ -326,7 +377,8 @@ function renderAll() {
         if (currentFilter === 'admin'  && role !== 'admin')  return false;
         if (currentFilter === 'member' && role === 'admin')  return false;
         if (!q) return true;
-        const hay = [u.firstName, u.lastName, u.familyId].join(' ').toLowerCase();
+        const names = displayNames(u);
+        const hay = [names.first, names.last, u.displayName, u.email, u.FID, u.familyId].join(' ').toLowerCase();
         return hay.indexOf(q) !== -1;
     });
 
@@ -338,19 +390,23 @@ function renderAll() {
 
     body.innerHTML = '';
     filtered.forEach(function (u) {
+        const names = displayNames(u);
         const role = u.role || 'member';
         const isSelf = currentUser && currentUser.uid === u.__id;
         const btn = isSelf
             ? '<button class="btn self" disabled title="You can\'t change your own role">You</button>'
             : (role === 'admin'
                 ? '<button class="btn danger" data-action="demote">Revoke admin</button>'
-                : '<button class="btn primary" data-action="promote">Make admin</button>');
+                : '<button class="btn primary" data-action="promote">Grant admin</button>');
 
+        const fid = String(u.FID || u.familyId || '').trim();
         const tr = document.createElement('tr');
         tr.innerHTML =
-            '<td>' + esc(u.familyId || '—') + '</td>' +
-            '<td>' + esc(u.firstName || '') + '</td>' +
-            '<td>' + esc(u.lastName  || '') + '</td>' +
+            '<td><strong>' + esc(names.first || '—') + '</strong>' +
+                (u.email ? '<span class="name-sub">' + esc(u.email) + '</span>' : '') +
+            '</td>' +
+            '<td>' + esc(names.last || '—') + '</td>' +
+            '<td>' + esc(fid || '—') + '</td>' +
             '<td><span class="role-badge ' + role + '">' + role + '</span></td>' +
             '<td style="text-align:right;">' + btn + '</td>';
 
@@ -367,7 +423,8 @@ function renderAll() {
 }
 
 async function promote(u, btn) {
-    const label = ((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.email || u.__id;
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
     if (!confirm('Make ' + label + ' an admin? They will get access to all admin pages.')) return;
     btn.disabled = true; btn.textContent = 'Updating…';
     try {
@@ -376,12 +433,13 @@ async function promote(u, btn) {
     } catch (err) {
         console.error('promote failed:', err);
         toast('Promote failed: ' + (err.message || err), 'error');
-        btn.disabled = false; btn.textContent = 'Make admin';
+        btn.disabled = false; btn.textContent = 'Grant admin';
     }
 }
 
 async function demote(u, btn) {
-    const label = ((u.firstName || '') + ' ' + (u.lastName || '')).trim() || u.email || u.__id;
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
     if (!confirm('Revoke admin access for ' + label + '? They will lose access to admin pages.')) return;
     btn.disabled = true; btn.textContent = 'Updating…';
     try {
@@ -393,6 +451,49 @@ async function demote(u, btn) {
         btn.disabled = false; btn.textContent = 'Revoke admin';
     }
 }
+
+async function runImport(text, label) {
+    const status = document.getElementById('importStatus');
+    const helpers = window.__smashOnboarding;
+    if (!helpers || !helpers.importMembersFromCsvText) {
+        status.textContent = 'Import helper is not available.';
+        return;
+    }
+    status.textContent = 'Importing ' + (label || 'CSV') + '…';
+    try {
+        const result = await helpers.importMembersFromCsvText(text);
+        helpers.invalidateCaches();
+        status.textContent = 'Imported ' + result.written + ' parishioners into Firestore. You can delete members.csv from the site now.';
+        toast('Directory imported (' + result.written + ' records).');
+    } catch (err) {
+        console.error('import failed:', err);
+        status.textContent = 'Import failed: ' + (err.message || err);
+        toast('Import failed: ' + (err.message || err), 'error');
+    }
+}
+
+document.getElementById('btnImportBundled').addEventListener('click', async function () {
+    const status = document.getElementById('importStatus');
+    status.textContent = 'Loading members.csv…';
+    try {
+        const res = await fetch('members.csv', { cache: 'no-cache' });
+        if (!res.ok) throw new Error('members.csv HTTP ' + res.status + ' — upload a CSV instead.');
+        await runImport(await res.text(), 'members.csv');
+    } catch (err) {
+        status.textContent = 'Could not read members.csv: ' + (err.message || err);
+        toast('Could not read members.csv. Upload a file instead.', 'error');
+    }
+});
+
+document.getElementById('csvFile').addEventListener('change', function (ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () { runImport(String(reader.result || ''), file.name); };
+    reader.onerror = function () { toast('Could not read that file.', 'error'); };
+    reader.readAsText(file);
+});
 </script>
 </body>
 </html>

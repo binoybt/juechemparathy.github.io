@@ -160,6 +160,9 @@ function renderUser() {
           </button>
           ${isAdmin ? `
             <div class="dropdown-divider"></div>
+            <a class="dropdown-item admin-item" href="admin-users.html" style="display: flex; align-items: center; gap: 8px; text-decoration: none; color: inherit;">
+              <span>👥</span> Members &amp; Admins
+            </a>
             <a class="dropdown-item admin-item" href="ledger.html" style="display: flex; align-items: center; gap: 8px; text-decoration: none; color: inherit;">
               <span>💰</span> Financial Ledger
             </a>

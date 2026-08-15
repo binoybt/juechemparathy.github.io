@@ -91,6 +91,9 @@ body.tournament {
 }
 .t-user-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; }
 
+.t-access-banner { border-color: var(--t-warning) !important; background: #fffbeb; }
+.t-access-banner-open { border-color: var(--t-success) !important; background: #ecfdf5; }
+
 /* ── Layout ── */
 .t-container { max-width: 1200px; margin: 0 auto; padding: 20px 14px 60px; }
 .t-section { margin-bottom: 28px; }
@@ -371,6 +374,17 @@ body.tournament {
   box-shadow: 0 0 0 3px rgba(59, 130, 246, .12);
 }
 .t-input.sm, .t-select.sm { padding: 6px 8px; font-size: .82rem; }
+.t-rules-textarea {
+  min-height: 140px;
+  resize: vertical;
+  line-height: 1.45;
+}
+.t-rules-text {
+  white-space: pre-wrap;
+  color: var(--t-fg);
+  font-size: .95rem;
+  line-height: 1.55;
+}
 
 .t-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .t-form-field { display: flex; flex-direction: column; gap: 4px; }

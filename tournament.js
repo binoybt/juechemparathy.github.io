@@ -16,8 +16,14 @@
  *       schedule    { draft, published }            — per-sport fixture list
  *                     draft.entries[]     working copy (admin only)
  *                     published.entries[] public copy (visible after Publish)
+ *       rules       { text, updatedAt, updatedBy }  — sport-specific, admin-edit
+ *     rules         { text, updatedAt, updatedBy }  — tournament-wide, admin-edit
  *     archived      bool
  *     createdAt / updatedAt / createdBy
+ *
+ * Site-wide visibility (firebase-config.js TournamentAccess):
+ *   siteConfig/tournament { openToEveryone: bool }
+ *     missing/false → admin testing only; true → all signed-in members
  *
  *   tournament_matches/{docId}
  *     tournamentId  string
@@ -364,12 +370,13 @@
   const state = {
     user: null,
     isAdmin: false,
+    authLoading: true,
     tournaments: [],       // all tournaments (subscribed once)
     matches: [],           // matches for the current tournament only
     currentId: null,       // tournamentId currently subscribed for matches
     users: [],             // signed-in user profiles (from `users` collection)
     rsvpResponses: [],     // raw docs from rsvpResponses (existing app data)
-    members: [],           // parishioner directory (parsed from members.csv, in-memory only)
+    members: [],           // parishioner directory (Firestore `members` collection)
     membersLoaded: false,  // becomes true once CSV has been fetched and parsed
     unsubTournaments: null,
     unsubMatches: null,
@@ -385,7 +392,7 @@
   let sessionInitialized = false;
 
   // Tracks which live-data modal is currently on-screen so that async data
-  // arrivals (users snapshot, members.csv load) can re-render it in place.
+  // arrivals (users snapshot, directory load) can re-render it in place.
   // Values: null | 'userPicker' | 'memberPicker' | 'roster'.
   let openLiveModal = null;
   let openLiveModalContext = null; // arbitrary payload used by the re-renderer
@@ -404,6 +411,22 @@
   function canManageCaptains() { return state.isAdmin; }
 
   function canEditSchedule() { return state.isAdmin; }
+
+  function tournamentOpenToEveryone() {
+    return !!(window.TournamentAccess && TournamentAccess.isOpenToEveryone());
+  }
+
+  function canUseTournamentPage() {
+    if (!state.user) return false;
+    return !!(state.isAdmin || tournamentOpenToEveryone());
+  }
+
+  function tournamentAccessPending() {
+    if (state.isAdmin || tournamentOpenToEveryone()) return false;
+    if (state.authLoading) return true;
+    if (window.TournamentAccess && !TournamentAccess.isLoaded()) return true;
+    return false;
+  }
 
   // Returns true if the current user is the captain of the given team.
   // Matches on Firebase uid when available; otherwise falls back to email so
@@ -447,7 +470,7 @@
   }
 
   // Best-effort identity for the signed-in user, combining the users
-  // profile, any RSVP record, Google display name, and members.csv.
+  // profile, any RSVP record, Google display name, and the parishioner directory.
   function resolveCurrentMemberIdentity() {
     if (!state.user) return null;
     const uid = state.user.uid;
@@ -635,17 +658,43 @@
   async function loadMembersCsv() {
     if (state.membersLoaded) return;
     try {
-      const res = await fetch('members.csv', { cache: 'no-cache' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = await res.text();
-      state.members = parseMembersCsv(text);
+      let list = [];
+      if (window.__smashOnboarding && typeof window.__smashOnboarding.loadMembersDirectory === 'function') {
+        list = await window.__smashOnboarding.loadMembersDirectory();
+      } else {
+        const snap = await db.collection('members').get();
+        snap.forEach(function (d) {
+          const v = d.data() || {};
+          list.push({
+            familyId: String(v.FID || v.familyId || '').trim(),
+            firstName: String(v.firstName || '').trim(),
+            lastName: String(v.lastName || '').trim(),
+            familyName: String(v.familyName || '').trim(),
+            memberId: String(v.memberId || d.id || '').trim()
+          });
+        });
+      }
+      state.members = list.map(function (m) {
+        const fn = String(m.firstName || '').trim();
+        const ln = String(m.lastName || '').trim();
+        const fam = String(m.familyName || '').trim();
+        return {
+          familyId: String(m.familyId || m.FID || '').trim(),
+          FID: String(m.FID || m.familyId || '').trim(),
+          firstName: fn,
+          lastName: ln,
+          familyName: fam,
+          memberId: String(m.memberId || '').trim(),
+          search: (fn + ' ' + ln + ' ' + fam).toLowerCase()
+        };
+      });
       state.membersLoaded = true;
       render();
       if (openLiveModal === 'memberPicker') rerenderMemberPicker();
       if (openLiveModal === 'roster') rerenderRoster();
     } catch (err) {
-      console.error('[tournament] Failed to load members.csv:', err);
-      toast('Could not load parishioner directory (members.csv). Roster search will not work.', 'error');
+      console.error('[tournament] Failed to load parishioner directory:', err);
+      toast('Could not load parishioner directory. Roster search will not work until an admin imports it.', 'error');
     }
   }
 
@@ -994,6 +1043,7 @@
         ${homeCrumb}
         ${currentCrumb}
         <a href="index.html" class="t-nav-btn" title="Back to SMASH">← <span class="hide-sm">SMASH</span></a>
+        ${state.isAdmin ? '<a href="admin-users.html" class="t-nav-btn" title="Members &amp; Admins">👥 <span class="hide-sm">Members</span></a>' : ''}
         <div id="tUserBox"></div>
       </div>
     `;
@@ -1034,6 +1084,8 @@
         </div>
         <div class="t-emoji">🏆</div>
       </section>
+
+      ${renderAccessBanner()}
 
       <section class="t-section">
         <div class="t-section-header">
@@ -1650,7 +1702,137 @@
       toast('Seed failed: ' + (err.message || err.code || 'unknown'), 'error');
     }
   }
+
+  function renderAccessBanner() {
+    if (!state.isAdmin) return '';
+    if (tournamentOpenToEveryone()) {
+      return `
+      <section class="t-section">
+        <div class="t-card t-access-banner t-access-banner-open">
+          <div class="t-card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-weight:700;color:var(--t-fg);">Tournament is open to everyone</div>
+              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Signed-in members can open this page. Switch back to admin-only if you still need to test privately.</div>
+            </div>
+            <button class="t-btn" type="button" onclick="window.__tournament.setTournamentOpen(false)">Admin testing only</button>
+          </div>
+        </div>
+      </section>`;
+    }
+    return `
+      <section class="t-section">
+        <div class="t-card t-access-banner">
+          <div class="t-card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-weight:700;color:var(--t-fg);">Admin testing only</div>
+              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Members cannot see Tournament in the nav and cannot open this page. Open it to everyone when you are ready.</div>
+            </div>
+            <button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentOpen(true)">Open to everyone</button>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function setTournamentOpen(open) {
+    if (!state.isAdmin) return toast('Admin only', 'error');
+    if (!window.TournamentAccess) return toast('Visibility setting is unavailable', 'error');
+    const next = !!open;
+    const ok = next
+      ? confirm('Make Tournament visible to all signed-in members? They will see the nav link and can open this page.')
+      : confirm('Hide Tournament from members? Only admins will see the page until you open it again.');
+    if (!ok) return;
+    TournamentAccess.setOpenToEveryone(next).then(function () {
+      toast(next ? 'Tournament is now open to everyone' : 'Tournament is admin-only again');
+      render();
+    }).catch(function (err) {
+      console.error(err);
+      toast('Could not update visibility: ' + (err.message || err.code || 'unknown'), 'error');
+    });
+  }
+
+  function rulesText(obj) {
+    if (!obj) return '';
+    if (typeof obj === 'string') return obj;
+    return String(obj.text || '');
+  }
+
+  function formatRulesHtml(text) {
+    const raw = String(text || '').trim();
+    if (!raw) return '<p class="t-empty">No rules posted yet.</p>';
+    return '<div class="t-rules-text">' + escapeHtml(raw).replace(/\n/g, '<br>') + '</div>';
+  }
+
+  function renderRulesCard(opts) {
+    const text = opts.text || '';
+    if (!state.isAdmin && !String(text).trim()) return '';
+    const title = escapeHtml(opts.title || 'Rules');
+    const subtitle = escapeHtml(opts.subtitle || '');
+    if (state.isAdmin) {
+      return `
+      <section class="t-section">
+        <div class="t-section-header">
+          <h2 class="t-section-title">${title}${subtitle ? ' <small>' + subtitle + '</small>' : ''}</h2>
+          <button class="t-btn sm primary" type="button" onclick="window.__tournament.${opts.saveCall}">Save rules</button>
+        </div>
+        <div class="t-card"><div class="t-card-body">
+          <textarea class="t-input t-rules-textarea" id="${escapeHtml(opts.textareaId)}" rows="6" placeholder="${escapeHtml(opts.placeholder || '')}">${escapeHtml(text)}</textarea>
+          <div class="t-schedule-note" style="margin-top:8px;">Only admins can edit. Everyone else can read these rules.</div>
+        </div></div>
+      </section>`;
+    }
+    return `
+      <section class="t-section">
+        <div class="t-section-header">
+          <h2 class="t-section-title">${title}${subtitle ? ' <small>' + subtitle + '</small>' : ''}</h2>
+        </div>
+        <div class="t-card"><div class="t-card-body">${formatRulesHtml(text)}</div></div>
+      </section>`;
+  }
+
+  async function saveTournamentRules(tournamentId) {
+    if (!state.isAdmin) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const box = document.getElementById('tTournamentRules');
+    if (!box) return;
+    const rules = {
+      text: box.value || '',
+      updatedAt: new Date().toISOString(),
+      updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
+    };
+    try {
+      await db.collection('tournaments').doc(t.id).update({
+        rules: rules,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { rules: rules });
+      toast('Tournament rules saved', 'success');
+    } catch (err) {
+      console.error(err);
+      toast('Could not save rules: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  async function saveSportRules(tournamentId, sportId) {
+    if (!state.isAdmin) return toast('Admin only', 'error');
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const box = document.getElementById('tSportRules');
+    if (!box) return;
+    const rules = {
+      text: box.value || '',
+      updatedAt: new Date().toISOString(),
+      updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
+    };
+    try {
+      await writeSportPatch(t, sportId, { rules: rules });
+      toast((sport.label || 'Sport') + ' rules saved', 'success');
+    } catch (_) { /* writeSportPatch already toasted */ }
+  }
+
   window.__tournament.seedKoinonia = seedKoinonia;
+  window.__tournament.setTournamentOpen = setTournamentOpen;
   window.__tournament.openCaptainPicker = openCaptainPicker;
   window.__tournament.openRoster = openRoster;
   window.__tournament.openMemberPicker = openMemberPicker;
@@ -1660,6 +1842,9 @@
   window.__tournament.generateLeagueSchedule = generateLeagueSchedule;
   window.__tournament.saveScheduleDraft = saveScheduleDraft;
   window.__tournament.publishSchedule = publishSchedule;
+  window.__tournament.clearSchedule = clearSchedule;
+  window.__tournament.saveTournamentRules = saveTournamentRules;
+  window.__tournament.saveSportRules = saveSportRules;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
@@ -1700,6 +1885,17 @@
         <div class="t-emoji">${sport ? (sport.emoji || '🏆') : '🏆'}</div>
       </section>
 
+      ${renderAccessBanner()}
+
+      ${renderRulesCard({
+        title: 'Tournament rules',
+        subtitle: 'applies to every sport',
+        text: rulesText(t.rules),
+        textareaId: 'tTournamentRules',
+        placeholder: 'Eligibility, conduct, scoring notes, prize rules…',
+        saveCall: "saveTournamentRules('" + t.id + "')"
+      })}
+
       ${state.isAdmin ? `
       <section class="t-section" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="t-btn" onclick="window.__tournament.navigate({view:'manage',tournamentId:'${t.id}'})">⚙️ Manage tournament</button>
@@ -1738,6 +1934,15 @@
           <div class="t-rosters-grid" id="tRostersGrid"></div>
         </section>
         ` : ''}
+
+        ${renderRulesCard({
+          title: (sport.label || 'Sport') + ' rules',
+          subtitle: 'this sport only',
+          text: rulesText(sport.rules),
+          textareaId: 'tSportRules',
+          placeholder: 'Format, scoring, substitutions, court rules for this sport…',
+          saveCall: "saveSportRules('" + t.id + "','" + sport.id + "')"
+        })}
 
         <section class="t-section" id="tScheduleSection">
           <div class="t-section-header">
@@ -2331,6 +2536,7 @@
             : ''}
           <button class="t-btn sm" type="button" onclick="window.__tournament.saveScheduleDraft('${tournament.id}','${sport.id}')">💾 Save draft</button>
           <button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule('${tournament.id}','${sport.id}')">📢 Publish</button>
+          <button class="t-btn sm danger" type="button" onclick="window.__tournament.clearSchedule('${tournament.id}','${sport.id}')">Clear schedule</button>
         `;
       } else if (published) {
         actions.innerHTML = '<span class="t-badge locked">Published</span>';
@@ -2593,6 +2799,49 @@
       toast('Schedule published', 'success');
       render();
     } catch (_) { /* already toasted */ }
+  }
+
+  async function deleteScheduleMatches(tournament, sport) {
+    const existing = state.matches.filter(function (m) { return m.sport === sport.id; });
+    const col = db.collection('tournament_matches');
+    for (let i = 0; i < existing.length; i++) {
+      const m = existing[i];
+      if (!m.fromSchedule && !m.scheduleEntryId) continue;
+      if (m.status && m.status !== 'scheduled') continue;
+      await col.doc(m.id).delete();
+    }
+  }
+
+  async function clearSchedule(tournamentId, sportId) {
+    if (!canEditSchedule()) return toast('Only admins can clear the schedule', 'error');
+    harvestScheduleEditor();
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const published = scheduleIsPublished(sport);
+    const sch = getSchedule(sport);
+    const local = scheduleEditByKey[scheduleKey(tournamentId, sportId)];
+    const hasDraft = !!(sch.draft && Array.isArray(sch.draft.entries) && sch.draft.entries.length);
+    const hasLocal = !!(local && Array.isArray(local.entries) && local.entries.length);
+    if (!published && !hasDraft && !hasLocal) return toast('Schedule is already empty');
+
+    if (published) {
+      if (!confirm('This schedule is published and everyone can see it. Clear it anyway?')) return;
+      if (!confirm('This cannot be undone. Remove all published fixtures and scheduled match cards for this sport? Live or completed matches will be kept.')) return;
+    } else if (!confirm('Clear this sport\'s schedule draft? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await deleteScheduleMatches(t, sport);
+      await writeSportPatch(t, sportId, { schedule: { draft: null, published: null } });
+      persistLocalEntries(tournamentId, sportId, [], false);
+      delete scheduleEditByKey[scheduleKey(tournamentId, sportId)];
+      toast('Schedule cleared', 'success');
+      if (published) {
+        confirm('The published schedule was cleared. Members will no longer see those fixtures. Click OK to continue.');
+      }
+      render();
+    } catch (_) { /* writeSportPatch already toasted */ }
   }
 
   function buildMatchData(tournament, sport, entry) {
@@ -3182,7 +3431,7 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MEMBER PICKER (captain/admin) — search members.csv
+  // MEMBER PICKER (captain/admin) — search parishioner directory
   // ═══════════════════════════════════════════════════════════════════════════
 
   // Explains — for a specific team — why the current user is not allowed to
@@ -3250,7 +3499,7 @@
 
     function paintResults() {
       if (!state.membersLoaded) {
-        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading members.csv…</div>';
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading parishioner directory…</div>';
         return;
       }
       const list = searchMembers(input.value);
@@ -3880,13 +4129,23 @@
     const parsed = parseUrl();
     renderTopbar();
 
-    // Gate the tournament section behind sign-in. Anyone signed in can view;
-    // admins and captains get extra controls. Non-signed-in visitors see a
-    // sign-in prompt.
+    // Sign-in first, then admin-only until an admin opens Tournament to everyone.
     if (!state.user) {
       renderAccessGate();
       return;
     }
+    if (tournamentAccessPending()) {
+      renderCheckingAccess();
+      return;
+    }
+    if (!canUseTournamentPage()) {
+      if (state.unsubMatches) { state.unsubMatches(); state.unsubMatches = null; state.currentId = null; }
+      renderTestingGate();
+      return;
+    }
+
+    ensureTournamentData();
+
     // Non-admin, non-captain users hitting an admin-only URL get bounced to
     // the tournament view (or the list if no tournament is selected).
     if (parsed.view === 'create' && !state.isAdmin) {
@@ -3912,6 +4171,36 @@
     if (parsed.view === 'create') return renderCreateOrManage('create');
     if (parsed.view === 'manage') return renderCreateOrManage('manage');
     if (parsed.view === 'tournament') return renderTournament();
+  }
+
+  function renderCheckingAccess() {
+    document.title = 'Church Tournament';
+    document.getElementById('tContent').innerHTML = `
+      <section class="t-section">
+        <div class="t-empty">Checking access…</div>
+      </section>
+    `;
+  }
+
+  function renderTestingGate() {
+    document.title = 'Church Tournament — Coming soon';
+    const container = document.getElementById('tContent');
+    container.innerHTML = `
+      <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
+        <div>
+          <h1>🏆 Church Tournament</h1>
+          <p>Admins are still setting this up. It will show up in the menu for everyone when it is ready.</p>
+        </div>
+        <div class="t-emoji">🔒</div>
+      </section>
+      <section class="t-section">
+        <div class="t-auth-gate">
+          <h3>Not open yet</h3>
+          <p>This page is in admin testing. Signed-in members will get access once an admin taps <strong>Open to everyone</strong>.</p>
+          ${state.user ? '<p class="denied">Signed in as ' + escapeHtml(state.user.email || '') + '</p>' : ''}
+        </div>
+      </section>
+    `;
   }
 
   function renderAccessGate() {
@@ -3941,10 +4230,21 @@
   // BOOTSTRAP
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function ensureTournamentData() {
+    if (!canUseTournamentPage()) return;
+    if (!state.unsubTournaments) subscribeTournaments();
+    if (state.user) {
+      subscribeUsers();
+      subscribeRsvpResponses();
+    }
+    if (!state._membersLoadStarted) {
+      state._membersLoadStarted = true;
+      loadMembersCsv();
+    }
+  }
+
   function init() {
     render();
-    subscribeTournaments();
-    loadMembersCsv();
     auth.onAuthStateChanged(function (user) {
       state.user = user;
       sessionInitialized = true;
@@ -3953,12 +4253,8 @@
         // how the users collection grows to contain everyone who has ever
         // signed into any part of the site.
         upsertUserProfile(user);
-        // Only start people-list subscriptions after auth is settled, so the
-        // read carries an authenticated token. Starting before onAuthStateChanged
-        // fires can hit rules that require `request.auth != null` and result
-        // in an empty snapshot that never recovers.
-        subscribeUsers();
-        subscribeRsvpResponses();
+        // People-list subscriptions start from ensureTournamentData() once
+        // this user is allowed to use the page (admin, or open to everyone).
         if (!window.SmashAuth) {
           const FALLBACK_ADMIN_EMAILS = [
             'jue.george@gmail.com',
@@ -3967,12 +4263,16 @@
             'b.ajaymathews@gmail.com'
           ];
           state.isAdmin = FALLBACK_ADMIN_EMAILS.indexOf(String(user.email || '').toLowerCase()) !== -1;
+          state.authLoading = false;
         }
       } else {
         // Sign-out — drop the people-list subscriptions. The Firestore docs
         // remain untouched; only the local cached view is cleared.
         unsubscribeUserData();
-        if (!window.SmashAuth) state.isAdmin = false;
+        if (!window.SmashAuth) {
+          state.isAdmin = false;
+          state.authLoading = false;
+        }
       }
       render();
     });
@@ -3981,10 +4281,16 @@
     // admin-users.html). Re-render whenever the role resolves or changes.
     if (window.SmashAuth) {
       SmashAuth.onChange(function (s) {
-        const was = state.isAdmin;
-        state.isAdmin = !!(s.user && s.isAdmin);
-        if (was !== state.isAdmin) render();
+        const nextAdmin = !!(s.user && s.isAdmin);
+        const nextLoading = !!s.loading;
+        const changed = state.isAdmin !== nextAdmin || state.authLoading !== nextLoading;
+        state.isAdmin = nextAdmin;
+        state.authLoading = nextLoading;
+        if (changed) render();
       });
+    }
+    if (window.TournamentAccess) {
+      TournamentAccess.onChange(function () { render(); });
     }
   }
 

@@ -44,13 +44,18 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //   2. bootstraps role: existing admins in SMASH_ADMIN_BOOTSTRAP_EMAILS get
 //      role='admin' on next sign-in; everyone else defaults to role='member'
 //   3. verifies the user against the SMASH parishioner directory
-//      (members.csv + Firestore additionalMembers collection)
+//      (Firestore `members` collection, plus legacy additionalMembers)
 //   4. if they can't be matched, forces a blocking onboarding modal that
-//      collects First name / Last name / Family ID and either verifies them
+//      collects First name / Last name / FID and either verifies them
 //      instantly or opens a pendingRegistrations doc for an admin to review
+//      On a directory match, users/{uid}.FID is stored. A second Google
+//      account claiming the same person is blocked.
 //   5. exposes a role-aware SmashAuth API on window.SmashAuth that all
 //      other pages use to gate admin UI (see JSDoc below for the shape)
 //   6. shows a small admin banner if there are pending reviews
+//   7. tracks Tournament page visibility (admin-only vs everyone) via
+//      siteConfig/tournament.openToEveryone and hides .js-tournament-nav
+//      links until an admin opens it
 //
 // FIRESTORE RULES (paste into your rules editor):
 //
@@ -92,6 +97,29 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //
 //       match /additionalMembers/{docId} {
 //         allow read:  if isSignedIn();
+//         allow write: if isAdmin();
+//       }
+//
+//       // Parishioner directory (replaces public members.csv).
+//       match /members/{id} {
+//         allow read:  if isSignedIn();
+//         allow write: if isAdmin();
+//       }
+//
+//       // One Google account per parishioner (memberId or FID+name).
+//       match /identityClaims/{id} {
+//         allow get:    if isSignedIn();
+//         allow list:   if isAdmin();
+//         allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+//         allow update, delete: if isAdmin();
+//       }
+//
+//       // Tournament page only. Collection "siteConfig" is just a folder
+//       // name; document "tournament" is the one yes/no switch for whether
+//       // members can open Tournament. This does not affect any other page.
+//       // Missing doc / openToEveryone != true = admin testing only.
+//       match /siteConfig/tournament {
+//         allow read:  if true;
 //         allow write: if isAdmin();
 //       }
 //     }
@@ -164,6 +192,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     isAdmin: function () { return state.isAdmin; },
     /** Convenience: SmashAuth.isSignedIn() */
     isSignedIn: function () { return !!state.user; },
+    /** True until the users/{uid} role snapshot has resolved. */
+    isLoading: function () { return state.loading; },
     /** Register a callback; fires immediately with current state, then
      *  on every auth or role change. Returns an unsubscribe fn. */
     onChange: function (cb) {
@@ -198,7 +228,93 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     }
   };
 
-  // ── Members directory (members.csv + additionalMembers) ───────────────
+  // ── Tournament visibility (admin testing vs everyone) ─────────────────
+  // Only the Tournament page is gated. Firestore path:
+  //   collection "siteConfig"  (a settings folder; unused for other pages)
+  //   document   "tournament"  (one field: openToEveryone true/false)
+  // Default is admin-only. A missing doc, a failed read, or
+  // openToEveryone !== true all keep Tournament private. Admins flip the
+  // flag from the banner on tournament.html.
+  const tournamentAccess = {
+    openToEveryone: false,
+    loaded: false,
+    listeners: [],
+    unsub: null
+  };
+
+  function applyTournamentNavVisibility() {
+    const show = !!(window.SmashAuth && SmashAuth.isAdmin()) || tournamentAccess.openToEveryone;
+    document.querySelectorAll('.js-tournament-nav').forEach(function (el) {
+      el.hidden = !show;
+    });
+  }
+
+  function notifyTournamentAccess() {
+    const payload = {
+      openToEveryone: tournamentAccess.openToEveryone,
+      loaded: tournamentAccess.loaded
+    };
+    tournamentAccess.listeners.forEach(function (fn) {
+      try { fn(payload); } catch (err) { console.error('[TournamentAccess] listener threw:', err); }
+    });
+    applyTournamentNavVisibility();
+  }
+
+  function subscribeTournamentAccess() {
+    if (tournamentAccess.unsub) {
+      try { tournamentAccess.unsub(); } catch (_) {}
+      tournamentAccess.unsub = null;
+    }
+    tournamentAccess.unsub = db.collection('siteConfig').doc('tournament').onSnapshot(function (snap) {
+      tournamentAccess.loaded = true;
+      const d = snap.exists ? (snap.data() || {}) : {};
+      tournamentAccess.openToEveryone = d.openToEveryone === true;
+      notifyTournamentAccess();
+    }, function (err) {
+      console.warn('[TournamentAccess] siteConfig/tournament read failed:', err);
+      tournamentAccess.loaded = true;
+      tournamentAccess.openToEveryone = false;
+      notifyTournamentAccess();
+    });
+  }
+
+  window.TournamentAccess = {
+    isOpenToEveryone: function () { return tournamentAccess.openToEveryone; },
+    isLoaded: function () { return tournamentAccess.loaded; },
+    canSeeNav: function (isAdmin) { return !!isAdmin || tournamentAccess.openToEveryone; },
+    onChange: function (fn) {
+      if (typeof fn !== 'function') return function () {};
+      tournamentAccess.listeners.push(fn);
+      if (tournamentAccess.loaded) {
+        try { fn({ openToEveryone: tournamentAccess.openToEveryone, loaded: true }); } catch (err) { console.error(err); }
+      }
+      return function () {
+        const i = tournamentAccess.listeners.indexOf(fn);
+        if (i !== -1) tournamentAccess.listeners.splice(i, 1);
+      };
+    },
+    setOpenToEveryone: function (open) {
+      if (!window.SmashAuth || !SmashAuth.isAdmin()) {
+        return Promise.reject(new Error('Only admins can change tournament visibility.'));
+      }
+      return db.collection('siteConfig').doc('tournament').set({
+        openToEveryone: !!open,
+        updatedAt: FV.serverTimestamp(),
+        updatedBy: (auth.currentUser && auth.currentUser.uid) || null
+      }, { merge: true });
+    }
+  };
+
+  subscribeTournamentAccess();
+  auth.onAuthStateChanged(function () { subscribeTournamentAccess(); });
+  window.SmashAuth.onChange(function () { applyTournamentNavVisibility(); });
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyTournamentNavVisibility);
+  } else {
+    applyTournamentNavVisibility();
+  }
+
+  // ── Members directory (Firestore `members` + legacy additionalMembers) ─
   let membersCache = null;
   let additionalMembersCache = null;
 
@@ -216,8 +332,10 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     const out = [];
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(',');
+      const familyId = (cols[idx.familyId] || '').trim();
       out.push({
-        familyId:   (cols[idx.familyId]   || '').trim(),
+        familyId:   familyId,
+        FID:        familyId,
         firstName:  (cols[idx.firstName]  || '').trim(),
         lastName:   (cols[idx.lastName]   || '').trim(),
         familyName: (cols[idx.familyName] || '').trim(),
@@ -228,18 +346,47 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     return out;
   }
 
-  async function loadMembersCsv() {
-    if (membersCache) return membersCache;
-    try {
-      const cached = sessionStorage.getItem('smash.membersCsv');
-      if (cached) { membersCache = parseMembersCsv(cached); return membersCache; }
-    } catch (_) {}
-    const res = await fetch('members.csv', { cache: 'no-cache' });
-    if (!res.ok) throw new Error('members.csv HTTP ' + res.status);
-    const text = await res.text();
-    try { sessionStorage.setItem('smash.membersCsv', text); } catch (_) {}
-    membersCache = parseMembersCsv(text);
-    return membersCache;
+  function memberDocId(m) {
+    const mid = String((m && m.memberId) || '').trim();
+    if (mid) return mid;
+    return 'n_' + [normKey(m && (m.familyId || m.FID)), normKey(m && m.firstName), normKey(m && m.lastName)].join('_');
+  }
+
+  function memberDocPayload(m, extra) {
+    const fid = String((m && (m.FID || m.familyId)) || '').trim();
+    const firstName = String((m && m.firstName) || '').trim();
+    const lastName = String((m && m.lastName) || '').trim();
+    const familyName = String((m && m.familyName) || '').trim();
+    const memberId = String((m && m.memberId) || '').trim();
+    return Object.assign({
+      FID: fid,
+      familyId: fid,
+      firstName: firstName,
+      lastName: lastName,
+      familyName: familyName,
+      memberId: memberId,
+      firstNameLower: firstName.toLowerCase(),
+      lastNameLower: lastName.toLowerCase(),
+      search: (firstName + ' ' + lastName + ' ' + familyName).toLowerCase()
+    }, extra || {});
+  }
+
+  function normalizeMemberRecord(v, docId, source) {
+    const fid = String((v && (v.FID || v.familyId)) || '').trim();
+    const firstName = String((v && v.firstName) || '').trim();
+    const lastName = String((v && v.lastName) || '').trim();
+    const familyName = String((v && v.familyName) || '').trim();
+    return {
+      docId:      docId || '',
+      familyId:   fid,
+      FID:        fid,
+      firstName:  firstName,
+      lastName:   lastName,
+      familyName: familyName,
+      memberId:   String((v && v.memberId) || docId || '').trim(),
+      search:     String((v && v.search) || (firstName + ' ' + lastName + ' ' + familyName)).toLowerCase(),
+      _source:    source || 'firestore'
+    };
   }
 
   async function loadAdditionalMembers() {
@@ -248,37 +395,272 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       const snap = await db.collection('additionalMembers').get();
       const out = [];
       snap.forEach(function (d) {
-        const v = d.data() || {};
-        out.push({
-          docId:      d.id,
-          familyId:   String(v.familyId   || '').trim(),
-          firstName:  String(v.firstName  || '').trim(),
-          lastName:   String(v.lastName   || '').trim(),
-          familyName: String(v.familyName || '').trim(),
-          memberId:   String(v.memberId   || '').trim(),
-          _source:    'firestore'
-        });
+        out.push(normalizeMemberRecord(d.data() || {}, d.id, 'additionalMembers'));
       });
       additionalMembersCache = out;
     } catch (err) {
-      console.warn('[onboarding] additionalMembers read failed (continuing with members.csv only):', err);
+      console.warn('[onboarding] additionalMembers read failed:', err);
       additionalMembersCache = [];
     }
     return additionalMembersCache;
   }
 
+  async function loadMembersDirectory() {
+    if (membersCache) return membersCache;
+    const out = [];
+    try {
+      const snap = await db.collection('members').get();
+      snap.forEach(function (d) {
+        out.push(normalizeMemberRecord(d.data() || {}, d.id, 'members'));
+      });
+    } catch (err) {
+      console.warn('[onboarding] members collection read failed:', err);
+    }
+    const extra = await loadAdditionalMembers();
+    extra.forEach(function (m) {
+      const dup = out.some(function (x) {
+        if (m.memberId && x.memberId && m.memberId === x.memberId) return true;
+        return normKey(x.firstName) === normKey(m.firstName) &&
+               normKey(x.lastName) === normKey(m.lastName) &&
+               normKey(x.familyId) === normKey(m.familyId);
+      });
+      if (!dup) out.push(m);
+    });
+    membersCache = out;
+    return membersCache;
+  }
+
+  // Kept as an alias — pending-users.html and tournament.js call this name.
+  async function loadMembersCsv() {
+    return loadMembersDirectory();
+  }
+
+  async function importMembersFromRows(rows) {
+    if (!window.SmashAuth || !SmashAuth.isAdmin()) {
+      throw new Error('Only admins can import the parishioner directory.');
+    }
+    const list = rows || [];
+    let written = 0;
+    for (let i = 0; i < list.length; i += 400) {
+      const batch = db.batch();
+      list.slice(i, i + 400).forEach(function (m) {
+        const id = memberDocId(m);
+        if (!id || id === 'n__') return;
+        batch.set(db.collection('members').doc(id), memberDocPayload(m, {
+          importedAt: FV.serverTimestamp(),
+          importedBy: (auth.currentUser && auth.currentUser.email) || ''
+        }), { merge: true });
+        written++;
+      });
+      await batch.commit();
+    }
+    membersCache = null;
+    return { written: written, total: list.length };
+  }
+
+  async function importMembersFromCsvText(text) {
+    return importMembersFromRows(parseMembersCsv(text));
+  }
+
   async function findMemberMatch(firstName, lastName, familyId) {
-    const list = (await loadMembersCsv()).concat(await loadAdditionalMembers());
+    const list = await loadMembersDirectory();
     const fn = normKey(firstName), ln = normKey(lastName), fid = normKey(familyId);
     for (let i = 0; i < list.length; i++) {
       const m = list[i];
       if (normKey(m.firstName) === fn &&
           normKey(m.lastName)  === ln &&
-          normKey(m.familyId)  === fid) {
+          (normKey(m.familyId) === fid || normKey(m.FID) === fid)) {
         return m;
       }
     }
     return null;
+  }
+
+  function identityClaimKey(match) {
+    const mid = String((match && match.memberId) || '').trim();
+    if (mid) return 'mid:' + mid;
+    return 'name:' + [
+      normKey(match && (match.FID || match.familyId)),
+      normKey(match && match.firstName),
+      normKey(match && match.lastName)
+    ].join('|');
+  }
+
+  function verifiedMemberPayload(match) {
+    const fid = String((match && (match.FID || match.familyId)) || '').trim();
+    return {
+      verified:       true,
+      verifiedAt:     FV.serverTimestamp(),
+      firstName:      match.firstName,
+      lastName:       match.lastName,
+      firstNameLower: String(match.firstName || '').toLowerCase(),
+      lastNameLower:  String(match.lastName || '').toLowerCase(),
+      familyId:       fid,
+      FID:            fid,
+      familyName:     match.familyName || '',
+      memberId:       String(match.memberId || '').trim(),
+      pendingRegistrationId: FV.delete()
+    };
+  }
+
+  async function findExistingUserClaim(match, currentUid) {
+    const fid = String((match && (match.FID || match.familyId)) || '').trim();
+    const fn = normKey(match && match.firstName);
+    const ln = normKey(match && match.lastName);
+    const mid = String((match && match.memberId) || '').trim();
+    let found = null;
+    function consider(d) {
+      if (!d || d.id === currentUid || found) return;
+      const v = d.data() || {};
+      if (mid && String(v.memberId || '').trim() === mid) {
+        found = Object.assign({ uid: d.id }, v);
+        return;
+      }
+      const vFid = String(v.FID || v.familyId || '').trim();
+      if (fid && vFid === fid && normKey(v.firstName) === fn && normKey(v.lastName) === ln) {
+        found = Object.assign({ uid: d.id }, v);
+      }
+    }
+    if (mid) {
+      try {
+        (await db.collection('users').where('memberId', '==', mid).get()).forEach(consider);
+      } catch (err) {
+        console.warn('[onboarding] memberId claim lookup failed:', err);
+      }
+    }
+    if (!found && fid) {
+      const variants = [fid];
+      if (/^\d+$/.test(fid)) variants.push(Number(fid));
+      for (let i = 0; i < variants.length && !found; i++) {
+        const val = variants[i];
+        try {
+          (await db.collection('users').where('FID', '==', val).get()).forEach(consider);
+        } catch (err) {
+          console.warn('[onboarding] FID claim lookup failed:', err);
+        }
+        if (found) break;
+        try {
+          (await db.collection('users').where('familyId', '==', val).get()).forEach(consider);
+        } catch (err) {
+          console.warn('[onboarding] familyId claim lookup failed:', err);
+        }
+      }
+    }
+    return found;
+  }
+
+  async function claimIdentity(user, match) {
+    const key = identityClaimKey(match);
+    if (!key || key === 'name:||') return { ok: true };
+    const ref = db.collection('identityClaims').doc(key);
+    const payload = {
+      uid:      user.uid,
+      email:    (user.email || '').toLowerCase(),
+      FID:      String((match && (match.FID || match.familyId)) || '').trim(),
+      firstName: match.firstName || '',
+      lastName:  match.lastName || '',
+      memberId:  String((match && match.memberId) || '').trim(),
+      claimedAt: FV.serverTimestamp()
+    };
+    try {
+      await db.runTransaction(function (tx) {
+        return tx.get(ref).then(function (snap) {
+          if (snap.exists) {
+            const d = snap.data() || {};
+            if (d.uid && d.uid !== user.uid) {
+              const err = new Error('IDENTITY_CLAIMED');
+              err.claimedBy = d;
+              throw err;
+            }
+            return;
+          }
+          tx.set(ref, payload);
+        });
+      });
+      return { ok: true };
+    } catch (err) {
+      if (err && (err.message === 'IDENTITY_CLAIMED' || err.claimedBy)) {
+        return { ok: false, claimedBy: err.claimedBy || {} };
+      }
+      throw err;
+    }
+  }
+
+  function showBlockedOverlay(claimedBy) {
+    ensureStyles();
+    hideOnboardingModal();
+    const prev = document.getElementById('smashClaimBlocked');
+    if (prev) prev.remove();
+    const overlay = document.createElement('div');
+    overlay.className = 'smash-ob-overlay';
+    overlay.id = 'smashClaimBlocked';
+    const box = document.createElement('div');
+    box.className = 'smash-ob-box';
+    const other = (claimedBy && claimedBy.email) ? claimedBy.email : 'another Google account';
+    box.innerHTML =
+      '<h2>This parishioner is already registered</h2>' +
+      '<p class="smash-ob-sub">' +
+        'FID, first name, and last name already belong to a signed-in SMASH account. ' +
+        'A second login with a different email is blocked.' +
+      '</p>' +
+      '<div class="smash-ob-error">' +
+        'Already registered with <strong>' + esc(other) + '</strong>. ' +
+        'Sign in with that Google account. If this is a mistake, contact a SMASH admin.' +
+      '</div>' +
+      '<div class="smash-ob-actions">' +
+        '<button type="button" class="smash-ob-btn primary" id="smashClaimOk">OK</button>' +
+      '</div>';
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    box.querySelector('#smashClaimOk').addEventListener('click', function () {
+      overlay.remove();
+    });
+  }
+
+  async function blockDuplicateLogin(claimedBy) {
+    try { await auth.signOut(); } catch (_) {}
+    showBlockedOverlay(claimedBy || {});
+  }
+
+  async function verifyUserWithMatch(user, match) {
+    const existing = await findExistingUserClaim(match, user.uid);
+    if (existing) {
+      await blockDuplicateLogin(existing);
+      return false;
+    }
+    let claim = { ok: true };
+    try {
+      claim = await claimIdentity(user, match);
+    } catch (err) {
+      console.warn('[onboarding] identityClaims write failed (add Firestore rules for /identityClaims):', err);
+    }
+    if (!claim.ok) {
+      await blockDuplicateLogin(claim.claimedBy);
+      return false;
+    }
+    await db.collection('users').doc(user.uid).set(verifiedMemberPayload(match), { merge: true });
+    return true;
+  }
+
+  async function backfillFidAndClaim(user, doc) {
+    if (!user || !doc) return;
+    const fid = String(doc.FID || doc.familyId || '').trim();
+    if (!fid) return;
+    const patch = {};
+    if (!doc.FID) patch.FID = fid;
+    if (doc.familyId == null || doc.familyId === '') patch.familyId = fid;
+    if (Object.keys(patch).length) {
+      try { await db.collection('users').doc(user.uid).set(patch, { merge: true }); } catch (_) {}
+    }
+    try {
+      await claimIdentity(user, {
+        FID: fid,
+        familyId: fid,
+        firstName: doc.firstName || '',
+        lastName: doc.lastName || '',
+        memberId: doc.memberId || ''
+      });
+    } catch (_) {}
   }
 
   // ── Profile mirror + role bootstrap ───────────────────────────────────
@@ -305,6 +687,14 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       console.warn('[SmashAuth] users doc read failed:', err);
     }
     if (!existing) payload.firstLoginAt = FV.serverTimestamp();
+
+    // Do not overwrite directory-verified name / FID from Google displayName.
+    if (existing && (existing.verified || existing.FID || existing.familyId || existing.memberId)) {
+      delete payload.firstName;
+      delete payload.lastName;
+      delete payload.firstNameLower;
+      delete payload.lastNameLower;
+    }
 
     // Bootstrap role. Never downgrade admins here — only stamp when missing.
     const bootstrapAdmin = isBootstrapAdminEmail(user.email);
@@ -365,7 +755,11 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     }
 
     const doc = await readUserDoc(user.uid);
-    if (isVerifiedDoc(doc)) { hideOnboardingModal(); return; }
+    if (isVerifiedDoc(doc)) {
+      await backfillFidAndClaim(user, doc);
+      hideOnboardingModal();
+      return;
+    }
 
     if (doc && doc.pendingRegistrationId) {
       try {
@@ -380,19 +774,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
               pd.familyId  || ''
             );
             if (match) {
-              await db.collection('users').doc(user.uid).set({
-                verified:       true,
-                verifiedAt:     FV.serverTimestamp(),
-                firstName:      match.firstName,
-                lastName:       match.lastName,
-                firstNameLower: match.firstName.toLowerCase(),
-                lastNameLower:  match.lastName.toLowerCase(),
-                familyId:       match.familyId,
-                familyName:     match.familyName,
-                memberId:       match.memberId,
-                pendingRegistrationId: FV.delete()
-              }, { merge: true });
-              hideOnboardingModal();
+              const ok = await verifyUserWithMatch(user, match);
+              if (ok) hideOnboardingModal();
               return;
             }
             showOnboardingModal(user, 'form', {
@@ -512,16 +895,16 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
           '<input id="smashObLast" type="text" value="' +
           esc((submitted && submitted.lastName) || suggested.lastName) +
           '" autocomplete="family-name" /></div>' +
-        '<div class="smash-ob-field"><label>Family ID (per parishioner directory)</label>' +
+        '<div class="smash-ob-field"><label>FID (Family ID from the parishioner directory)</label>' +
           '<input id="smashObFid" type="text" value="' +
-          esc((submitted && submitted.familyId) || '') +
+          esc((submitted && (submitted.FID || submitted.familyId)) || '') +
           '" inputmode="numeric" placeholder="e.g. 42" /></div>' +
         '<div id="smashObMsg"></div>' +
         '<div class="smash-ob-actions">' +
           '<button type="button" class="smash-ob-btn" id="smashObSignOut">Sign out</button>' +
           '<button type="button" class="smash-ob-btn primary" id="smashObSubmit">Continue</button>' +
         '</div>' +
-        '<p class="smash-ob-note">Not sure of your Family ID? Ask another family ' +
+        '<p class="smash-ob-note">Not sure of your FID? Ask another family ' +
         'member or contact a SMASH admin.</p>';
 
       box.querySelector('#smashObSubmit').addEventListener('click', function () {
@@ -549,7 +932,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
         '<div class="smash-ob-info">' +
           '<div><strong>Submitted:</strong></div>' +
           '<div>' + esc(p.firstName || '') + ' ' + esc(p.lastName || '') + '</div>' +
-          '<div>Family ID: ' + esc(p.familyId || '—') + '</div>' +
+          '<div>FID: ' + esc(p.FID || p.familyId || '—') + '</div>' +
         '</div>' +
         '<div class="smash-ob-actions">' +
           '<button type="button" class="smash-ob-btn" id="smashObSignOut">Sign out</button>' +
@@ -596,7 +979,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     msg.innerHTML = '';
 
     if (!fn || !ln || !fid) {
-      msg.innerHTML = '<div class="smash-ob-error">First name, last name, and Family ID are all required.</div>';
+      msg.innerHTML = '<div class="smash-ob-error">First name, last name, and FID are all required.</div>';
       return;
     }
 
@@ -605,21 +988,11 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
     try {
       additionalMembersCache = null;
+      membersCache = null;
       const match = await findMemberMatch(fn, ln, fid);
       if (match) {
-        await db.collection('users').doc(user.uid).set({
-          verified:       true,
-          verifiedAt:     FV.serverTimestamp(),
-          firstName:      match.firstName,
-          lastName:       match.lastName,
-          firstNameLower: match.firstName.toLowerCase(),
-          lastNameLower:  match.lastName.toLowerCase(),
-          familyId:       match.familyId,
-          familyName:     match.familyName,
-          memberId:       match.memberId,
-          pendingRegistrationId: FV.delete()
-        }, { merge: true });
-        hideOnboardingModal();
+        const ok = await verifyUserWithMatch(user, match);
+        if (ok) hideOnboardingModal();
         return;
       }
 
@@ -630,6 +1003,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
         firstName:         fn,
         lastName:          ln,
         familyId:          fid,
+        FID:               fid,
         submittedAt:       FV.serverTimestamp(),
         status:            'pending'
       };
@@ -639,7 +1013,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
         pendingSubmittedAt:    FV.serverTimestamp(),
         pendingFirstName:      fn,
         pendingLastName:       ln,
-        pendingFamilyId:       fid
+        pendingFamilyId:       fid,
+        pendingFID:            fid
       }, { merge: true });
       showOnboardingModal(user, 'pending', payload);
     } catch (err) {
@@ -719,9 +1094,15 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
   // Expose helpers so pending-users.html can reuse the same directory logic.
   window.__smashOnboarding = {
-    findMemberMatch:       findMemberMatch,
-    loadMembersCsv:        loadMembersCsv,
-    loadAdditionalMembers: loadAdditionalMembers,
-    invalidateCaches:      function () { membersCache = null; additionalMembersCache = null; }
+    findMemberMatch:          findMemberMatch,
+    loadMembersCsv:           loadMembersCsv,
+    loadMembersDirectory:     loadMembersDirectory,
+    loadAdditionalMembers:    loadAdditionalMembers,
+    parseMembersCsv:          parseMembersCsv,
+    importMembersFromCsvText: importMembersFromCsvText,
+    importMembersFromRows:    importMembersFromRows,
+    memberDocId:              memberDocId,
+    memberDocPayload:         memberDocPayload,
+    invalidateCaches:         function () { membersCache = null; additionalMembersCache = null; }
   };
 })();

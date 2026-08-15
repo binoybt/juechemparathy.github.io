@@ -156,7 +156,7 @@
     <h1 class="title-bar">SMASH Events</h1>
     <div class="nav-links">
         <a href="index.html" class="nav-btn">Schedule</a>
-        <a href="tournament.html" class="nav-btn">🏆 Tournament</a>
+        <a href="tournament.html" class="nav-btn js-tournament-nav" hidden>🏆 Tournament</a>
         <a href="wishlist.html" class="nav-btn">Wishlist</a>
         <a href="rsvp-admin.html" class="nav-btn admin" id="rsvpAdminLink" style="display:none;">RSVP</a>
         <a href="events-admin.html" class="nav-btn admin" id="adminLink" style="display:none;">Admin</a>
@@ -199,7 +199,7 @@
     </div>
 </main>
 
-<script src="firebase-config.js?v=9"></script>
+<script src="firebase-config.js?v=11"></script>
 <script>
 SmashAuth.onChange(s => {
     const show = !!(s.user && s.isAdmin);
