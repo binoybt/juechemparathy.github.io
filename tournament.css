@@ -379,12 +379,50 @@ body.tournament {
   resize: vertical;
   line-height: 1.45;
 }
+.t-rules-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.t-rules-toolbar .t-btn { min-width: 36px; }
+.t-rules-editor {
+  min-height: 140px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--t-border);
+  background: #fff;
+  color: var(--t-fg);
+  font-size: .95rem;
+  line-height: 1.55;
+  outline: none;
+}
+.t-rules-editor:focus {
+  border-color: var(--t-primary);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .12);
+}
+.t-rules-editor[data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: var(--t-muted);
+  pointer-events: none;
+}
+.t-rules-editor ul, .t-rules-text ul {
+  margin: 8px 0 8px 1.25rem;
+  padding: 0;
+}
+.t-rules-editor li, .t-rules-text li { margin-bottom: 4px; }
+.t-rules-editor mark, .t-rules-text mark,
+.t-rules-editor span[style*="background"], .t-rules-text span[style*="background"] {
+  padding: 0 .12em;
+  border-radius: 2px;
+}
 .t-rules-text {
-  white-space: pre-wrap;
+  white-space: normal;
   color: var(--t-fg);
   font-size: .95rem;
   line-height: 1.55;
 }
+.t-rules-text p { margin: 0 0 .6em; }
 
 .t-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .t-form-field { display: flex; flex-direction: column; gap: 4px; }
@@ -668,6 +706,21 @@ body.tournament {
 .t-roster-line { display: flex; justify-content: space-between; align-items: center; font-size: .88rem; }
 .t-roster-line .lbl { color: var(--t-muted); text-transform: uppercase; letter-spacing: .04em; font-size: .74rem; font-weight: 600; }
 .t-roster-line .val { color: var(--t-fg); }
+.t-roster-line .val.is-over { color: var(--t-danger); }
+.t-roster-cap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: .85rem;
+  color: var(--t-muted);
+}
+.t-roster-cap label {
+  font-weight: 600;
+  color: var(--t-fg);
+  white-space: nowrap;
+}
+.t-roster-cap input { width: 5.5rem; }
 .t-roster-card-foot { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .t-badge {
   display: inline-block; padding: 2px 8px; border-radius: 999px;
@@ -731,6 +784,7 @@ body.tournament {
   border: 1px solid var(--t-border); font-size: .92rem;
 }
 .t-roster-count { font-weight: 700; color: var(--t-muted); font-size: .85rem; }
+.t-roster-count.is-over { color: var(--t-danger); }
 .t-roster-actions { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
 .t-empty-note { padding: 20px; color: var(--t-muted); text-align: center; background: #f8fafc; border-radius: 8px; border: 1px dashed var(--t-border); }
 .t-roster-list { display: flex; flex-direction: column; gap: 6px; }

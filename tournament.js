@@ -17,6 +17,7 @@
  *                     draft.entries[]     working copy (admin only)
  *                     published.entries[] public copy (visible after Publish)
  *       rules       { text, updatedAt, updatedBy }  — sport-specific, admin-edit
+ *       maxRosterSize number  — per-team member cap (0/omitted = no limit)
  *     rules         { text, updatedAt, updatedBy }  — tournament-wide, admin-edit
  *     archived      bool
  *     createdAt / updatedAt / createdBy
@@ -125,7 +126,8 @@
       // Each sport now owns its own team roster. If defaults are provided
       // (e.g. seeding Koinonia), we pre-populate G1–G4.
       teams: (opts && opts.teams) ? JSON.parse(JSON.stringify(opts.teams)) : [],
-      scoring: defaultScoring(tpl.kind)
+      scoring: defaultScoring(tpl.kind),
+      maxRosterSize: 0
     };
   }
 
@@ -151,6 +153,33 @@
     if (sport && Array.isArray(sport.teams) && sport.teams.length) return sport.teams;
     if (Array.isArray(tournament.teams) && tournament.teams.length) return tournament.teams;
     return [];
+  }
+
+  // Per-sport roster cap. 0 / missing = no limit.
+  function parseMaxRosterSize(value) {
+    const n = parseInt(String(value == null ? '' : value).trim(), 10);
+    if (!isFinite(n) || n < 1) return 0;
+    return Math.min(n, 999);
+  }
+
+  function maxRosterSize(sport) {
+    return parseMaxRosterSize(sport && sport.maxRosterSize);
+  }
+
+  function rosterCountOf(team) {
+    return Array.isArray(team && team.roster) ? team.roster.length : 0;
+  }
+
+  function isRosterAtCap(sport, team) {
+    const max = maxRosterSize(sport);
+    if (!max) return false;
+    return rosterCountOf(team) >= max;
+  }
+
+  function rosterCountLabel(sport, team) {
+    const count = rosterCountOf(team);
+    const max = maxRosterSize(sport);
+    return max ? (count + ' / ' + max) : String(count);
   }
 
   function newId(prefix) {
@@ -1412,7 +1441,8 @@
       hasThirdPlace: true,
       categories: kind === 'racket' ? [...DEFAULT_CATEGORIES] : [],
       teams: donor ? JSON.parse(JSON.stringify(donor.teams)) : JSON.parse(JSON.stringify(DEFAULT_TEAMS)),
-      scoring: defaultScoring(kind)
+      scoring: defaultScoring(kind),
+      maxRosterSize: 0
     });
   }
 
@@ -1448,10 +1478,15 @@
           <button class="t-btn danger sm" data-act="remove">Remove</button>
         </div>
         <div class="t-config-sport-body">
-          <div class="t-form-grid" style="grid-template-columns:1fr 2fr;">
+          <div class="t-form-grid" style="grid-template-columns:${s.kind === 'racket' ? '1fr 1fr 2fr' : '1fr 1fr'};">
             <div class="t-form-field">
               <label>Match date</label>
               <input type="date" class="t-input" data-field="date" value="${escapeHtml(s.date || '')}" />
+            </div>
+            <div class="t-form-field">
+              <label>Max roster size</label>
+              <input type="number" class="t-input" data-field="maxRosterSize" min="0" placeholder="No limit" value="${maxRosterSize(s) || ''}" />
+              <div style="color:var(--t-muted);font-size:.75rem;margin-top:2px;">Per team for this sport. Blank or 0 = no limit.</div>
             </div>
             ${s.kind === 'racket' ? `
               <div class="t-form-field">
@@ -1482,6 +1517,10 @@
         paintSports(draft);
       });
       card.querySelector('[data-field="date"]').addEventListener('change', function () { s.date = this.value; });
+      const maxInput = card.querySelector('[data-field="maxRosterSize"]');
+      if (maxInput) maxInput.addEventListener('input', function () {
+        s.maxRosterSize = parseMaxRosterSize(this.value);
+      });
       const catInput = card.querySelector('[data-field="categories"]');
       if (catInput) catInput.addEventListener('input', function () {
         s.categories = this.value.split(',').map(function (x) { return x.trim().toUpperCase(); }).filter(Boolean);
@@ -1607,7 +1646,8 @@
       });
       return Object.assign({}, s, {
         teams: teams,
-        schedule: (liveSport && liveSport.schedule) ? liveSport.schedule : (s.schedule || null)
+        schedule: (liveSport && liveSport.schedule) ? liveSport.schedule : (s.schedule || null),
+        maxRosterSize: parseMaxRosterSize(s.maxRosterSize)
       });
     });
 
@@ -1756,10 +1796,108 @@
     return String(obj.text || '');
   }
 
+  function looksLikeHtml(s) {
+    return /<\/?[a-z][\s\S]*>/i.test(String(s || ''));
+  }
+
+  function sanitizeRulesHtml(html) {
+    const allowed = {
+      B: 1, STRONG: 1, I: 1, EM: 1, U: 1, UL: 1, OL: 1, LI: 1,
+      BR: 1, P: 1, DIV: 1, SPAN: 1, MARK: 1
+    };
+    const wrap = document.createElement('div');
+    wrap.innerHTML = String(html || '');
+    function cleanStyle(el) {
+      const bg = el.style && (el.style.backgroundColor || el.style.background);
+      el.removeAttribute('style');
+      const raw = String(bg || '');
+      if (!raw || /url\(|expression|javascript/i.test(raw)) return;
+      el.style.backgroundColor = raw;
+    }
+    function walk(node) {
+      const kids = Array.prototype.slice.call(node.childNodes);
+      kids.forEach(function (child) {
+        if (child.nodeType === 3) return;
+        if (child.nodeType !== 1) { child.parentNode.removeChild(child); return; }
+        let el = child;
+        if (el.tagName === 'FONT') {
+          const span = document.createElement('span');
+          const bg = (el.style && (el.style.backgroundColor || el.style.background)) || el.getAttribute('bgcolor') || '';
+          while (el.firstChild) span.appendChild(el.firstChild);
+          el.parentNode.replaceChild(span, el);
+          if (bg && !/url\(|expression|javascript/i.test(String(bg))) {
+            span.style.backgroundColor = bg;
+          }
+          el = span;
+        }
+        const tag = el.tagName;
+        if (!allowed[tag]) {
+          const ref = el.nextSibling;
+          const holder = document.createElement('div');
+          while (el.firstChild) holder.appendChild(el.firstChild);
+          el.parentNode.removeChild(el);
+          walk(holder);
+          while (holder.firstChild) node.insertBefore(holder.firstChild, ref);
+          return;
+        }
+        const attrs = Array.prototype.slice.call(el.attributes || []);
+        attrs.forEach(function (a) {
+          if (a.name.toLowerCase() === 'style' && (tag === 'SPAN' || tag === 'MARK')) {
+            cleanStyle(el);
+          } else {
+            el.removeAttribute(a.name);
+          }
+        });
+        walk(el);
+      });
+    }
+    walk(wrap);
+    return wrap.innerHTML;
+  }
+
+  function rulesToDisplayHtml(text) {
+    const raw = String(text || '');
+    if (!raw.trim()) return '';
+    if (looksLikeHtml(raw)) return sanitizeRulesHtml(raw);
+    return escapeHtml(raw).replace(/\n/g, '<br>');
+  }
+
   function formatRulesHtml(text) {
-    const raw = String(text || '').trim();
-    if (!raw) return '<p class="t-empty">No rules posted yet.</p>';
-    return '<div class="t-rules-text">' + escapeHtml(raw).replace(/\n/g, '<br>') + '</div>';
+    const html = rulesToDisplayHtml(text);
+    if (!String(html).trim()) return '<p class="t-empty">No rules posted yet.</p>';
+    return '<div class="t-rules-text">' + html + '</div>';
+  }
+
+  function readRulesEditor(editorId) {
+    const box = document.getElementById(editorId);
+    if (!box) return '';
+    return sanitizeRulesHtml(box.innerHTML || '');
+  }
+
+  function formatRules(editorId, cmd) {
+    const box = document.getElementById(editorId);
+    if (!box) return;
+    box.focus();
+    try {
+      document.execCommand('styleWithCSS', false, true);
+      if (cmd === 'highlight') {
+        document.execCommand('hiliteColor', false, '#fde047');
+        document.execCommand('backColor', false, '#fde047');
+      } else {
+        document.execCommand(cmd, false, null);
+      }
+    } catch (_) {}
+  }
+
+  function rulesToolbarHtml(editorId) {
+    const id = escapeHtml(editorId);
+    return `
+      <div class="t-rules-toolbar">
+        <button type="button" class="t-btn sm" title="Bold" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','bold')"><b>B</b></button>
+        <button type="button" class="t-btn sm" title="Underline" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','underline')"><u>U</u></button>
+        <button type="button" class="t-btn sm" title="Highlight" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','highlight')" style="background:#fde047;">Highlight</button>
+        <button type="button" class="t-btn sm" title="Bulleted list" onmousedown="event.preventDefault()" onclick="window.__tournament.formatRules('${id}','insertUnorderedList')">• List</button>
+      </div>`;
   }
 
   function renderRulesCard(opts) {
@@ -1767,6 +1905,7 @@
     if (!state.isAdmin && !String(text).trim()) return '';
     const title = escapeHtml(opts.title || 'Rules');
     const subtitle = escapeHtml(opts.subtitle || '');
+    const editorId = escapeHtml(opts.textareaId);
     if (state.isAdmin) {
       return `
       <section class="t-section">
@@ -1775,8 +1914,9 @@
           <button class="t-btn sm primary" type="button" onclick="window.__tournament.${opts.saveCall}">Save rules</button>
         </div>
         <div class="t-card"><div class="t-card-body">
-          <textarea class="t-input t-rules-textarea" id="${escapeHtml(opts.textareaId)}" rows="6" placeholder="${escapeHtml(opts.placeholder || '')}">${escapeHtml(text)}</textarea>
-          <div class="t-schedule-note" style="margin-top:8px;">Only admins can edit. Everyone else can read these rules.</div>
+          ${rulesToolbarHtml(opts.textareaId)}
+          <div class="t-rules-editor" id="${editorId}" contenteditable="true" data-placeholder="${escapeHtml(opts.placeholder || '')}">${rulesToDisplayHtml(text)}</div>
+          <div class="t-schedule-note" style="margin-top:8px;">Select text, then Bold, Underline, Highlight, or List. Only admins can edit.</div>
         </div></div>
       </section>`;
     }
@@ -1793,10 +1933,8 @@
     if (!state.isAdmin) return toast('Admin only', 'error');
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
-    const box = document.getElementById('tTournamentRules');
-    if (!box) return;
     const rules = {
-      text: box.value || '',
+      text: readRulesEditor('tTournamentRules'),
       updatedAt: new Date().toISOString(),
       updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
     };
@@ -1818,16 +1956,31 @@
     if (!state.isAdmin) return toast('Admin only', 'error');
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const box = document.getElementById('tSportRules');
-    if (!box) return;
     const rules = {
-      text: box.value || '',
+      text: readRulesEditor('tSportRules'),
       updatedAt: new Date().toISOString(),
       updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
     };
     try {
       await writeSportPatch(t, sportId, { rules: rules });
       toast((sport.label || 'Sport') + ' rules saved', 'success');
+    } catch (_) { /* writeSportPatch already toasted */ }
+  }
+
+  async function saveMaxRosterSize(tournamentId, sportId) {
+    if (!state.isAdmin) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const sport = getSportConfig(t, sportId);
+    if (!sport) return;
+    const box = document.getElementById('tMaxRosterSize');
+    const next = parseMaxRosterSize(box ? box.value : sport.maxRosterSize);
+    try {
+      await writeSportPatch(t, sportId, { maxRosterSize: next });
+      toast(next
+        ? (sport.label || 'Sport') + ' max roster size set to ' + next + ' per team'
+        : (sport.label || 'Sport') + ' roster size limit removed', 'success');
+      render();
     } catch (_) { /* writeSportPatch already toasted */ }
   }
 
@@ -1845,6 +1998,8 @@
   window.__tournament.clearSchedule = clearSchedule;
   window.__tournament.saveTournamentRules = saveTournamentRules;
   window.__tournament.saveSportRules = saveSportRules;
+  window.__tournament.saveMaxRosterSize = saveMaxRosterSize;
+  window.__tournament.formatRules = formatRules;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
@@ -1929,7 +2084,14 @@
         ${t.format === 'teams' ? `
         <section class="t-section" id="tRostersSection">
           <div class="t-section-header">
-            <h2 class="t-section-title">Team rosters <small>captains &amp; members</small></h2>
+            <h2 class="t-section-title">Team rosters <small>captains &amp; members${maxRosterSize(sport) ? ' · max ' + maxRosterSize(sport) + ' per team' : ''}</small></h2>
+            ${state.isAdmin ? `
+              <div class="t-roster-cap">
+                <label for="tMaxRosterSize">Max per team</label>
+                <input type="number" min="0" class="t-input sm" id="tMaxRosterSize" placeholder="No limit" value="${maxRosterSize(sport) || ''}" onkeydown="if(event.key==='Enter'){event.preventDefault();window.__tournament.saveMaxRosterSize('${t.id}','${sport.id}');}" />
+                <button class="t-btn sm primary" type="button" onclick="window.__tournament.saveMaxRosterSize('${t.id}','${sport.id}')">Save</button>
+              </div>
+            ` : ''}
           </div>
           <div class="t-rosters-grid" id="tRostersGrid"></div>
         </section>
@@ -2016,7 +2178,9 @@
               ? ''
               : ' <span class="t-badge nologin" style="margin-left:4px;font-size:.65rem;">no login yet</span>')
         : '<span style="color:var(--t-muted);">Not assigned</span>';
-      const rosterCount = Array.isArray(team.roster) ? team.roster.length : 0;
+      const rosterCount = rosterCountOf(team);
+      const atCap = isRosterAtCap(sport, team);
+      const overCap = maxRosterSize(sport) > 0 && rosterCount > maxRosterSize(sport);
       const isMine = isCaptainOf(team) || isRosterMemberOf(team);
       const canManage = state.isAdmin;
       const locked = isRosterLocked(team);
@@ -2039,12 +2203,14 @@
           </div>
           <div class="t-roster-card-body">
             <div class="t-roster-line"><span class="lbl">Captain</span><span class="val">${captainName}</span></div>
-            <div class="t-roster-line"><span class="lbl">Members</span><span class="val"><b>${canView ? rosterCount : '—'}</b></span></div>
+            <div class="t-roster-line"><span class="lbl">Members</span><span class="val ${overCap ? 'is-over' : ''}"><b>${canView ? rosterCountLabel(sport, team) : '—'}</b></span></div>
+            ${overCap && canView ? '<div class="t-roster-hidden">Over the limit — remove members to get to ' + maxRosterSize(sport) + '.</div>' : ''}
             ${!canView ? '<div class="t-roster-hidden">' + escapeHtml(whyCantView(tournament, team)) + '</div>' : ''}
           </div>
           <div class="t-roster-card-foot">
             ${canView ? `<button class="t-btn sm" onclick="window.__tournament.openRoster('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">View roster</button>` : ''}
-            ${canEdit ? `<button class="t-btn sm primary" onclick="window.__tournament.openMemberPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">➕ Add member</button>` : ''}
+            ${canEdit && !atCap ? `<button class="t-btn sm primary" onclick="window.__tournament.openMemberPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">➕ Add member</button>` : ''}
+            ${canEdit && atCap ? '<span class="t-badge locked">Roster full</span>' : ''}
             ${canManage ? `<button class="t-btn sm ${locked ? 'warn' : ''}" onclick="window.__tournament.setRosterLock('${tournament.id}','${sport.id}','${escapeHtml(team.id)}',${!locked})">${locked ? '🔓 Unlock' : '🔒 Lock roster'}</button>` : ''}
           </div>
         </div>
@@ -3336,6 +3502,8 @@
     const canEdit    = canEditRoster(team);
     const canLock    = canLockRoster();
     const locked     = isRosterLocked(team);
+    const atCap      = isRosterAtCap(sport, team);
+    const maxSize    = maxRosterSize(sport);
     const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
     roster.sort(function (a, b) {
       return ((a.firstName || '') + (a.lastName || '')).localeCompare((b.firstName || '') + (b.lastName || ''));
@@ -3374,18 +3542,20 @@
     body.innerHTML = `
       <div class="t-roster-head">
         <div>${captainLine}</div>
-        <div class="t-roster-count">${roster.length} member${roster.length === 1 ? '' : 's'}</div>
+        <div class="t-roster-count${maxSize && roster.length > maxSize ? ' is-over' : ''}">${rosterCountLabel(sport, team)} member${roster.length === 1 ? '' : 's'}${maxSize ? ' max' : ''}</div>
       </div>
       ${lockBanner}
-      ${canEdit ? `
+      ${canEdit && !atCap ? `
         <div class="t-roster-actions">
           <button class="t-btn primary" data-add-member>➕ Add member from directory</button>
           ${!state.membersLoaded ? '<span style="color:var(--t-muted);font-size:.85rem;">Loading parishioner directory…</span>' : ''}
         </div>
-      ` : (locked
+      ` : (canEdit && atCap
+        ? '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">Roster is full (' + maxSize + ' max for this sport). Remove someone to add another.</div>'
+        : (locked
         ? '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">This roster is locked. Only an admin can unlock it.</div>'
         : '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">You can view this roster but only the team captain (or an admin) can edit it.</div>'
-      )}
+      ))}
       <div class="t-roster-list">
         ${roster.length === 0
           ? '<div class="t-empty-note">No members added yet.</div>'
@@ -3459,6 +3629,10 @@
       toast(whyCantEdit(team) || 'You can\'t edit this roster.', 'error');
       return;
     }
+    if (isRosterAtCap(sport, team)) {
+      toast('This team is at the maximum of ' + maxRosterSize(sport) + ' members for ' + (sport.label || 'this sport') + '.', 'error');
+      return;
+    }
     openLiveModal = 'memberPicker';
     openLiveModalContext = { tournamentId, sportId, teamId, query: '' };
     rerenderMemberPicker();
@@ -3489,6 +3663,7 @@
         <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
           ${state.membersLoaded ? state.members.length + ' members in the directory' : 'Loading directory…'}
           · A person can only be on one team in this sport.
+          ${maxRosterSize(sport) ? ' · Max ' + maxRosterSize(sport) + ' members per team.' : ''}
         </div>
       </div>
       <div class="t-member-results" id="tMemberResults"></div>
@@ -3516,6 +3691,8 @@
           actionHtml = '<span class="t-badge">Already on roster</span>';
         } else if (otherTeam) {
           actionHtml = '<span class="t-badge" title="A person can only be on one team per sport">Already on ' + escapeHtml(otherTeam.name || otherTeam.id) + '</span>';
+        } else if (isRosterAtCap(sport, team)) {
+          actionHtml = '<span class="t-badge locked">Roster full</span>';
         } else {
           actionHtml = '<button class="t-btn sm primary" data-add="' + idx + '">Add</button>';
         }
@@ -3571,6 +3748,10 @@
       toast((member.firstName + ' ' + member.lastName).trim()
         + ' is already on ' + (otherTeam.name || otherTeam.id)
         + ' for this sport. A person can only be on one team per sport.', 'error');
+      return;
+    }
+    if (isRosterAtCap(sport, team)) {
+      toast('This team is at the maximum of ' + maxRosterSize(sport) + ' members for ' + (sport.label || 'this sport') + '.', 'error');
       return;
     }
     const known = getKnownPeople().find(function (p) { return membersMatch(p, member); });
