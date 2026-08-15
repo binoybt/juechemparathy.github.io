@@ -207,7 +207,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=10"></script>
+<script src="firebase-config.js?v=11"></script>
 <script>
 let currentUser = null;
 let allRequests = [];
@@ -541,6 +541,7 @@ async function acceptRequest(r, card) {
         const admDoc = db.collection('additionalMembers').doc();
         await admDoc.set({
             familyId:          familyId,
+            FID:               familyId,
             firstName:         firstName,
             lastName:          lastName,
             familyName:        familyName,
@@ -549,6 +550,26 @@ async function acceptRequest(r, card) {
             addedBy:           (currentUser && currentUser.email) || '',
             addedAt:           FV.serverTimestamp()
         });
+
+        const helpers = window.__smashOnboarding || {};
+        try {
+            const memberRow = {
+                familyId: familyId, FID: familyId,
+                firstName: firstName, lastName: lastName,
+                familyName: familyName, memberId: memberId
+            };
+            const membersId = helpers.memberDocId ? helpers.memberDocId(memberRow) : memberId;
+            const payload = helpers.memberDocPayload
+                ? helpers.memberDocPayload(memberRow, {
+                    addedFromPendingId: r.__id,
+                    addedBy: (currentUser && currentUser.email) || '',
+                    addedAt: FV.serverTimestamp()
+                })
+                : memberRow;
+            await db.collection('members').doc(membersId).set(payload, { merge: true });
+        } catch (mErr) {
+            console.warn('members collection write skipped:', mErr);
+        }
 
         // Also try to auto-verify the user's users/{uid} doc so their next
         // sign-in has zero friction. This will fail under strict rules
@@ -563,12 +584,29 @@ async function acceptRequest(r, card) {
                 firstNameLower: firstName.toLowerCase(),
                 lastNameLower:  lastName.toLowerCase(),
                 familyId:       familyId,
+                FID:            familyId,
                 familyName:     familyName,
                 memberId:       memberId,
                 pendingRegistrationId: FV.delete()
             }, { merge: true });
         } catch (uErr) {
             console.warn('users/{uid} auto-verify skipped (permission denied is fine):', uErr);
+        }
+
+        if (r.uid && memberId) {
+            try {
+                await db.collection('identityClaims').doc('mid:' + memberId).set({
+                    uid: r.uid,
+                    email: (r.email || '').toLowerCase(),
+                    FID: familyId,
+                    firstName: firstName,
+                    lastName: lastName,
+                    memberId: memberId,
+                    claimedAt: FV.serverTimestamp()
+                }, { merge: true });
+            } catch (cErr) {
+                console.warn('identityClaims write skipped:', cErr);
+            }
         }
 
         await db.collection('pendingRegistrations').doc(r.__id).update({
