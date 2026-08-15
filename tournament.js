@@ -374,7 +374,7 @@
     currentId: null,       // tournamentId currently subscribed for matches
     users: [],             // signed-in user profiles (from `users` collection)
     rsvpResponses: [],     // raw docs from rsvpResponses (existing app data)
-    members: [],           // parishioner directory (parsed from members.csv, in-memory only)
+    members: [],           // parishioner directory (Firestore `members` collection)
     membersLoaded: false,  // becomes true once CSV has been fetched and parsed
     unsubTournaments: null,
     unsubMatches: null,
@@ -390,7 +390,7 @@
   let sessionInitialized = false;
 
   // Tracks which live-data modal is currently on-screen so that async data
-  // arrivals (users snapshot, members.csv load) can re-render it in place.
+  // arrivals (users snapshot, directory load) can re-render it in place.
   // Values: null | 'userPicker' | 'memberPicker' | 'roster'.
   let openLiveModal = null;
   let openLiveModalContext = null; // arbitrary payload used by the re-renderer
@@ -468,7 +468,7 @@
   }
 
   // Best-effort identity for the signed-in user, combining the users
-  // profile, any RSVP record, Google display name, and members.csv.
+  // profile, any RSVP record, Google display name, and the parishioner directory.
   function resolveCurrentMemberIdentity() {
     if (!state.user) return null;
     const uid = state.user.uid;
@@ -656,17 +656,43 @@
   async function loadMembersCsv() {
     if (state.membersLoaded) return;
     try {
-      const res = await fetch('members.csv', { cache: 'no-cache' });
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const text = await res.text();
-      state.members = parseMembersCsv(text);
+      let list = [];
+      if (window.__smashOnboarding && typeof window.__smashOnboarding.loadMembersDirectory === 'function') {
+        list = await window.__smashOnboarding.loadMembersDirectory();
+      } else {
+        const snap = await db.collection('members').get();
+        snap.forEach(function (d) {
+          const v = d.data() || {};
+          list.push({
+            familyId: String(v.FID || v.familyId || '').trim(),
+            firstName: String(v.firstName || '').trim(),
+            lastName: String(v.lastName || '').trim(),
+            familyName: String(v.familyName || '').trim(),
+            memberId: String(v.memberId || d.id || '').trim()
+          });
+        });
+      }
+      state.members = list.map(function (m) {
+        const fn = String(m.firstName || '').trim();
+        const ln = String(m.lastName || '').trim();
+        const fam = String(m.familyName || '').trim();
+        return {
+          familyId: String(m.familyId || m.FID || '').trim(),
+          FID: String(m.FID || m.familyId || '').trim(),
+          firstName: fn,
+          lastName: ln,
+          familyName: fam,
+          memberId: String(m.memberId || '').trim(),
+          search: (fn + ' ' + ln + ' ' + fam).toLowerCase()
+        };
+      });
       state.membersLoaded = true;
       render();
       if (openLiveModal === 'memberPicker') rerenderMemberPicker();
       if (openLiveModal === 'roster') rerenderRoster();
     } catch (err) {
-      console.error('[tournament] Failed to load members.csv:', err);
-      toast('Could not load parishioner directory (members.csv). Roster search will not work.', 'error');
+      console.error('[tournament] Failed to load parishioner directory:', err);
+      toast('Could not load parishioner directory. Roster search will not work until an admin imports it.', 'error');
     }
   }
 
@@ -3257,7 +3283,7 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MEMBER PICKER (captain/admin) — search members.csv
+  // MEMBER PICKER (captain/admin) — search parishioner directory
   // ═══════════════════════════════════════════════════════════════════════════
 
   // Explains — for a specific team — why the current user is not allowed to
@@ -3325,7 +3351,7 @@
 
     function paintResults() {
       if (!state.membersLoaded) {
-        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading members.csv…</div>';
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading parishioner directory…</div>';
         return;
       }
       const list = searchMembers(input.value);

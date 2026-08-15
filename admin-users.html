@@ -84,7 +84,14 @@
         }
         .filter-btn:not(.active) .count-pill { background: #f3f4f6; color: #6b7280; }
 
-        .table-wrapper {
+        .import-card {
+            background: #fff; border: 1px solid #e5e7eb; border-radius: 14px;
+            padding: 16px 18px; margin-bottom: 16px;
+        }
+        .import-card h3 { font-size: 1rem; margin-bottom: 6px; }
+        .import-card p { color: #6b7280; font-size: .88rem; margin-bottom: 12px; line-height: 1.45; }
+        .import-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .import-status { margin-top: 10px; font-size: .88rem; color: #374151; }
             overflow-x: auto; border-radius: 12px; border: 1px solid #e5e7eb;
             background: #fff;
         }
@@ -167,13 +174,26 @@
     <div id="mainContent" style="display:none;">
         <div class="header-card">
             <h2>All members</h2>
-            <p>Everyone who has signed in to syrosmash.com is listed here from the users table. Grant or revoke admin access. You can't revoke your own admin access.</p>
+            <p>Everyone who has signed in is listed here. Grant or revoke admin. FID is stored on the user after they match the parishioner directory. You can't revoke your own admin access.</p>
+        </div>
+
+        <div class="import-card">
+            <h3>Parishioner directory (Firestore)</h3>
+            <p>The directory used for signup matching now lives in the <code>members</code> collection, not the public website. Import once from <code>members.csv</code>, or upload a CSV with columns Family ID, Firstname, Lastname, Family Name, Member ID. After a successful import you can delete <code>members.csv</code> from the site so the list is no longer public.</p>
+            <div class="import-actions">
+                <button class="btn primary" id="btnImportBundled" type="button">Import members.csv</button>
+                <label class="btn" style="display:inline-block;">
+                    Upload CSV
+                    <input type="file" id="csvFile" accept=".csv,text/csv" style="display:none;" />
+                </label>
+            </div>
+            <div class="import-status" id="importStatus"></div>
         </div>
 
         <div class="toolbar">
             <div class="search-box">
                 <span>🔍</span>
-                <input type="text" id="searchInput" placeholder="Search by first or last name…" />
+                <input type="text" id="searchInput" placeholder="Search by name, email, or FID…" />
             </div>
             <div class="filter-bar">
                 <button class="filter-btn active" data-filter="all"    onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
@@ -188,12 +208,13 @@
                     <tr>
                         <th>First Name</th>
                         <th>Last Name</th>
+                        <th>FID</th>
                         <th>Role</th>
                         <th style="text-align:right;">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="usersBody">
-                    <tr><td colspan="4" class="empty-state">Loading users…</td></tr>
+                    <tr><td colspan="5" class="empty-state">Loading users…</td></tr>
                 </tbody>
             </table>
         </div>
@@ -202,7 +223,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=10"></script>
+<script src="firebase-config.js?v=11"></script>
 <script>
 let allUsers = [];
 let currentFilter = 'all';
@@ -312,7 +333,7 @@ function subscribeUsers() {
     }, function (err) {
         console.error('users subscribe failed:', err);
         document.getElementById('usersBody').innerHTML =
-            '<tr><td colspan="4" class="empty-state" style="color:#b91c1c;">Failed to load users: ' +
+            '<tr><td colspan="5" class="empty-state" style="color:#b91c1c;">Failed to load users: ' +
             esc(err.message || err) + '</td></tr>';
     });
 }
@@ -341,13 +362,13 @@ function renderAll() {
         if (currentFilter === 'member' && role === 'admin')  return false;
         if (!q) return true;
         const names = displayNames(u);
-        const hay = [names.first, names.last, u.displayName, u.email].join(' ').toLowerCase();
+        const hay = [names.first, names.last, u.displayName, u.email, u.FID, u.familyId].join(' ').toLowerCase();
         return hay.indexOf(q) !== -1;
     });
 
     const body = document.getElementById('usersBody');
     if (!filtered.length) {
-        body.innerHTML = '<tr><td colspan="4" class="empty-state">No users match.</td></tr>';
+        body.innerHTML = '<tr><td colspan="5" class="empty-state">No users match.</td></tr>';
         return;
     }
 
@@ -362,12 +383,14 @@ function renderAll() {
                 ? '<button class="btn danger" data-action="demote">Revoke admin</button>'
                 : '<button class="btn primary" data-action="promote">Grant admin</button>');
 
+        const fid = String(u.FID || u.familyId || '').trim();
         const tr = document.createElement('tr');
         tr.innerHTML =
             '<td><strong>' + esc(names.first || '—') + '</strong>' +
                 (u.email ? '<span class="name-sub">' + esc(u.email) + '</span>' : '') +
             '</td>' +
             '<td>' + esc(names.last || '—') + '</td>' +
+            '<td>' + esc(fid || '—') + '</td>' +
             '<td><span class="role-badge ' + role + '">' + role + '</span></td>' +
             '<td style="text-align:right;">' + btn + '</td>';
 
@@ -412,6 +435,49 @@ async function demote(u, btn) {
         btn.disabled = false; btn.textContent = 'Revoke admin';
     }
 }
+
+async function runImport(text, label) {
+    const status = document.getElementById('importStatus');
+    const helpers = window.__smashOnboarding;
+    if (!helpers || !helpers.importMembersFromCsvText) {
+        status.textContent = 'Import helper is not available.';
+        return;
+    }
+    status.textContent = 'Importing ' + (label || 'CSV') + '…';
+    try {
+        const result = await helpers.importMembersFromCsvText(text);
+        helpers.invalidateCaches();
+        status.textContent = 'Imported ' + result.written + ' parishioners into Firestore. You can delete members.csv from the site now.';
+        toast('Directory imported (' + result.written + ' records).');
+    } catch (err) {
+        console.error('import failed:', err);
+        status.textContent = 'Import failed: ' + (err.message || err);
+        toast('Import failed: ' + (err.message || err), 'error');
+    }
+}
+
+document.getElementById('btnImportBundled').addEventListener('click', async function () {
+    const status = document.getElementById('importStatus');
+    status.textContent = 'Loading members.csv…';
+    try {
+        const res = await fetch('members.csv', { cache: 'no-cache' });
+        if (!res.ok) throw new Error('members.csv HTTP ' + res.status + ' — upload a CSV instead.');
+        await runImport(await res.text(), 'members.csv');
+    } catch (err) {
+        status.textContent = 'Could not read members.csv: ' + (err.message || err);
+        toast('Could not read members.csv. Upload a file instead.', 'error');
+    }
+});
+
+document.getElementById('csvFile').addEventListener('change', function (ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function () { runImport(String(reader.result || ''), file.name); };
+    reader.onerror = function () { toast('Could not read that file.', 'error'); };
+    reader.readAsText(file);
+});
 </script>
 </body>
 </html>
