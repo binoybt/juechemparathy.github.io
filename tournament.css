@@ -91,6 +91,9 @@ body.tournament {
 }
 .t-user-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; }
 
+.t-access-banner { border-color: var(--t-warning) !important; background: #fffbeb; }
+.t-access-banner-open { border-color: var(--t-success) !important; background: #ecfdf5; }
+
 /* ── Layout ── */
 .t-container { max-width: 1200px; margin: 0 auto; padding: 20px 14px 60px; }
 .t-section { margin-bottom: 28px; }

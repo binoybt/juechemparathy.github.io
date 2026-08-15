@@ -171,7 +171,7 @@
     <div class="nav-links">
         <a href="index.html" class="nav-btn">Home</a>
         <a href="admin-users.html" class="nav-btn">Members &amp; Admins</a>
-        <a href="tournament.html" class="nav-btn">Tournament</a>
+        <a href="tournament.html" class="nav-btn js-tournament-nav" hidden>Tournament</a>
         <button id="signOutBtn" class="nav-btn" style="display:none;" onclick="signOut()">Sign out</button>
     </div>
 </header>
@@ -207,7 +207,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=9"></script>
+<script src="firebase-config.js?v=10"></script>
 <script>
 let currentUser = null;
 let allRequests = [];

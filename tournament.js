@@ -19,6 +19,10 @@
  *     archived      bool
  *     createdAt / updatedAt / createdBy
  *
+ * Site-wide visibility (firebase-config.js TournamentAccess):
+ *   siteConfig/tournament { openToEveryone: bool }
+ *     missing/false → admin testing only; true → all signed-in members
+ *
  *   tournament_matches/{docId}
  *     tournamentId  string
  *     sport         string  (matches sports[].id)
@@ -364,6 +368,7 @@
   const state = {
     user: null,
     isAdmin: false,
+    authLoading: true,
     tournaments: [],       // all tournaments (subscribed once)
     matches: [],           // matches for the current tournament only
     currentId: null,       // tournamentId currently subscribed for matches
@@ -404,6 +409,22 @@
   function canManageCaptains() { return state.isAdmin; }
 
   function canEditSchedule() { return state.isAdmin; }
+
+  function tournamentOpenToEveryone() {
+    return !!(window.TournamentAccess && TournamentAccess.isOpenToEveryone());
+  }
+
+  function canUseTournamentPage() {
+    if (!state.user) return false;
+    return !!(state.isAdmin || tournamentOpenToEveryone());
+  }
+
+  function tournamentAccessPending() {
+    if (state.isAdmin || tournamentOpenToEveryone()) return false;
+    if (state.authLoading) return true;
+    if (window.TournamentAccess && !TournamentAccess.isLoaded()) return true;
+    return false;
+  }
 
   // Returns true if the current user is the captain of the given team.
   // Matches on Firebase uid when available; otherwise falls back to email so
@@ -994,6 +1015,7 @@
         ${homeCrumb}
         ${currentCrumb}
         <a href="index.html" class="t-nav-btn" title="Back to SMASH">← <span class="hide-sm">SMASH</span></a>
+        ${state.isAdmin ? '<a href="admin-users.html" class="t-nav-btn" title="Members &amp; Admins">👥 <span class="hide-sm">Members</span></a>' : ''}
         <div id="tUserBox"></div>
       </div>
     `;
@@ -1034,6 +1056,8 @@
         </div>
         <div class="t-emoji">🏆</div>
       </section>
+
+      ${renderAccessBanner()}
 
       <section class="t-section">
         <div class="t-section-header">
@@ -1650,7 +1674,56 @@
       toast('Seed failed: ' + (err.message || err.code || 'unknown'), 'error');
     }
   }
+
+  function renderAccessBanner() {
+    if (!state.isAdmin) return '';
+    if (tournamentOpenToEveryone()) {
+      return `
+      <section class="t-section">
+        <div class="t-card t-access-banner t-access-banner-open">
+          <div class="t-card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-weight:700;color:var(--t-fg);">Tournament is open to everyone</div>
+              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Signed-in members can open this page. Switch back to admin-only if you still need to test privately.</div>
+            </div>
+            <button class="t-btn" type="button" onclick="window.__tournament.setTournamentOpen(false)">Admin testing only</button>
+          </div>
+        </div>
+      </section>`;
+    }
+    return `
+      <section class="t-section">
+        <div class="t-card t-access-banner">
+          <div class="t-card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-weight:700;color:var(--t-fg);">Admin testing only</div>
+              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Members cannot see Tournament in the nav and cannot open this page. Open it to everyone when you are ready.</div>
+            </div>
+            <button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentOpen(true)">Open to everyone</button>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function setTournamentOpen(open) {
+    if (!state.isAdmin) return toast('Admin only', 'error');
+    if (!window.TournamentAccess) return toast('Visibility setting is unavailable', 'error');
+    const next = !!open;
+    const ok = next
+      ? confirm('Make Tournament visible to all signed-in members? They will see the nav link and can open this page.')
+      : confirm('Hide Tournament from members? Only admins will see the page until you open it again.');
+    if (!ok) return;
+    TournamentAccess.setOpenToEveryone(next).then(function () {
+      toast(next ? 'Tournament is now open to everyone' : 'Tournament is admin-only again');
+      render();
+    }).catch(function (err) {
+      console.error(err);
+      toast('Could not update visibility: ' + (err.message || err.code || 'unknown'), 'error');
+    });
+  }
+
   window.__tournament.seedKoinonia = seedKoinonia;
+  window.__tournament.setTournamentOpen = setTournamentOpen;
   window.__tournament.openCaptainPicker = openCaptainPicker;
   window.__tournament.openRoster = openRoster;
   window.__tournament.openMemberPicker = openMemberPicker;
@@ -1699,6 +1772,8 @@
         </div>
         <div class="t-emoji">${sport ? (sport.emoji || '🏆') : '🏆'}</div>
       </section>
+
+      ${renderAccessBanner()}
 
       ${state.isAdmin ? `
       <section class="t-section" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
@@ -3880,13 +3955,23 @@
     const parsed = parseUrl();
     renderTopbar();
 
-    // Gate the tournament section behind sign-in. Anyone signed in can view;
-    // admins and captains get extra controls. Non-signed-in visitors see a
-    // sign-in prompt.
+    // Sign-in first, then admin-only until an admin opens Tournament to everyone.
     if (!state.user) {
       renderAccessGate();
       return;
     }
+    if (tournamentAccessPending()) {
+      renderCheckingAccess();
+      return;
+    }
+    if (!canUseTournamentPage()) {
+      if (state.unsubMatches) { state.unsubMatches(); state.unsubMatches = null; state.currentId = null; }
+      renderTestingGate();
+      return;
+    }
+
+    ensureTournamentData();
+
     // Non-admin, non-captain users hitting an admin-only URL get bounced to
     // the tournament view (or the list if no tournament is selected).
     if (parsed.view === 'create' && !state.isAdmin) {
@@ -3912,6 +3997,36 @@
     if (parsed.view === 'create') return renderCreateOrManage('create');
     if (parsed.view === 'manage') return renderCreateOrManage('manage');
     if (parsed.view === 'tournament') return renderTournament();
+  }
+
+  function renderCheckingAccess() {
+    document.title = 'Church Tournament';
+    document.getElementById('tContent').innerHTML = `
+      <section class="t-section">
+        <div class="t-empty">Checking access…</div>
+      </section>
+    `;
+  }
+
+  function renderTestingGate() {
+    document.title = 'Church Tournament — Coming soon';
+    const container = document.getElementById('tContent');
+    container.innerHTML = `
+      <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
+        <div>
+          <h1>🏆 Church Tournament</h1>
+          <p>Admins are still setting this up. It will show up in the menu for everyone when it is ready.</p>
+        </div>
+        <div class="t-emoji">🔒</div>
+      </section>
+      <section class="t-section">
+        <div class="t-auth-gate">
+          <h3>Not open yet</h3>
+          <p>This page is in admin testing. Signed-in members will get access once an admin taps <strong>Open to everyone</strong>.</p>
+          ${state.user ? '<p class="denied">Signed in as ' + escapeHtml(state.user.email || '') + '</p>' : ''}
+        </div>
+      </section>
+    `;
   }
 
   function renderAccessGate() {
@@ -3941,10 +4056,21 @@
   // BOOTSTRAP
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function ensureTournamentData() {
+    if (!canUseTournamentPage()) return;
+    if (!state.unsubTournaments) subscribeTournaments();
+    if (state.user) {
+      subscribeUsers();
+      subscribeRsvpResponses();
+    }
+    if (!state._membersLoadStarted) {
+      state._membersLoadStarted = true;
+      loadMembersCsv();
+    }
+  }
+
   function init() {
     render();
-    subscribeTournaments();
-    loadMembersCsv();
     auth.onAuthStateChanged(function (user) {
       state.user = user;
       sessionInitialized = true;
@@ -3953,12 +4079,8 @@
         // how the users collection grows to contain everyone who has ever
         // signed into any part of the site.
         upsertUserProfile(user);
-        // Only start people-list subscriptions after auth is settled, so the
-        // read carries an authenticated token. Starting before onAuthStateChanged
-        // fires can hit rules that require `request.auth != null` and result
-        // in an empty snapshot that never recovers.
-        subscribeUsers();
-        subscribeRsvpResponses();
+        // People-list subscriptions start from ensureTournamentData() once
+        // this user is allowed to use the page (admin, or open to everyone).
         if (!window.SmashAuth) {
           const FALLBACK_ADMIN_EMAILS = [
             'jue.george@gmail.com',
@@ -3967,12 +4089,16 @@
             'b.ajaymathews@gmail.com'
           ];
           state.isAdmin = FALLBACK_ADMIN_EMAILS.indexOf(String(user.email || '').toLowerCase()) !== -1;
+          state.authLoading = false;
         }
       } else {
         // Sign-out — drop the people-list subscriptions. The Firestore docs
         // remain untouched; only the local cached view is cleared.
         unsubscribeUserData();
-        if (!window.SmashAuth) state.isAdmin = false;
+        if (!window.SmashAuth) {
+          state.isAdmin = false;
+          state.authLoading = false;
+        }
       }
       render();
     });
@@ -3981,10 +4107,16 @@
     // admin-users.html). Re-render whenever the role resolves or changes.
     if (window.SmashAuth) {
       SmashAuth.onChange(function (s) {
-        const was = state.isAdmin;
-        state.isAdmin = !!(s.user && s.isAdmin);
-        if (was !== state.isAdmin) render();
+        const nextAdmin = !!(s.user && s.isAdmin);
+        const nextLoading = !!s.loading;
+        const changed = state.isAdmin !== nextAdmin || state.authLoading !== nextLoading;
+        state.isAdmin = nextAdmin;
+        state.authLoading = nextLoading;
+        if (changed) render();
       });
+    }
+    if (window.TournamentAccess) {
+      TournamentAccess.onChange(function () { render(); });
     }
   }
 
