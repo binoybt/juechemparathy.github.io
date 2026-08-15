@@ -13,6 +13,9 @@
  *     format        'teams' | 'individual'
  *     teams[]       { id, name, wards }             — only for teams format
  *     sports[]      see SPORT_TEMPLATES below       — configurable per tournament
+ *       schedule    { draft, published }            — per-sport fixture list
+ *                     draft.entries[]     working copy (admin only)
+ *                     published.entries[] public copy (visible after Publish)
  *     archived      bool
  *     createdAt / updatedAt / createdBy
  *
@@ -142,6 +145,49 @@
     if (sport && Array.isArray(sport.teams) && sport.teams.length) return sport.teams;
     if (Array.isArray(tournament.teams) && tournament.teams.length) return tournament.teams;
     return [];
+  }
+
+  function newId(prefix) {
+    return (prefix || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  }
+
+  function emptyScheduleEntry(overrides) {
+    return Object.assign({
+      id: newId('slot'),
+      stage: 'league',
+      a: '',
+      b: '',
+      scheduledAt: '',
+      venue: '',
+      matchId: ''
+    }, overrides || {});
+  }
+
+  function sanitizeScheduleEntries(entries) {
+    return (entries || []).map(function (e) {
+      return {
+        id: e.id || newId('slot'),
+        stage: e.stage || 'league',
+        a: String(e.a || ''),
+        b: String(e.b || ''),
+        scheduledAt: e.scheduledAt || '',
+        venue: String(e.venue || ''),
+        matchId: e.matchId || ''
+      };
+    });
+  }
+
+  function getSchedule(sport) {
+    const sch = (sport && sport.schedule) || {};
+    return {
+      draft: sch.draft || null,
+      published: sch.published || null
+    };
+  }
+
+  function scheduleIsPublished(sport) {
+    const pub = getSchedule(sport).published;
+    return !!(pub && Array.isArray(pub.entries) && pub.entries.length);
   }
 
   // Koinonia seed used when the tournament list is empty and admin clicks "Seed".
@@ -357,6 +403,8 @@
 
   function canManageCaptains() { return state.isAdmin; }
 
+  function canEditSchedule() { return state.isAdmin; }
+
   // Returns true if the current user is the captain of the given team.
   // Matches on Firebase uid when available; otherwise falls back to email so
   // captains assigned by name-only (from an rsvpResponse that predates their
@@ -371,6 +419,79 @@
 
   function isRosterLocked(team) { return !!(team && team.locked); }
 
+  // Identity helpers used both for "is this signed-in user on the roster?"
+  // and for the one-team-per-sport uniqueness check when adding members.
+  function namesEqual(a, b) {
+    const af = String((a && a.firstName) || '').trim().toLowerCase();
+    const al = String((a && a.lastName) || '').trim().toLowerCase();
+    const bf = String((b && b.firstName) || '').trim().toLowerCase();
+    const bl = String((b && b.lastName) || '').trim().toLowerCase();
+    return !!(af && al && af === bf && al === bl);
+  }
+
+  function membersMatch(a, b) {
+    if (!a || !b) return false;
+    if (a.uid && b.uid && a.uid === b.uid) return true;
+    if (a.email && b.email
+        && String(a.email).toLowerCase() === String(b.email).toLowerCase()) return true;
+    const aMid = String(a.memberId || '').trim();
+    const bMid = String(b.memberId || '').trim();
+    if (aMid && bMid && aMid === bMid) return true;
+    if (!namesEqual(a, b)) return false;
+    const aFid = String(a.familyId || '').trim();
+    const bFid = String(b.familyId || '').trim();
+    if (aFid && bFid) return aFid === bFid;
+    // Names match and at least one side has no Family ID — treat as the
+    // same person so we don't allow duplicates across teams.
+    return true;
+  }
+
+  // Best-effort identity for the signed-in user, combining the users
+  // profile, any RSVP record, Google display name, and members.csv.
+  function resolveCurrentMemberIdentity() {
+    if (!state.user) return null;
+    const uid = state.user.uid;
+    const email = (state.user.email || '').toLowerCase();
+    const profile = (state.users || []).find(function (u) { return u.uid === uid; }) || {};
+    const rsvp = (state.rsvpResponses || []).find(function (r) {
+      return (r.uid && r.uid === uid) || (r.email && r.email.toLowerCase() === email);
+    }) || {};
+    const split = splitName(state.user.displayName);
+    const firstName = profile.firstName || rsvp.firstName || split.firstName || '';
+    const lastName = profile.lastName || rsvp.lastName || split.lastName || '';
+    const familyId = String(profile.familyId || rsvp.familyId || '').trim();
+    let memberId = String(profile.memberId || '').trim();
+    if (!memberId && state.membersLoaded && firstName && lastName) {
+      const matches = state.members.filter(function (m) {
+        if (!namesEqual(m, { firstName: firstName, lastName: lastName })) return false;
+        if (!familyId) return true;
+        return String(m.familyId || '').trim() === familyId;
+      });
+      if (matches.length === 1) memberId = String(matches[0].memberId || '').trim();
+    }
+    return { uid: uid, email: email, firstName: firstName, lastName: lastName, familyId: familyId, memberId: memberId };
+  }
+
+  function isRosterMemberOf(team) {
+    if (!team || !state.user) return false;
+    const me = resolveCurrentMemberIdentity();
+    if (!me) return false;
+    return (team.roster || []).some(function (r) { return membersMatch(me, r); });
+  }
+
+  // Within a sport, a person may belong to only one team. Returns the other
+  // team that already lists `member`, or null if they are free to add.
+  function findOtherTeamForMember(teams, teamId, member) {
+    teams = Array.isArray(teams) ? teams : [];
+    for (let i = 0; i < teams.length; i++) {
+      const tm = teams[i];
+      if (tm.id === teamId) continue;
+      const hit = (tm.roster || []).some(function (r) { return membersMatch(member, r); });
+      if (hit) return tm;
+    }
+    return null;
+  }
+
   // Only admins can toggle the lock. Once locked, no captain can edit.
   function canLockRoster()      { return state.isAdmin; }
 
@@ -382,14 +503,16 @@
   }
 
   // View permissions:
-  //   admin           → always
-  //   captain of team → always (even before lock)
-  //   any signed-in   → only when roster is locked AND the tournament has
-  //                     opted in via revealLockedRosters
+  //   admin                → always
+  //   captain of team      → always (even before lock)
+  //   member on the roster → always (their own team)
+  //   any signed-in        → only when roster is locked AND the tournament has
+  //                          opted in via revealLockedRosters
   function canViewRoster(tournament, team) {
     if (!state.user) return false;
     if (state.isAdmin) return true;
     if (isCaptainOf(team)) return true;
+    if (isRosterMemberOf(team)) return true;
     if (isRosterLocked(team) && tournament && tournament.revealLockedRosters) return true;
     return false;
   }
@@ -400,12 +523,12 @@
     if (!state.user) return 'Sign in to view rosters.';
     const cap = team && (team.captainName || team.captainEmail);
     if (isRosterLocked(team) && !tournament.revealLockedRosters) {
-      return 'Locked. Only ' + (cap ? 'Captain ' + cap : 'the team captain') + ' or an admin can view.';
+      return 'Locked. Only team members, ' + (cap ? 'Captain ' + cap : 'the team captain') + ', or an admin can view.';
     }
     if (!isRosterLocked(team)) {
-      return 'Not yet published. Only ' + (cap ? 'Captain ' + cap : 'the team captain') + ' or an admin can view until the roster is locked.';
+      return 'Not yet published. Only team members, ' + (cap ? 'Captain ' + cap : 'the team captain') + ', or an admin can view until the roster is locked.';
     }
-    return 'Only the team captain or an admin can view.';
+    return 'Only team members, the team captain, or an admin can view.';
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -517,8 +640,9 @@
       const text = await res.text();
       state.members = parseMembersCsv(text);
       state.membersLoaded = true;
-      // If the member picker is open, redraw it so results appear.
+      render();
       if (openLiveModal === 'memberPicker') rerenderMemberPicker();
+      if (openLiveModal === 'roster') rerenderRoster();
     } catch (err) {
       console.error('[tournament] Failed to load members.csv:', err);
       toast('Could not load parishioner directory (members.csv). Roster search will not work.', 'error');
@@ -567,6 +691,7 @@
         existing.firstName = existing.firstName || rec.firstName || '';
         existing.lastName  = existing.lastName  || rec.lastName  || '';
         existing.familyId  = existing.familyId  || rec.familyId  || '';
+        existing.memberId  = existing.memberId  || rec.memberId  || '';
         existing.photoURL  = existing.photoURL  || rec.photoURL  || '';
         existing.sources   = Array.from(new Set([...(existing.sources || []), rec.source]));
         // Re-key under the uid-preferred key so future lookups converge.
@@ -597,7 +722,8 @@
         email:     (u.email || '').toLowerCase(),
         firstName: u.firstName || '',
         lastName:  u.lastName || '',
-        familyId:  '',
+        familyId:  u.familyId != null ? String(u.familyId) : '',
+        memberId:  u.memberId != null ? String(u.memberId) : '',
         photoURL:  u.photoURL || '',
         source:    'portal'
       });
@@ -1033,6 +1159,10 @@
 
   const editState = { draft: null };
 
+  // In-memory schedule editor so Firestore re-renders don't wipe unsaved rows.
+  // Keyed by tournamentId|sportId.
+  const scheduleEditByKey = {};
+
   function renderCreateOrManage(mode) {
     if (!state.isAdmin) {
       renderAdminGate();
@@ -1091,7 +1221,7 @@
               <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;">
                 <input type="checkbox" id="tfArchived" ${draft.archived ? 'checked' : ''}/> Archive this tournament (hides from active list)
               </label>
-              <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="When enabled, any signed-in user can view rosters that have been locked. Unlocked rosters remain visible only to the team captain and admins.">
+              <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="When enabled, any signed-in user can view rosters that have been locked. Unlocked rosters remain visible only to team members, the team captain, and admins.">
                 <input type="checkbox" id="tfRevealLocked" ${draft.revealLockedRosters ? 'checked' : ''}/> Reveal locked rosters to everyone signed in
               </label>
             </div>
@@ -1423,7 +1553,10 @@
           roster: Array.isArray(liveTeam.roster) ? liveTeam.roster : (tm.roster || [])
         });
       });
-      return Object.assign({}, s, { teams: teams });
+      return Object.assign({}, s, {
+        teams: teams,
+        schedule: (liveSport && liveSport.schedule) ? liveSport.schedule : (s.schedule || null)
+      });
     });
 
     const payload = {
@@ -1522,12 +1655,18 @@
   window.__tournament.openRoster = openRoster;
   window.__tournament.openMemberPicker = openMemberPicker;
   window.__tournament.setRosterLock = setRosterLock;
+  window.__tournament.addScheduleRow = addScheduleRow;
+  window.__tournament.removeScheduleRow = removeScheduleRow;
+  window.__tournament.generateLeagueSchedule = generateLeagueSchedule;
+  window.__tournament.saveScheduleDraft = saveScheduleDraft;
+  window.__tournament.publishSchedule = publishSchedule;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
   // ═══════════════════════════════════════════════════════════════════════════
 
   function renderTournament() {
+    harvestScheduleEditor();
     const parsed = parseUrl();
     const t = currentTournament();
     if (!t) {
@@ -1548,7 +1687,7 @@
 
     const container = document.getElementById('tContent');
     const tabsHtml = (t.sports || []).map(function (s) {
-      const count = state.matches.filter(function (m) { return m.sport === s.id; }).length;
+      const count = visibleMatchesFor(t, s.id).length;
       return `<button class="t-tab ${s.id === sportId ? 'active' : ''}" style="--sport-color:${s.color || 'var(--t-primary)'}" onclick="window.__tournament.navigate({view:'tournament',tournamentId:'${t.id}',sportId:'${s.id}'})">${s.emoji || '🏅'} ${escapeHtml(s.label)}${count ? '<span class="count">' + count + '</span>' : ''}</button>`;
     }).join('');
 
@@ -1600,6 +1739,14 @@
         </section>
         ` : ''}
 
+        <section class="t-section" id="tScheduleSection">
+          <div class="t-section-header">
+            <h2 class="t-section-title">Schedule <small>fixtures for this sport</small></h2>
+            <div id="tScheduleActions" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+          </div>
+          <div class="t-card"><div class="t-card-body" id="tScheduleBody"><p class="t-empty">Loading…</p></div></div>
+        </section>
+
         <section class="t-section">
           <div class="t-section-header"><h2 class="t-section-title">Standings <small>league round-robin</small></h2></div>
           <div class="t-card"><div class="t-card-body" id="tStandings"><p class="t-empty">Loading…</p></div></div>
@@ -1629,8 +1776,9 @@
           <section class="t-section">
             <div class="t-section-header"><h2 class="t-section-title">Admin controls <small>score entry</small></h2></div>
             <div class="t-card">
-              <div class="t-card-header"><h3>Create a new match</h3></div>
-              <div class="t-card-body" id="tCreateFormWrap"></div>
+              <div class="t-card-body" style="color:var(--t-muted);font-size:.88rem;">
+                Build the fixture list in <b>Schedule</b> above, then <b>Save draft</b> and <b>Publish</b> so everyone can see it. After it is published, start matches and enter scores from the cards in Upcoming / Live.
+              </div>
             </div>
           </section>
         ` : ''}
@@ -1639,10 +1787,10 @@
 
     if (sport) {
       if (t.format === 'teams') renderRostersFor(t, sport);
+      renderScheduleFor(t, sport);
       renderStandingsFor(t, sport.id);
       renderMatchListsFor(t, sport.id);
       renderPlayoffsFor(t, sport.id);
-      if (state.isAdmin) renderCreateMatchForm(t, sport);
     }
   }
 
@@ -1664,7 +1812,7 @@
               : ' <span class="t-badge nologin" style="margin-left:4px;font-size:.65rem;">no login yet</span>')
         : '<span style="color:var(--t-muted);">Not assigned</span>';
       const rosterCount = Array.isArray(team.roster) ? team.roster.length : 0;
-      const isMine = isCaptainOf(team);
+      const isMine = isCaptainOf(team) || isRosterMemberOf(team);
       const canManage = state.isAdmin;
       const locked = isRosterLocked(team);
       const canView = canViewRoster(tournament, team);
@@ -1739,8 +1887,19 @@
     `;
   }
 
+  function visibleMatchesFor(tournament, sportId) {
+    const sport = getSportConfig(tournament, sportId);
+    const published = scheduleIsPublished(sport);
+    return state.matches.filter(function (m) {
+      if (m.sport !== sportId) return false;
+      if (state.isAdmin) return true;
+      if (m.fromSchedule || m.scheduleEntryId) return published;
+      return true;
+    });
+  }
+
   function renderMatchListsFor(tournament, sportId) {
-    const scoped = state.matches.filter(function (m) { return m.sport === sportId; });
+    const scoped = visibleMatchesFor(tournament, sportId);
     const live = scoped.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches);
     const upcoming = scoped.filter(function (m) { return m.status === 'scheduled'; }).sort(sortMatches);
     const completed = scoped.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
@@ -1750,7 +1909,7 @@
   }
 
   function renderPlayoffsFor(tournament, sportId) {
-    const scoped = state.matches.filter(function (m) { return m.sport === sportId && m.stage !== 'league'; });
+    const scoped = visibleMatchesFor(tournament, sportId).filter(function (m) { return m.stage !== 'league'; });
     const sec = document.getElementById('tPlayoffsSection');
     const wrap = document.getElementById('tPlayoffs');
     if (!sec || !wrap) return;
@@ -2022,136 +2181,520 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MATCH CREATION FORM
+  // SPORT SCHEDULE (draft → publish)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function renderCreateMatchForm(tournament, sport) {
-    const wrap = document.getElementById('tCreateFormWrap');
-    if (!wrap) return;
-    const defaultDate = sport.date ? sport.date + 'T18:00' : '';
-    let participantFields = '';
+  function scheduleKey(tournamentId, sportId) {
+    return String(tournamentId || '') + '|' + String(sportId || '');
+  }
+
+  function harvestScheduleEditor() {
+    const table = document.getElementById('tScheduleEditor');
+    if (!table) return;
+    const tId = table.getAttribute('data-tournament');
+    const sId = table.getAttribute('data-sport');
+    if (!tId || !sId) return;
+    const key = scheduleKey(tId, sId);
+    const prev = scheduleEditByKey[key] || { entries: [], dirty: false };
+    scheduleEditByKey[key] = {
+      entries: readScheduleEntriesFromDom(),
+      dirty: !!prev.dirty
+    };
+  }
+
+  function readWorkingEntries(tournament, sport) {
+    const table = document.getElementById('tScheduleEditor');
+    if (table
+        && table.getAttribute('data-tournament') === tournament.id
+        && table.getAttribute('data-sport') === sport.id) {
+      const entries = readScheduleEntriesFromDom();
+      const key = scheduleKey(tournament.id, sport.id);
+      const prev = scheduleEditByKey[key] || { dirty: false };
+      scheduleEditByKey[key] = { entries: entries, dirty: !!prev.dirty };
+      return entries;
+    }
+    return workingScheduleEntries(tournament, sport);
+  }
+
+  function readScheduleEntriesFromDom() {
+    const rows = document.querySelectorAll('#tScheduleEditor tbody tr[data-entry-id]');
+    const out = [];
+    rows.forEach(function (row) {
+      const stageEl = row.querySelector('[data-f="stage"]');
+      const aEl = row.querySelector('[data-f="a"]');
+      const bEl = row.querySelector('[data-f="b"]');
+      const whenEl = row.querySelector('[data-f="when"]');
+      const venueEl = row.querySelector('[data-f="venue"]');
+      const whenVal = whenEl ? whenEl.value : '';
+      out.push({
+        id: row.getAttribute('data-entry-id'),
+        stage: stageEl ? stageEl.value : 'league',
+        a: aEl ? aEl.value.trim() : '',
+        b: bEl ? bEl.value.trim() : '',
+        scheduledAt: whenVal ? fromDatetimeLocal(whenVal) : '',
+        venue: venueEl ? venueEl.value.trim() : '',
+        matchId: row.getAttribute('data-match-id') || ''
+      });
+    });
+    return out;
+  }
+
+  function markScheduleDirty(tournamentId, sportId) {
+    const key = scheduleKey(tournamentId, sportId);
+    const cur = scheduleEditByKey[key] || { entries: [], dirty: false };
+    cur.dirty = true;
+    scheduleEditByKey[key] = cur;
+  }
+
+  function entriesFromMatches(tournament, sportId) {
+    return state.matches
+      .filter(function (m) { return m.sport === sportId; })
+      .sort(sortMatches)
+      .map(function (m) {
+        const p = participantsOf(m, tournament);
+        return emptyScheduleEntry({
+          id: m.scheduleEntryId || m.id,
+          stage: m.stage || 'league',
+          a: p.a || '',
+          b: p.b || '',
+          scheduledAt: m.scheduledAt || '',
+          venue: m.venue || '',
+          matchId: m.id
+        });
+      });
+  }
+
+  function workingScheduleEntries(tournament, sport) {
+    const key = scheduleKey(tournament.id, sport.id);
+    const local = scheduleEditByKey[key];
+    if (local && local.dirty && Array.isArray(local.entries)) return local.entries;
+    const sch = getSchedule(sport);
+    if (sch.draft && Array.isArray(sch.draft.entries) && sch.draft.entries.length) {
+      return sanitizeScheduleEntries(sch.draft.entries);
+    }
+    if (sch.published && Array.isArray(sch.published.entries) && sch.published.entries.length) {
+      return sanitizeScheduleEntries(sch.published.entries);
+    }
+    const fromMatches = entriesFromMatches(tournament, sport.id);
+    if (fromMatches.length) return fromMatches;
+    return [];
+  }
+
+  function scheduleHasUnpublishedChanges(tournament, sport) {
+    const key = scheduleKey(tournament.id, sport.id);
+    const local = scheduleEditByKey[key];
+    if (local && local.dirty) return true;
+    const sch = getSchedule(sport);
+    if (!sch.published) return !!(sch.draft && (sch.draft.entries || []).length);
+    const draftEntries = JSON.stringify(sanitizeScheduleEntries((sch.draft && sch.draft.entries) || []));
+    const pubEntries = JSON.stringify(sanitizeScheduleEntries(sch.published.entries || []));
+    return draftEntries !== pubEntries;
+  }
+
+  function participantSelectHtml(tournament, sport, field, selected) {
     if (tournament.format === 'teams') {
-      const sportTeams = teamsFor(tournament, sport);
-      if (sportTeams.length < 2) {
-        participantFields = `
-          <div class="t-form-field" style="grid-column:1 / -1;">
-            <div class="t-empty" style="padding:16px;text-align:left;">
-              <b>${escapeHtml(sport.label)}</b> needs at least 2 teams before matches can be created.
-              <div style="margin-top:8px;">
-                <button type="button" class="t-btn primary sm" onclick="window.__tournament.navigate({view:'manage',tournamentId:'${tournament.id}'})">⚙️ Add teams in Manage tournament</button>
-              </div>
-            </div>
-          </div>
+      const teams = teamsFor(tournament, sport);
+      const opts = ['<option value="">Select team…</option>'].concat(teams.map(function (tm) {
+        return '<option value="' + escapeHtml(tm.id) + '"' + (tm.id === selected ? ' selected' : '') + '>'
+          + escapeHtml(tm.name || tm.id)
+          + (tm.wards ? ' — ' + escapeHtml(tm.wards) : '')
+          + '</option>';
+      }));
+      return '<select class="t-select" data-f="' + field + '">' + opts.join('') + '</select>';
+    }
+    return '<input type="text" class="t-input" data-f="' + field + '" value="' + escapeHtml(selected || '') + '" placeholder="Player / pair" />';
+  }
+
+  function renderScheduleFor(tournament, sport) {
+    const body = document.getElementById('tScheduleBody');
+    const actions = document.getElementById('tScheduleActions');
+    if (!body) return;
+
+    const sch = getSchedule(sport);
+    const published = scheduleIsPublished(sport);
+    const canEdit = canEditSchedule();
+    const entries = canEdit
+      ? workingScheduleEntries(tournament, sport)
+      : sanitizeScheduleEntries((sch.published && sch.published.entries) || []);
+
+    if (actions) {
+      if (canEdit) {
+        const dirty = scheduleHasUnpublishedChanges(tournament, sport);
+        actions.innerHTML = `
+          ${published
+            ? '<span class="t-badge locked">Published</span>'
+            : '<span class="t-badge unlocked">Draft</span>'}
+          ${dirty && published ? '<span class="t-badge nologin">Unpublished changes</span>' : ''}
+          <button class="t-btn sm" type="button" onclick="window.__tournament.addScheduleRow('${tournament.id}','${sport.id}')">➕ Add match</button>
+          ${tournament.format === 'teams' && teamsFor(tournament, sport).length >= 2
+            ? '<button class="t-btn sm" type="button" onclick="window.__tournament.generateLeagueSchedule(\'' + tournament.id + '\',\'' + sport.id + '\')">↺ Generate league</button>'
+            : ''}
+          <button class="t-btn sm" type="button" onclick="window.__tournament.saveScheduleDraft('${tournament.id}','${sport.id}')">💾 Save draft</button>
+          <button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule('${tournament.id}','${sport.id}')">📢 Publish</button>
         `;
+      } else if (published) {
+        actions.innerHTML = '<span class="t-badge locked">Published</span>';
       } else {
-        const opts = sportTeams.map(function (t) { return `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}${t.wards ? ' — ' + escapeHtml(t.wards) : ''}</option>`; }).join('');
-        participantFields = `
-          <div class="t-form-field">
-            <label>Team A</label>
-            <select class="t-select" id="tmA">${opts}</select>
-          </div>
-          <div class="t-form-field">
-            <label>Team B</label>
-            <select class="t-select" id="tmB">${opts}</select>
-          </div>
-        `;
+        actions.innerHTML = '';
       }
-    } else {
-      participantFields = `
-        <div class="t-form-field">
-          <label>Player / Pair A</label>
-          <input type="text" class="t-input" id="tmA" placeholder="e.g. Binoy & Jue" />
+    }
+
+    if (!canEdit && !published) {
+      body.innerHTML = '<div class="t-schedule-empty">The schedule for this sport hasn\'t been published yet. Check back after an admin publishes it.</div>';
+      return;
+    }
+
+    if (!canEdit) {
+      body.innerHTML = renderScheduleReadOnly(tournament, sport, entries, sch.published);
+      return;
+    }
+
+    body.innerHTML = renderScheduleEditor(tournament, sport, entries, sch);
+    bindScheduleEditor(tournament, sport);
+  }
+
+  function renderScheduleReadOnly(tournament, sport, entries, publishedMeta) {
+    if (!entries.length) {
+      return '<div class="t-schedule-empty">No fixtures in the published schedule.</div>';
+    }
+    const sorted = entries.slice().sort(function (a, b) {
+      return (a.scheduledAt || '').localeCompare(b.scheduledAt || '');
+    });
+    const whenNote = publishedMeta && publishedMeta.publishedAt
+      ? '<div class="t-schedule-note">Published ' + escapeHtml(fmtDateTime(publishedMeta.publishedAt))
+        + (publishedMeta.publishedBy ? ' by ' + escapeHtml(publishedMeta.publishedBy) : '') + '</div>'
+      : '';
+    const rows = sorted.map(function (e) {
+      const aName = displayName(tournament, sport.id, e.a);
+      const bName = displayName(tournament, sport.id, e.b);
+      return `
+        <tr>
+          <td><span class="t-badge stage-${escapeHtml(e.stage)}">${escapeHtml(STAGE_LABEL[e.stage] || e.stage)}</span></td>
+          <td class="t-schedule-vs"><b>${escapeHtml(aName)}</b> <span>vs</span> <b>${escapeHtml(bName)}</b></td>
+          <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
+          <td>${e.venue ? escapeHtml(e.venue) : '—'}</td>
+        </tr>
+      `;
+    }).join('');
+    return `
+      ${whenNote}
+      <div class="t-schedule-wrap">
+        <table class="t-schedule-table">
+          <thead><tr><th>Stage</th><th>Match</th><th>When</th><th>Venue</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  function renderScheduleEditor(tournament, sport, entries, sch) {
+    const stages = enabledStagesFor(sport);
+    const savedNote = sch.draft && sch.draft.savedAt
+      ? 'Last draft saved ' + fmtDateTime(sch.draft.savedAt)
+        + (sch.draft.savedBy ? ' by ' + sch.draft.savedBy : '')
+      : 'Not saved yet — use Save draft to keep your work.';
+    if (!entries.length) {
+      return `
+        <div class="t-schedule-empty">
+          No fixtures yet. Add a match or generate a league round-robin, then <b>Save draft</b>.
+          Publish when the schedule is ready for everyone to see.
         </div>
-        <div class="t-form-field">
-          <label>Player / Pair B</label>
-          <input type="text" class="t-input" id="tmB" placeholder="e.g. Ajay & Geo" />
-        </div>
+        <div class="t-schedule-note">${escapeHtml(savedNote)}</div>
+        <table class="t-schedule-table" id="tScheduleEditor" data-tournament="${escapeHtml(tournament.id)}" data-sport="${escapeHtml(sport.id)}" style="display:none;">
+          <tbody></tbody>
+        </table>
       `;
     }
-    const stagesForSport = enabledStagesFor(sport);
-    wrap.innerHTML = `
-      <form id="tCreateMatchForm" class="t-form-grid">
-        <div class="t-form-field">
-          <label>Stage</label>
-          <select class="t-select" id="tmStage">
-            ${stagesForSport.map(function (s) { return `<option value="${s}">${STAGE_LABEL[s]}</option>`; }).join('')}
-          </select>
-        </div>
-        ${participantFields}
-        <div class="t-form-field">
-          <label>Scheduled ${sport.date ? '<small style="text-transform:none;letter-spacing:0;color:var(--t-muted);font-weight:500;">default: ' + fmtDate(sport.date) + '</small>' : ''}</label>
-          <input type="datetime-local" class="t-input" id="tmWhen" value="${defaultDate}" />
-        </div>
-        <div class="t-form-field">
-          <label>Venue</label>
-          <input type="text" class="t-input" id="tmVenue" placeholder="Optional" />
-        </div>
-        <div class="t-form-field" style="justify-content:flex-end;">
-          <label>&nbsp;</label>
-          <button type="submit" class="t-btn primary">➕ Create match</button>
-        </div>
-      </form>
+    const rows = entries.map(function (e) {
+      const stageOpts = stages.map(function (st) {
+        return '<option value="' + st + '"' + (e.stage === st ? ' selected' : '') + '>' + STAGE_LABEL[st] + '</option>';
+      }).join('');
+      return `
+        <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}">
+          <td><select class="t-select" data-f="stage">${stageOpts}</select></td>
+          <td>${participantSelectHtml(tournament, sport, 'a', e.a)}</td>
+          <td class="t-schedule-vs-cell">vs</td>
+          <td>${participantSelectHtml(tournament, sport, 'b', e.b)}</td>
+          <td><input type="datetime-local" class="t-input" data-f="when" value="${escapeHtml(toDatetimeLocal(e.scheduledAt))}" /></td>
+          <td><input type="text" class="t-input" data-f="venue" value="${escapeHtml(e.venue || '')}" placeholder="Venue" /></td>
+          <td><button type="button" class="t-btn danger sm" data-remove-row="${escapeHtml(e.id)}">Remove</button></td>
+        </tr>
+      `;
+    }).join('');
+    return `
+      <div class="t-schedule-note">${escapeHtml(savedNote)} Only admins can edit. Everyone else sees this after you publish.</div>
+      <div class="t-schedule-wrap">
+        <table class="t-schedule-table" id="tScheduleEditor" data-tournament="${escapeHtml(tournament.id)}" data-sport="${escapeHtml(sport.id)}">
+          <thead>
+            <tr>
+              <th>Stage</th>
+              <th>Side A</th>
+              <th></th>
+              <th>Side B</th>
+              <th>When</th>
+              <th>Venue</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
     `;
-    if (tournament.format === 'teams') {
-      const sportTeams = teamsFor(tournament, sport);
-      if (sportTeams.length >= 2 && document.getElementById('tmB')) {
-        document.getElementById('tmB').value = sportTeams[1].id;
-      }
-    }
-    const form = document.getElementById('tCreateMatchForm');
-    if (form) form.addEventListener('submit', function (e) {
-      e.preventDefault();
-      const stage = document.getElementById('tmStage').value;
-      const aEl = document.getElementById('tmA');
-      const bEl = document.getElementById('tmB');
-      if (!aEl || !bEl) return toast('Add teams to this sport first', 'error');
-      const a = aEl.value.trim();
-      const b = bEl.value.trim();
-      const when = document.getElementById('tmWhen').value;
-      const venue = document.getElementById('tmVenue').value.trim();
-      if (!a || !b) return toast('Both participants required', 'error');
-      if (a === b) return toast('Pick two different participants', 'error');
-      createMatch(tournament, sport, { stage: stage, a: a, b: b, when: when, venue: venue });
+  }
+
+  function bindScheduleEditor(tournament, sport) {
+    const table = document.getElementById('tScheduleEditor');
+    if (!table) return;
+    table.addEventListener('input', function () {
+      markScheduleDirty(tournament.id, sport.id);
+    });
+    table.addEventListener('change', function () {
+      markScheduleDirty(tournament.id, sport.id);
+    });
+    table.querySelectorAll('[data-remove-row]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        removeScheduleRow(tournament.id, sport.id, btn.getAttribute('data-remove-row'));
+      });
     });
   }
 
-  async function createMatch(tournament, sport, input) {
-    const stageCfg = getStageScoring(tournament, sport.id, input.stage);
+  function currentScheduleContext(tournamentId, sportId) {
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    return { t: t, sport: sport };
+  }
+
+  function persistLocalEntries(tournamentId, sportId, entries, dirty) {
+    scheduleEditByKey[scheduleKey(tournamentId, sportId)] = {
+      entries: sanitizeScheduleEntries(entries),
+      dirty: dirty !== false
+    };
+  }
+
+  function addScheduleRow(tournamentId, sportId) {
+    if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
+    harvestScheduleEditor();
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const entries = readWorkingEntries(t, sport).slice();
+    const teams = teamsFor(t, sport);
+    const a = teams[0] ? teams[0].id : '';
+    const b = teams[1] ? teams[1].id : '';
+    entries.push(emptyScheduleEntry({
+      a: t.format === 'teams' ? a : '',
+      b: t.format === 'teams' ? b : '',
+      scheduledAt: sport.date ? new Date(sport.date + 'T18:00:00').toISOString() : ''
+    }));
+    persistLocalEntries(tournamentId, sportId, entries, true);
+    renderScheduleFor(t, sport);
+  }
+
+  function removeScheduleRow(tournamentId, sportId, entryId) {
+    if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
+    harvestScheduleEditor();
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const entries = readWorkingEntries(t, sport).filter(function (e) { return e.id !== entryId; });
+    persistLocalEntries(tournamentId, sportId, entries, true);
+    renderScheduleFor(t, sport);
+  }
+
+  function generateLeagueSchedule(tournamentId, sportId) {
+    if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const teams = teamsFor(t, sport);
+    if (teams.length < 2) return toast('Add at least 2 teams before generating a league schedule', 'error');
+    harvestScheduleEditor();
+    const existing = readWorkingEntries(t, sport);
+    const playoffs = existing.filter(function (e) { return e.stage && e.stage !== 'league'; });
+    if (existing.length && !confirm('Replace league fixtures with a generated round-robin? Playoff rows will be kept.')) return;
+    const league = [];
+    for (let i = 0; i < teams.length; i++) {
+      for (let j = i + 1; j < teams.length; j++) {
+        league.push(emptyScheduleEntry({
+          stage: 'league',
+          a: teams[i].id,
+          b: teams[j].id,
+          scheduledAt: sport.date ? new Date(sport.date + 'T18:00:00').toISOString() : ''
+        }));
+      }
+    }
+    persistLocalEntries(tournamentId, sportId, league.concat(playoffs), true);
+    renderScheduleFor(t, sport);
+    toast('League round-robin generated — save draft or publish when ready');
+  }
+
+  async function writeSportPatch(tournament, sportId, patch) {
+    const sports = (tournament.sports || []).map(function (s) {
+      if (s.id !== sportId) return s;
+      return Object.assign({}, s, patch);
+    });
+    try {
+      await db.collection('tournaments').doc(tournament.id).update({
+        sports: sports,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === tournament.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { sports: sports });
+    } catch (err) {
+      console.error('[tournament] writeSportPatch FAILED', err);
+      toast('Save failed: ' + (err.message || err.code || 'unknown'), 'error');
+      throw err;
+    }
+  }
+
+  async function saveScheduleDraft(tournamentId, sportId) {
+    if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
+    harvestScheduleEditor();
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport));
+    const nowIso = new Date().toISOString();
+    const who = (state.user && (state.user.email || state.user.displayName)) || '';
+    const prev = getSchedule(sport);
+    const schedule = {
+      draft: { entries: entries, savedAt: nowIso, savedBy: who },
+      published: prev.published || null
+    };
+    try {
+      await writeSportPatch(t, sportId, { schedule: schedule });
+      persistLocalEntries(tournamentId, sportId, entries, false);
+      toast('Draft saved — not visible to others until you publish', 'success');
+      render();
+    } catch (_) { /* writeSportPatch already toasted */ }
+  }
+
+  async function publishSchedule(tournamentId, sportId) {
+    if (!canEditSchedule()) return toast('Only admins can publish the schedule', 'error');
+    harvestScheduleEditor();
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport));
+    if (!entries.length) return toast('Add at least one match before publishing', 'error');
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (!e.a || !e.b) return toast('Every match needs two sides before publishing', 'error');
+      if (e.a === e.b) return toast('A match cannot have the same team on both sides', 'error');
+    }
+    if (!confirm('Publish this schedule? Everyone signed in will be able to view it.')) return;
+
+    const nowIso = new Date().toISOString();
+    const who = (state.user && (state.user.email || state.user.displayName)) || '';
+    const schedule = {
+      draft: { entries: entries, savedAt: nowIso, savedBy: who },
+      published: { entries: entries, publishedAt: nowIso, publishedBy: who }
+    };
+
+    try {
+      await syncPublishedMatches(t, sport, entries);
+      await writeSportPatch(t, sportId, { schedule: schedule });
+      persistLocalEntries(tournamentId, sportId, entries, false);
+      toast('Schedule published', 'success');
+      render();
+    } catch (_) { /* already toasted */ }
+  }
+
+  function buildMatchData(tournament, sport, entry) {
+    const stageCfg = getStageScoring(tournament, sport.id, entry.stage);
     const data = {
       tournamentId: tournament.id,
       sport: sport.id,
-      stage: input.stage,
-      scheduledAt: input.when ? new Date(input.when).toISOString() : '',
-      venue: input.venue || '',
+      stage: entry.stage || 'league',
+      scheduledAt: entry.scheduledAt || '',
+      venue: entry.venue || '',
       status: 'scheduled',
       winner: null,
       scoringConfig: stageCfg,
-      createdAt: FieldValue.serverTimestamp(),
+      published: true,
+      fromSchedule: true,
+      scheduleEntryId: entry.id,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
     };
     if (tournament.format === 'teams') {
-      data.teamA = input.a;
-      data.teamB = input.b;
+      data.teamA = entry.a;
+      data.teamB = entry.b;
     } else {
-      data.playerA = input.a;
-      data.playerB = input.b;
+      data.playerA = entry.a;
+      data.playerB = entry.b;
     }
     if (sport.kind === 'racket') data.games = [];
     else if (sport.kind === 'volleyball') data.sets = [];
     else if (sport.kind === 'basketball') data.quarters = [];
-    try {
-      await db.collection('tournament_matches').add(data);
-      toast('Match created');
-      const form = document.getElementById('tCreateMatchForm');
-      if (form) {
-        document.getElementById('tmVenue').value = '';
+    return data;
+  }
+
+  async function syncPublishedMatches(tournament, sport, entries) {
+    const existing = state.matches.filter(function (m) { return m.sport === sport.id; });
+    const byEntryId = {};
+    const byMatchId = {};
+    existing.forEach(function (m) {
+      if (m.scheduleEntryId) byEntryId[m.scheduleEntryId] = m;
+      byMatchId[m.id] = m;
+    });
+    const keptMatchIds = {};
+    const col = db.collection('tournament_matches');
+
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      const found = (e.matchId && byMatchId[e.matchId]) || byEntryId[e.id] || null;
+      if (found) {
+        keptMatchIds[found.id] = true;
+        e.matchId = found.id;
+        const patch = {
+          stage: e.stage || 'league',
+          scheduledAt: e.scheduledAt || '',
+          venue: e.venue || '',
+          published: true,
+          fromSchedule: true,
+          scheduleEntryId: e.id,
+          updatedAt: FieldValue.serverTimestamp(),
+          updatedBy: (state.user && state.user.email) || ''
+        };
+        if (tournament.format === 'teams') {
+          patch.teamA = e.a;
+          patch.teamB = e.b;
+        } else {
+          patch.playerA = e.a;
+          patch.playerB = e.b;
+        }
+        // Don't clobber scores on matches that have already started.
+        if (found.status === 'scheduled') {
+          await col.doc(found.id).update(patch);
+        } else {
+          await col.doc(found.id).update({
+            scheduledAt: patch.scheduledAt,
+            venue: patch.venue,
+            scheduleEntryId: e.id,
+            published: true,
+            fromSchedule: true,
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        }
+      } else {
+        const data = buildMatchData(tournament, sport, e);
+        data.createdAt = FieldValue.serverTimestamp();
+        const ref = await col.add(data);
+        e.matchId = ref.id;
+        keptMatchIds[ref.id] = true;
       }
-    } catch (err) {
-      console.error(err);
-      toast('Create failed: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+
+    // Drop scheduled matches that were created from this schedule but removed
+    // from the fixture list. Leave live / completed matches alone.
+    for (let i = 0; i < existing.length; i++) {
+      const m = existing[i];
+      if (!m.fromSchedule && !m.scheduleEntryId) continue;
+      if (keptMatchIds[m.id]) continue;
+      if (m.status && m.status !== 'scheduled') continue;
+      await col.doc(m.id).delete();
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // GENERIC MODAL HELPERS
+  // ═══════════════════════════════════════════════════════════════════════════
 
   // ═══════════════════════════════════════════════════════════════════════════
   // GENERIC MODAL HELPERS
@@ -2565,7 +3108,7 @@
            <div>
              <b>🔒 Roster locked.</b>
              ${team.lockedBy ? '<span style="color:var(--t-muted);font-size:.82rem;"> — by ' + escapeHtml(team.lockedBy) + '</span>' : ''}
-             <div style="font-size:.78rem;color:var(--t-muted);margin-top:2px;">No further edits allowed. ${t.revealLockedRosters ? 'Visible to everyone signed in.' : 'Still visible only to the captain and admins.'}</div>
+             <div style="font-size:.78rem;color:var(--t-muted);margin-top:2px;">No further edits allowed. ${t.revealLockedRosters ? 'Visible to everyone signed in.' : 'Still visible only to team members, the captain, and admins.'}</div>
            </div>
            ${canLock ? '<button class="t-btn sm" data-toggle-lock>🔓 Unlock</button>' : ''}
          </div>`
@@ -2696,6 +3239,7 @@
         <input id="tMemberSearch" type="text" class="t-input" placeholder="e.g. Joseph, or 16" value="${escapeHtml(ctx.query || '')}" autocomplete="off" />
         <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
           ${state.membersLoaded ? state.members.length + ' members in the directory' : 'Loading directory…'}
+          · A person can only be on one team in this sport.
         </div>
       </div>
       <div class="t-member-results" id="tMemberResults"></div>
@@ -2716,16 +3260,23 @@
       }
       results.innerHTML = list.map(function (m, idx) {
         const key = m.memberId ? ('M:' + m.memberId) : ('N:' + (m.firstName + '|' + m.lastName + '|' + m.familyId).toLowerCase());
-        const already = existingKeys.has(key);
+        const already = existingKeys.has(key) || (team.roster || []).some(function (r) { return membersMatch(m, r); });
+        const otherTeam = already ? null : findOtherTeamForMember(teamsFor(t, sport), team.id, m);
+        let actionHtml;
+        if (already) {
+          actionHtml = '<span class="t-badge">Already on roster</span>';
+        } else if (otherTeam) {
+          actionHtml = '<span class="t-badge" title="A person can only be on one team per sport">Already on ' + escapeHtml(otherTeam.name || otherTeam.id) + '</span>';
+        } else {
+          actionHtml = '<button class="t-btn sm primary" data-add="' + idx + '">Add</button>';
+        }
         return `
           <div class="t-member-row">
             <div>
               <div class="name">${escapeHtml((m.firstName + ' ' + m.lastName).trim())}</div>
               <div class="meta">Family: ${escapeHtml(m.familyName || '—')} · FID ${escapeHtml(m.familyId || '—')}${m.memberId ? ' · MID ' + escapeHtml(m.memberId) : ''}</div>
             </div>
-            ${already
-              ? '<span class="t-badge">Already on roster</span>'
-              : '<button class="t-btn sm primary" data-add="' + idx + '">Add</button>'}
+            ${actionHtml}
           </div>
         `;
       }).join('');
@@ -2762,12 +3313,26 @@
       return;
     }
     const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
+    if (roster.some(function (r) { return membersMatch(member, r); })) {
+      toast((member.firstName + ' ' + member.lastName).trim() + ' is already on this roster.', 'error');
+      return;
+    }
+    const otherTeam = findOtherTeamForMember(teamsFor(t, sport), teamId, member);
+    if (otherTeam) {
+      toast((member.firstName + ' ' + member.lastName).trim()
+        + ' is already on ' + (otherTeam.name || otherTeam.id)
+        + ' for this sport. A person can only be on one team per sport.', 'error');
+      return;
+    }
+    const known = getKnownPeople().find(function (p) { return membersMatch(p, member); });
     const newEntry = {
       memberId: member.memberId || '',
       familyId: member.familyId || '',
       firstName: member.firstName || '',
       lastName: member.lastName || '',
       familyName: member.familyName || '',
+      uid: (known && known.uid) || '',
+      email: (known && known.email) || '',
       addedByUid: currentUid() || '',
       addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
       // Use an ISO string rather than serverTimestamp — Firestore does not
@@ -3227,6 +3792,9 @@
       state.ready.rsvp = true;
       state.errors.rsvp = null;
       console.log('[tournament] rsvpResponses:', state.rsvpResponses.length, 'docs');
+      render();
+      if (openLiveModal === 'roster') rerenderRoster();
+      if (openLiveModal === 'memberPicker') rerenderMemberPicker();
       if (openLiveModal === 'userPicker') rerenderUserPicker();
     }, function (err) {
       state.errors.rsvp = err;
@@ -3259,6 +3827,8 @@
           lastName: d.lastName || '',
           firstNameLower: (d.firstNameLower || d.firstName || '').toLowerCase(),
           lastNameLower: (d.lastNameLower || d.lastName || '').toLowerCase(),
+          familyId: d.familyId != null ? String(d.familyId) : '',
+          memberId: d.memberId != null ? String(d.memberId) : '',
           photoURL: d.photoURL || ''
         });
       });
@@ -3268,6 +3838,9 @@
       state.ready.users = true;
       state.errors.users = null;
       console.log('[tournament] users collection:', state.users.length, 'profiles');
+      render();
+      if (openLiveModal === 'roster') rerenderRoster();
+      if (openLiveModal === 'memberPicker') rerenderMemberPicker();
       if (openLiveModal === 'userPicker') rerenderUserPicker();
     }, function (err) {
       state.errors.users = err;
@@ -3349,7 +3922,7 @@
       <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
         <div>
           <h1>🏆 Church Tournament</h1>
-          <p>Sign in with your Google account to see live scores, standings, and (if you're a team captain) manage your team roster.</p>
+          <p>Sign in with your Google account to see live scores, standings, and your team roster. Team captains can add members; each person can only be on one team per sport.</p>
         </div>
         <div class="t-emoji">🔒</div>
       </section>
@@ -3386,10 +3959,20 @@
         // in an empty snapshot that never recovers.
         subscribeUsers();
         subscribeRsvpResponses();
+        if (!window.SmashAuth) {
+          const FALLBACK_ADMIN_EMAILS = [
+            'jue.george@gmail.com',
+            'binoybt@gmail.com',
+            'geojins@gmail.com',
+            'b.ajaymathews@gmail.com'
+          ];
+          state.isAdmin = FALLBACK_ADMIN_EMAILS.indexOf(String(user.email || '').toLowerCase()) !== -1;
+        }
       } else {
         // Sign-out — drop the people-list subscriptions. The Firestore docs
         // remain untouched; only the local cached view is cleared.
         unsubscribeUserData();
+        if (!window.SmashAuth) state.isAdmin = false;
       }
       render();
     });
