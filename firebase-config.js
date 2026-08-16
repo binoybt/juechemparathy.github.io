@@ -53,11 +53,11 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //   5. exposes a role-aware SmashAuth API on window.SmashAuth that all
 //      other pages use to gate admin UI (see JSDoc below for the shape)
 //   6. shows a small admin banner if there are pending reviews
-//   7. tracks Tournament page visibility (admin-only vs everyone) via
-//      siteConfig/tournament.openToEveryone and hides .js-tournament-nav
-//      links until an admin opens it. Admins can also grant
-//      users/{uid}.tournamentTester so a few members can test the
-//      non-admin Tournament view while it is still closed.
+//   7. tracks lab-feature access. Admins grant users/{uid}.labUser so
+//      selected members (lab users) can test in-progress pages without
+//      admin tools. Tournament is the first lab feature: it stays hidden
+//      until openToEveryone, except for admins and lab users.
+//      Other lab pages should gate with SmashAuth.canAccessLab().
 //
 // FIRESTORE RULES (paste into your rules editor):
 //
@@ -81,11 +81,11 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //         allow read:   if isSignedIn();
 //         allow create: if isSignedIn() && request.auth.uid == uid;
 //         // A user can update their own doc but cannot touch role or
-//         // tournamentTester. Admins can change anything on any doc.
+//         // labUser. Admins can change anything on any doc.
 //         allow update: if isSignedIn() && (
 //                         (request.auth.uid == uid &&
 //                          !request.resource.data.diff(resource.data)
-//                             .affectedKeys().hasAny(['role','tournamentTester'])) ||
+//                             .affectedKeys().hasAny(['role','labUser'])) ||
 //                         isAdmin()
 //                       );
 //         allow delete: if isAdmin();
@@ -156,9 +156,9 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
   // ── SmashAuth (role-aware auth state exposed to every page) ───────────
   // Shape passed to onChange listeners:
-  //   { user, role, isAdmin, isTournamentTester, loading }
+  //   { user, role, isAdmin, isLabUser, loading }
   // Pages should treat loading=true as "unknown yet, don't render admin UI".
-  const state = { user: null, role: null, isAdmin: false, isTournamentTester: false, loading: true };
+  const state = { user: null, role: null, isAdmin: false, isLabUser: false, loading: true };
   const listeners = [];
   let userDocUnsub = null;
 
@@ -172,7 +172,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   function setState(patch) {
     Object.assign(state, patch);
     state.isAdmin = (state.role === 'admin');
-    state.isTournamentTester = !!state.isTournamentTester;
+    state.isLabUser = !!state.isLabUser;
     notify();
   }
 
@@ -182,12 +182,12 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       const d = snap.exists ? (snap.data() || {}) : {};
       setState({
         role: d.role || 'member',
-        isTournamentTester: d.tournamentTester === true,
+        isLabUser: d.labUser === true,
         loading: false
       });
     }, function (err) {
       console.warn('[SmashAuth] users/' + uid + ' snapshot failed:', err);
-      setState({ role: null, isTournamentTester: false, loading: false });
+      setState({ role: null, isLabUser: false, loading: false });
     });
   }
 
@@ -197,8 +197,10 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     get currentRole()  { return state.role;  },
     /** Convenience: SmashAuth.isAdmin() */
     isAdmin: function () { return state.isAdmin; },
-    /** Member allowed to open Tournament while it is still admin-only. */
-    isTournamentTester: function () { return !!state.isTournamentTester; },
+    /** Member granted the lab-user role (test in-progress features). */
+    isLabUser: function () { return !!state.isLabUser; },
+    /** Admins and lab users can open any lab feature. */
+    canAccessLab: function () { return !!(state.isAdmin || state.isLabUser); },
     /** Convenience: SmashAuth.isSignedIn() */
     isSignedIn: function () { return !!state.user; },
     /** True until the users/{uid} role snapshot has resolved. */
@@ -235,22 +237,22 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
         roleSetBy: (state.user && state.user.email) || 'unknown'
       }, { merge: true });
     },
-    /** Admin action: let a member open Tournament as a non-admin tester. */
-    grantTournamentTester: async function (uid) {
-      if (!state.isAdmin) throw new Error('Only admins can grant tester access.');
+    /** Admin action: grant the lab-user role for testing lab features. */
+    grantLabUser: async function (uid) {
+      if (!state.isAdmin) throw new Error('Only admins can grant lab access.');
       await db.collection('users').doc(uid).set({
-        tournamentTester: true,
-        tournamentTesterSetAt: FV.serverTimestamp(),
-        tournamentTesterSetBy: (state.user && state.user.email) || 'unknown'
+        labUser: true,
+        labUserSetAt: FV.serverTimestamp(),
+        labUserSetBy: (state.user && state.user.email) || 'unknown'
       }, { merge: true });
     },
-    /** Admin action: remove Tournament tester access. */
-    revokeTournamentTester: async function (uid) {
-      if (!state.isAdmin) throw new Error('Only admins can revoke tester access.');
+    /** Admin action: remove the lab-user role. */
+    revokeLabUser: async function (uid) {
+      if (!state.isAdmin) throw new Error('Only admins can revoke lab access.');
       await db.collection('users').doc(uid).set({
-        tournamentTester: false,
-        tournamentTesterSetAt: FV.serverTimestamp(),
-        tournamentTesterSetBy: (state.user && state.user.email) || 'unknown'
+        labUser: false,
+        labUserSetAt: FV.serverTimestamp(),
+        labUserSetBy: (state.user && state.user.email) || 'unknown'
       }, { merge: true });
     }
   };
@@ -261,7 +263,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   //   document   "tournament"  (one field: openToEveryone true/false)
   // Default is admin-only. A missing doc, a failed read, or
   // openToEveryone !== true all keep Tournament private except for
-  // members with users/{uid}.tournamentTester === true. Admins flip the
+  // admins and lab users (SmashAuth.canAccessLab()). Admins flip the
   // everyone flag from the banner on tournament.html.
   const tournamentAccess = {
     openToEveryone: false,
@@ -271,10 +273,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   };
 
   function currentUserCanSeeTournament() {
-    if (window.SmashAuth && SmashAuth.isAdmin()) return true;
     if (tournamentAccess.openToEveryone) return true;
-    if (window.SmashAuth && SmashAuth.isTournamentTester()) return true;
-    return false;
+    return !!(window.SmashAuth && SmashAuth.canAccessLab());
   }
 
   function applyTournamentNavVisibility() {
@@ -318,7 +318,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     isLoaded: function () { return tournamentAccess.loaded; },
     canSeeNav: function (isAdmin) {
       if (isAdmin || tournamentAccess.openToEveryone) return true;
-      return !!(window.SmashAuth && SmashAuth.isTournamentTester());
+      return !!(window.SmashAuth && SmashAuth.canAccessLab());
     },
     canCurrentUserAccess: function () { return currentUserCanSeeTournament(); },
     onChange: function (fn) {
@@ -1105,7 +1105,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   auth.onAuthStateChanged(async function (user) {
     if (!user) {
       if (userDocUnsub) { try { userDocUnsub(); } catch (_) {} userDocUnsub = null; }
-      setState({ user: null, role: null, isTournamentTester: false, loading: false });
+      setState({ user: null, role: null, isLabUser: false, loading: false });
       hideOnboardingModal();
       stopAdminBanner();
       return;
@@ -1113,7 +1113,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
     // Publish the user immediately so pages can start rendering; role
     // arrives shortly after via the users doc snapshot.
-    setState({ user: user, role: null, isTournamentTester: false, loading: true });
+    setState({ user: user, role: null, isLabUser: false, loading: true });
 
     await mirrorUserProfileAndBootstrapRole(user);
     subscribeToUserDoc(user.uid);

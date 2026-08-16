@@ -24,7 +24,7 @@
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
- *     missing/false → admin testing only (plus users with tournamentTester);
+ *     missing/false → admin / lab-user testing only;
  *     true → all signed-in members
  *
  *   tournament_matches/{docId}
@@ -400,7 +400,7 @@
   const state = {
     user: null,
     isAdmin: false,
-    isTournamentTester: false,
+    isLabUser: false,
     authLoading: true,
     tournaments: [],       // all tournaments (subscribed once)
     matches: [],           // matches for the current tournament only
@@ -447,17 +447,21 @@
     return !!(window.TournamentAccess && TournamentAccess.isOpenToEveryone());
   }
 
-  function isTournamentTester() {
-    return !!state.isTournamentTester;
+  function isLabUser() {
+    return !!state.isLabUser;
+  }
+
+  function canAccessLab() {
+    return !!(state.isAdmin || isLabUser() || (window.SmashAuth && SmashAuth.canAccessLab()));
   }
 
   function canUseTournamentPage() {
     if (!state.user) return false;
-    return !!(state.isAdmin || tournamentOpenToEveryone() || isTournamentTester());
+    return !!(tournamentOpenToEveryone() || canAccessLab());
   }
 
   function tournamentAccessPending() {
-    if (state.isAdmin || tournamentOpenToEveryone() || isTournamentTester()) return false;
+    if (tournamentOpenToEveryone() || canAccessLab()) return false;
     if (state.authLoading) return true;
     if (window.TournamentAccess && !TournamentAccess.isLoaded()) return true;
     return false;
@@ -1772,13 +1776,13 @@
             <div>
               <div style="font-weight:700;color:var(--t-fg);">Admin testing only</div>
               <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">${(function () {
-                const n = (state.users || []).filter(function (u) { return u.tournamentTester && u.role !== 'admin'; }).length;
-                return (n ? n + ' tester' + (n === 1 ? '' : 's') + ' can open this page as members. ' : '')
-                  + 'Add testers from Members &amp; Admins. Testers see the member view (no admin tools). Open it to everyone when you are ready.';
+                const n = (state.users || []).filter(function (u) { return u.labUser && u.role !== 'admin'; }).length;
+                return (n ? n + ' lab user' + (n === 1 ? '' : 's') + ' can open this page as members. ' : '')
+                  + 'Grant the lab-user role from Members &amp; Admins. Lab users see the member view (no admin tools) and can test other lab features later. Open it to everyone when you are ready.';
               })()}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <a class="t-btn" href="admin-users.html">Manage testers</a>
+              <a class="t-btn" href="admin-users.html">Manage lab users</a>
               <button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentOpen(true)">Open to everyone</button>
             </div>
           </div>
@@ -4313,7 +4317,7 @@
           memberId: d.memberId != null ? String(d.memberId) : '',
           photoURL: d.photoURL || '',
           role: d.role || 'member',
-          tournamentTester: d.tournamentTester === true
+          labUser: d.labUser === true
         });
       });
       state.users.sort(function (a, b) {
@@ -4517,13 +4521,13 @@
     if (window.SmashAuth) {
       SmashAuth.onChange(function (s) {
         const nextAdmin = !!(s.user && s.isAdmin);
-        const nextTester = !!(s.user && s.isTournamentTester);
+        const nextLab = !!(s.user && s.isLabUser);
         const nextLoading = !!s.loading;
         const changed = state.isAdmin !== nextAdmin
-          || state.isTournamentTester !== nextTester
+          || state.isLabUser !== nextLab
           || state.authLoading !== nextLoading;
         state.isAdmin = nextAdmin;
-        state.isTournamentTester = nextTester;
+        state.isLabUser = nextLab;
         state.authLoading = nextLoading;
         if (changed) render();
       });
