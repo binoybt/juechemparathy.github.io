@@ -619,6 +619,8 @@ body.t-member-preview .t-admin-switch {
 }
 .t-tournament-card.archived { opacity: .6; }
 .t-tournament-card.archived::before { background: linear-gradient(180deg, #94a3b8, #64748b); }
+.t-tournament-card.draft::before { background: linear-gradient(180deg, #d97706, #f59e0b); }
+.t-publish-banner { margin-top: 0; }
 .t-tournament-card:hover { transform: translateY(-3px); box-shadow: var(--t-shadow-md); border-color: var(--t-primary); }
 .t-tournament-card .t-name { font-weight: 800; font-size: 1.15rem; color: var(--t-fg); }
 .t-tournament-card .t-format {

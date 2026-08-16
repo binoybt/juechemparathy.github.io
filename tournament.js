@@ -20,7 +20,14 @@
  *       maxRosterSize number  — per-team member cap (0/omitted = no limit)
  *     rules         { text, updatedAt, updatedBy }  — tournament-wide, admin-edit
  *     archived      bool
+ *     published     bool  — members see it only when true; missing = unpublished
+ *                           (existing docs without the field stay unpublished)
+ *     clonedFrom    string — source tournament id when created via Clone
  *     createdAt / updatedAt / createdBy
+ *
+ *   Clone copies sports, scoring, rules, max roster, and team shells
+ *   (id / name / wards). It does not copy matches, schedule, rosters,
+ *   captains, or lock state. Clones are always unpublished.
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
@@ -239,7 +246,8 @@
         sportTemplateForConfig('volleyball',  { teams: teams }),
         sportTemplateForConfig('basketball',  { teams: teams })
       ],
-      archived: false
+      archived: false,
+      published: false
     };
   }
 
@@ -482,6 +490,28 @@
   function canUseTournamentPage() {
     if (!state.user) return false;
     return !!(tournamentOpenToEveryone() || canAccessLab());
+  }
+
+  // Members only see a tournament after an admin publishes it.
+  // Missing published field (existing docs) counts as unpublished.
+  function isTournamentPublished(t) {
+    return !!(t && t.published === true);
+  }
+
+  function canSeeUnpublishedTournaments() {
+    return !!(isRealAdmin() || isLabUser());
+  }
+
+  function canOpenTournament(t) {
+    if (!t) return false;
+    if (isTournamentPublished(t)) return true;
+    return canSeeUnpublishedTournaments();
+  }
+
+  function visibleTournaments() {
+    return (state.tournaments || []).filter(function (t) {
+      return canOpenTournament(t);
+    });
   }
 
   function tournamentAccessPending() {
@@ -1172,7 +1202,8 @@
   function renderList() {
     document.title = 'Church Tournament — All Tournaments';
     const container = document.getElementById('tContent');
-    const tournaments = state.tournaments.slice().sort(function (a, b) {
+    const tournaments = visibleTournaments().slice().sort(function (a, b) {
+      if (isTournamentPublished(a) !== isTournamentPublished(b)) return isTournamentPublished(a) ? 1 : -1;
       if (a.archived !== b.archived) return a.archived ? 1 : -1;
       return (b.createdAt && b.createdAt.seconds || 0) - (a.createdAt && a.createdAt.seconds || 0);
     });
@@ -1210,12 +1241,12 @@
       </section>
       ` : ''}
 
-      ${state.user && !isAdminUi() ? `
+      ${state.user && !isAdminUi() && !canSeeUnpublishedTournaments() ? `
       <section class="t-section">
         <div class="t-card" style="border-color:var(--t-danger);background:#fef2f2;">
           <div class="t-card-body">
             <div style="font-weight:700;color:var(--t-fg);">Signed in as ${escapeHtml(state.user.email || '')}</div>
-            <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">This account isn't on the admin list. You can still view all live scores.</div>
+            <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">This account isn't on the admin list. You can view published tournaments and live scores.</div>
           </div>
         </div>
       </section>
@@ -1228,7 +1259,7 @@
         <div class="t-empty" style="padding: 50px 20px;">
           <div style="font-size: 2.4rem; margin-bottom: 8px;">🏆</div>
           <div style="color:var(--t-fg);font-size:1.05rem;font-weight:600;margin-bottom:4px;">No tournaments yet</div>
-          <div>${canCreate ? 'Create your first tournament to get started.' : 'Come back once a tournament has been created.'}</div>
+          <div>${canCreate ? 'Create your first tournament to get started.' : (canSeeUnpublishedTournaments() ? 'No tournaments yet.' : 'No published tournaments yet. Check back soon.')}</div>
           ${canCreate ? `
             <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
               <button class="t-btn primary" onclick="window.__tournament.navigate({view:'create'})">➕ Create tournament</button>
@@ -1256,9 +1287,9 @@
       });
       if (!maxTeams && Array.isArray(t.teams)) maxTeams = t.teams.length; // legacy fallback
 
-      const card = el('div', { class: 't-tournament-card ' + (t.archived ? 'archived' : '') });
+      const card = el('div', { class: 't-tournament-card ' + (t.archived ? 'archived' : '') + (isTournamentPublished(t) ? '' : ' draft') });
       card.innerHTML = `
-        <div class="t-format">${escapeHtml(formatLabel)}${t.archived ? ' · Archived' : ''}</div>
+        <div class="t-format">${escapeHtml(formatLabel)}${t.archived ? ' · Archived' : ''}${isTournamentPublished(t) ? '' : ' · Unpublished'}</div>
         <div class="t-name">${escapeHtml(t.name)}</div>
         <div class="t-sports">${sports || '<span class="t-sport-chip">No sports yet</span>'}${extra}</div>
         <div class="t-stats">
@@ -1269,6 +1300,8 @@
           <div class="t-card-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--t-border);">
             <button class="t-btn sm" data-act="open">🔎 Open</button>
             <button class="t-btn sm" data-act="manage">⚙️ Manage</button>
+            <button class="t-btn sm" data-act="clone">📄 Clone</button>
+            <button class="t-btn sm ${isTournamentPublished(t) ? '' : 'primary'}" data-act="publish">${isTournamentPublished(t) ? '🙈 Unpublish' : '📢 Publish'}</button>
             <button class="t-btn sm" data-act="archive">${t.archived ? '📤 Unarchive' : '📥 Archive'}</button>
             <div style="flex:1;"></div>
             <button class="t-btn danger sm" data-act="delete">🗑 Delete</button>
@@ -1288,6 +1321,8 @@
           const act = btn.getAttribute('data-act');
           if (act === 'open') return navigate({ view: 'tournament', tournamentId: t.id });
           if (act === 'manage') return navigate({ view: 'manage', tournamentId: t.id });
+          if (act === 'clone') return cloneTournament(t);
+          if (act === 'publish') return setTournamentPublished(t.id, !isTournamentPublished(t));
           if (act === 'archive') {
             try {
               await db.collection('tournaments').doc(t.id).update({
@@ -1341,7 +1376,7 @@
       });
       delete draft.teams;
     } else {
-      draft = { name: '', format: 'teams', sports: [], archived: false };
+      draft = { name: '', format: 'teams', sports: [], archived: false, published: false };
     }
     editState.draft = draft;
 
@@ -1374,6 +1409,13 @@
               <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;">
                 <input type="checkbox" id="tfArchived" ${draft.archived ? 'checked' : ''}/> Archive this tournament (hides from active list)
               </label>
+              ${mode === 'manage' ? `
+              <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="Members cannot see this tournament until it is published. Admins and lab users can always open it. Existing tournaments without this flag stay unpublished.">
+                <input type="checkbox" id="tfPublished" ${draft.published ? 'checked' : ''}/> Published (visible to members)
+              </label>
+              ` : `
+              <div style="color:var(--t-muted);font-size:.85rem;">New tournaments stay unpublished. Members will not see this until you publish it. Admins and lab users can open it immediately.</div>
+              `}
               <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="When enabled, any signed-in user can view rosters that have been locked. Unlocked rosters remain visible only to team members, the team captain, and admins.">
                 <input type="checkbox" id="tfRevealLocked" ${draft.revealLockedRosters ? 'checked' : ''}/> Reveal locked rosters to everyone signed in
               </label>
@@ -1678,6 +1720,7 @@
     if (!draft) return;
     draft.name = document.getElementById('tfName').value.trim();
     draft.archived = document.getElementById('tfArchived').checked;
+    draft.published = !!(document.getElementById('tfPublished') && document.getElementById('tfPublished').checked);
     draft.revealLockedRosters = document.getElementById('tfRevealLocked').checked;
     if (!draft.name) return toast('Tournament name is required', 'error');
     if (!draft.sports || !draft.sports.length) return toast('Add at least 1 sport', 'error');
@@ -1731,6 +1774,7 @@
       teams: FieldValue.delete(),
       sports: mergedSports,
       archived: !!draft.archived,
+      published: !!draft.published,
       revealLockedRosters: !!draft.revealLockedRosters,
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
@@ -1746,13 +1790,14 @@
         delete payload.teams;
         payload.createdAt = FieldValue.serverTimestamp();
         payload.createdBy = (state.user && state.user.email) || '';
+        payload.published = false;
         const ref = await db.collection('tournaments').add(payload);
         // Optimistically add to local state so navigate() doesn't beat the
         // onSnapshot delivery and render "Tournament not found".
         if (!state.tournaments.some(function (x) { return x.id === ref.id; })) {
           state.tournaments.push(Object.assign({ id: ref.id }, payload));
         }
-        toast('Tournament created');
+        toast('Tournament created — unpublished until you publish it');
         navigate({ view: 'tournament', tournamentId: ref.id });
       }
     } catch (err) {
@@ -1775,6 +1820,93 @@
     } catch (err) {
       console.error(err);
       toast('Delete failed: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  function buildClonedTournament(src, newName) {
+    const sports = (src.sports || []).map(function (s) {
+      return {
+        id: s.id,
+        label: s.label,
+        kind: s.kind,
+        emoji: s.emoji,
+        color: s.color,
+        date: s.date || '',
+        hasThirdPlace: s.hasThirdPlace !== false,
+        categories: Array.isArray(s.categories) ? s.categories.slice() : [],
+        scoring: s.scoring ? JSON.parse(JSON.stringify(s.scoring)) : defaultScoring(s.kind),
+        maxRosterSize: parseMaxRosterSize(s.maxRosterSize),
+        rules: s.rules ? JSON.parse(JSON.stringify(s.rules)) : null,
+        teams: (s.teams || []).map(function (tm) {
+          return { id: tm.id, name: tm.name || tm.id, wards: tm.wards || '' };
+        })
+      };
+    });
+    return {
+      name: newName,
+      format: src.format || 'teams',
+      sports: sports,
+      rules: src.rules ? JSON.parse(JSON.stringify(src.rules)) : null,
+      revealLockedRosters: !!src.revealLockedRosters,
+      archived: false,
+      published: false
+    };
+  }
+
+  async function cloneTournament(src) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    if (typeof src === 'string') {
+      src = state.tournaments.find(function (x) { return x.id === src; });
+    }
+    if (!src) return;
+    const suggested = (src.name || 'Tournament') + ' (copy)';
+    const name = prompt('Name for the cloned tournament', suggested);
+    if (name == null) return;
+    const trimmed = String(name).trim();
+    if (!trimmed) return toast('A name is required', 'error');
+    try {
+      const payload = buildClonedTournament(src, trimmed);
+      payload.createdAt = FieldValue.serverTimestamp();
+      payload.updatedAt = FieldValue.serverTimestamp();
+      payload.createdBy = (state.user && state.user.email) || '';
+      payload.clonedFrom = src.id || '';
+      const ref = await db.collection('tournaments').add(payload);
+      if (!state.tournaments.some(function (x) { return x.id === ref.id; })) {
+        state.tournaments.push(Object.assign({ id: ref.id }, payload));
+      }
+      toast('Cloned as "' + trimmed + '" — unpublished, no matches or schedule', 'success');
+      navigate({ view: 'tournament', tournamentId: ref.id });
+    } catch (err) {
+      console.error(err);
+      toast('Clone failed: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  async function setTournamentPublished(tournamentId, published) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const next = !!published;
+    const ok = next
+      ? confirm('Publish "' + t.name + '"? Signed-in members will be able to see it.')
+      : confirm('Unpublish "' + t.name + '"? Members will no longer see it. Admins and lab users still can.');
+    if (!ok) return;
+    try {
+      await db.collection('tournaments').doc(t.id).update({
+        published: next,
+        publishedAt: next ? new Date().toISOString() : null,
+        publishedBy: next ? ((state.user && (state.user.email || state.user.displayName)) || '') : '',
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
+      if (idx >= 0) {
+        state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { published: next });
+      }
+      toast(next ? 'Tournament published' : 'Tournament unpublished', 'success');
+      render();
+    } catch (err) {
+      console.error(err);
+      toast('Could not update publish state: ' + (err.message || err.code || 'unknown'), 'error');
     }
   }
 
@@ -1807,12 +1939,42 @@
       if (!state.tournaments.some(function (x) { return x.id === ref.id; })) {
         state.tournaments.push(Object.assign({ id: ref.id }, payload));
       }
-      toast('Koinonia 2026 created');
+      toast('Koinonia 2026 created — unpublished until you publish it');
       navigate({ view: 'tournament', tournamentId: ref.id });
     } catch (err) {
       console.error(err);
       toast('Seed failed: ' + (err.message || err.code || 'unknown'), 'error');
     }
+  }
+
+  function renderTournamentPublishBanner(t) {
+    if (!t || isTournamentPublished(t)) return '';
+    if (isAdminUi()) {
+      return `
+      <section class="t-section">
+        <div class="t-card t-access-banner t-publish-banner">
+          <div class="t-card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-weight:700;color:var(--t-fg);">Unpublished</div>
+              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Members cannot see this tournament yet. Publish it when you are ready. Admins and lab users can still open it.</div>
+            </div>
+            <button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', true)">📢 Publish now</button>
+          </div>
+        </div>
+      </section>`;
+    }
+    if (canSeeUnpublishedTournaments()) {
+      return `
+      <section class="t-section">
+        <div class="t-card t-access-banner t-publish-banner">
+          <div class="t-card-body">
+            <div style="font-weight:700;color:var(--t-fg);">Unpublished lab tournament</div>
+            <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Members will not see this until an admin publishes it.</div>
+          </div>
+        </div>
+      </section>`;
+    }
+    return '';
   }
 
   function renderAccessBanner() {
@@ -2103,6 +2265,8 @@
   }
 
   window.__tournament.seedKoinonia = seedKoinonia;
+  window.__tournament.cloneTournament = cloneTournament;
+  window.__tournament.setTournamentPublished = setTournamentPublished;
   window.__tournament.setTournamentOpen = setTournamentOpen;
   window.__tournament.openCaptainPicker = openCaptainPicker;
   window.__tournament.openRoster = openRoster;
@@ -2137,6 +2301,11 @@
       }
       return;
     }
+    if (!canOpenTournament(t)) {
+      toast('This tournament is not published yet', 'error');
+      navigate({ view: 'list' }, { replace: true });
+      return;
+    }
     document.title = t.name + ' — Church Tournament';
 
     // Pick active sport
@@ -2153,13 +2322,14 @@
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:${sport ? sport.color : '#3b82f6'};--hero-b:#1e293b;">
         <div>
-          <h1>${escapeHtml(t.name)} <small style="opacity:.9;font-family:'Outfit',sans-serif;font-weight:500;font-size:.6em;letter-spacing:normal;text-transform:none;">${t.format === 'individual' ? 'Individual / Doubles' : 'Team-based'}</small></h1>
+          <h1>${escapeHtml(t.name)} <small style="opacity:.9;font-family:'Outfit',sans-serif;font-weight:500;font-size:.6em;letter-spacing:normal;text-transform:none;">${t.format === 'individual' ? 'Individual / Doubles' : 'Team-based'}${isTournamentPublished(t) ? '' : ' · Unpublished'}</small></h1>
           <p>${sport ? (sport.emoji || '🏅') + ' ' + escapeHtml(sport.label) + (sport.date ? ' · ' + fmtDate(sport.date) : '') : 'Configure sports for this tournament'}</p>
         </div>
         <div class="t-emoji">${sport ? (sport.emoji || '🏆') : '🏆'}</div>
       </section>
 
       ${renderAccessBanner()}
+      ${renderTournamentPublishBanner(t)}
 
       ${renderRulesCard({
         title: 'Tournament rules',
@@ -2172,6 +2342,10 @@
 
       ${isAdminUi() ? `
       <section class="t-section" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+        <button class="t-btn" type="button" onclick="window.__tournament.cloneTournament('${escapeHtml(t.id)}')">📄 Clone</button>
+        ${isTournamentPublished(t)
+          ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', false)">🙈 Unpublish</button>`
+          : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', true)">📢 Publish</button>`}
         <button class="t-btn" onclick="window.__tournament.navigate({view:'manage',tournamentId:'${t.id}'})">⚙️ Manage tournament</button>
       </section>
       ` : `
@@ -4448,6 +4622,15 @@
     }
 
     ensureTournamentData();
+
+    if ((parsed.view === 'tournament' || parsed.view === 'manage') && parsed.tournamentId && state.ready.tournaments) {
+      const requested = state.tournaments.find(function (x) { return x.id === parsed.tournamentId; });
+      if (requested && !canOpenTournament(requested)) {
+        toast('This tournament is not published yet', 'error');
+        navigate({ view: 'list' }, { replace: true });
+        return;
+      }
+    }
 
     // Non-admin, non-captain users hitting an admin-only URL get bounced to
     // the tournament view (or the list if no tournament is selected).
