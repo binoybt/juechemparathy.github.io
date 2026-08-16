@@ -128,6 +128,8 @@
         }
         .role-badge.admin  { background: #d1fae5; color: #065f46; }
         .role-badge.member { background: #e5e7eb; color: #374151; }
+        .role-badge.labuser { background: #dbeafe; color: #1e40af; margin-left: 6px; }
+        .action-cell { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
         .btn {
             padding: 6px 14px; border-radius: 8px; border: 1px solid #d1d5db;
@@ -190,7 +192,7 @@
     <div id="mainContent" style="display:none;">
         <div class="header-card">
             <h2>All members</h2>
-            <p>Everyone who has signed in is listed here. Grant or revoke admin. FID is stored on the user after they match the parishioner directory. You can't revoke your own admin access.</p>
+            <p>Everyone who has signed in is listed here. Grant or revoke admin, or grant the lab-user role so they can test in-progress features (Tournament now; more later) as regular members. FID is stored after they match the parishioner directory. You can't revoke your own admin access.</p>
         </div>
 
         <div class="import-card">
@@ -215,6 +217,7 @@
                 <button class="filter-btn active" data-filter="all"    onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
                 <button class="filter-btn"        data-filter="admin"  onclick="setFilter('admin')">Admins <span class="count-pill" id="countAdmin">0</span></button>
                 <button class="filter-btn"        data-filter="member" onclick="setFilter('member')">Members <span class="count-pill" id="countMember">0</span></button>
+                <button class="filter-btn"        data-filter="labuser" onclick="setFilter('labuser')">Lab users <span class="count-pill" id="countLabUser">0</span></button>
             </div>
         </div>
 
@@ -239,7 +242,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=11"></script>
+<script src="firebase-config.js?v=13"></script>
 <script>
 let allUsers = [];
 let currentFilter = 'all';
@@ -367,15 +370,18 @@ document.getElementById('searchInput').addEventListener('input', renderAll);
 function renderAll() {
     const q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
     const admins  = allUsers.filter(function (u) { return u.role === 'admin'; }).length;
+    const labUsers = allUsers.filter(function (u) { return u.labUser === true && u.role !== 'admin'; }).length;
     const members = allUsers.length - admins;
     document.getElementById('countAll').textContent    = allUsers.length;
     document.getElementById('countAdmin').textContent  = admins;
     document.getElementById('countMember').textContent = members;
+    document.getElementById('countLabUser').textContent = labUsers;
 
     const filtered = allUsers.filter(function (u) {
         const role = u.role || 'member';
         if (currentFilter === 'admin'  && role !== 'admin')  return false;
         if (currentFilter === 'member' && role === 'admin')  return false;
+        if (currentFilter === 'labuser' && (u.labUser !== true || role === 'admin')) return false;
         if (!q) return true;
         const names = displayNames(u);
         const hay = [names.first, names.last, u.displayName, u.email, u.FID, u.familyId].join(' ').toLowerCase();
@@ -392,12 +398,18 @@ function renderAll() {
     filtered.forEach(function (u) {
         const names = displayNames(u);
         const role = u.role || 'member';
+        const isLab = u.labUser === true;
         const isSelf = currentUser && currentUser.uid === u.__id;
-        const btn = isSelf
+        const adminBtn = isSelf
             ? '<button class="btn self" disabled title="You can\'t change your own role">You</button>'
             : (role === 'admin'
                 ? '<button class="btn danger" data-action="demote">Revoke admin</button>'
                 : '<button class="btn primary" data-action="promote">Grant admin</button>');
+        const labBtn = role === 'admin'
+            ? ''
+            : (isLab
+                ? '<button class="btn danger" data-action="revoke-lab">Revoke lab access</button>'
+                : '<button class="btn" data-action="grant-lab">Grant lab access</button>');
 
         const fid = String(u.FID || u.familyId || '').trim();
         const tr = document.createElement('tr');
@@ -407,17 +419,20 @@ function renderAll() {
             '</td>' +
             '<td>' + esc(names.last || '—') + '</td>' +
             '<td>' + esc(fid || '—') + '</td>' +
-            '<td><span class="role-badge ' + role + '">' + role + '</span></td>' +
-            '<td style="text-align:right;">' + btn + '</td>';
+            '<td><span class="role-badge ' + role + '">' + role + '</span>' +
+                (isLab && role !== 'admin' ? '<span class="role-badge labuser">lab user</span>' : '') +
+            '</td>' +
+            '<td><div class="action-cell">' + adminBtn + labBtn + '</div></td>';
 
-        const actionBtn = tr.querySelector('[data-action]');
-        if (actionBtn) {
+        tr.querySelectorAll('[data-action]').forEach(function (actionBtn) {
             actionBtn.addEventListener('click', function () {
                 const action = actionBtn.getAttribute('data-action');
                 if (action === 'promote') promote(u, actionBtn);
-                else                       demote(u, actionBtn);
+                else if (action === 'demote') demote(u, actionBtn);
+                else if (action === 'grant-lab') grantLabUser(u, actionBtn);
+                else if (action === 'revoke-lab') revokeLabUser(u, actionBtn);
             });
-        }
+        });
         body.appendChild(tr);
     });
 }
@@ -449,6 +464,36 @@ async function demote(u, btn) {
         console.error('demote failed:', err);
         toast('Revoke failed: ' + (err.message || err), 'error');
         btn.disabled = false; btn.textContent = 'Revoke admin';
+    }
+}
+
+async function grantLabUser(u, btn) {
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
+    if (!confirm('Grant lab-user access to ' + label + '? They can test in-progress features (Tournament now, and other lab pages later) as a regular member. They will not get admin tools.')) return;
+    btn.disabled = true; btn.textContent = 'Updating…';
+    try {
+        await SmashAuth.grantLabUser(u.__id);
+        toast(label + ' is now a lab user.');
+    } catch (err) {
+        console.error('grant lab user failed:', err);
+        toast('Could not grant lab access: ' + (err.message || err), 'error');
+        btn.disabled = false; btn.textContent = 'Grant lab access';
+    }
+}
+
+async function revokeLabUser(u, btn) {
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
+    if (!confirm('Revoke lab-user access for ' + label + '? They will lose access to lab features that are not open to everyone.')) return;
+    btn.disabled = true; btn.textContent = 'Updating…';
+    try {
+        await SmashAuth.revokeLabUser(u.__id);
+        toast('Lab access revoked for ' + label + '.');
+    } catch (err) {
+        console.error('revoke lab user failed:', err);
+        toast('Could not revoke lab access: ' + (err.message || err), 'error');
+        btn.disabled = false; btn.textContent = 'Revoke lab access';
     }
 }
 
