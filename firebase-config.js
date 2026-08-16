@@ -55,7 +55,9 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //   6. shows a small admin banner if there are pending reviews
 //   7. tracks Tournament page visibility (admin-only vs everyone) via
 //      siteConfig/tournament.openToEveryone and hides .js-tournament-nav
-//      links until an admin opens it
+//      links until an admin opens it. Admins can also grant
+//      users/{uid}.tournamentTester so a few members can test the
+//      non-admin Tournament view while it is still closed.
 //
 // FIRESTORE RULES (paste into your rules editor):
 //
@@ -78,12 +80,12 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //       match /users/{uid} {
 //         allow read:   if isSignedIn();
 //         allow create: if isSignedIn() && request.auth.uid == uid;
-//         // A user can update their own doc but cannot touch the role field.
-//         // Admins can change anything on any doc.
+//         // A user can update their own doc but cannot touch role or
+//         // tournamentTester. Admins can change anything on any doc.
 //         allow update: if isSignedIn() && (
 //                         (request.auth.uid == uid &&
 //                          !request.resource.data.diff(resource.data)
-//                             .affectedKeys().hasAny(['role'])) ||
+//                             .affectedKeys().hasAny(['role','tournamentTester'])) ||
 //                         isAdmin()
 //                       );
 //         allow delete: if isAdmin();
@@ -154,9 +156,9 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
   // ── SmashAuth (role-aware auth state exposed to every page) ───────────
   // Shape passed to onChange listeners:
-  //   { user: User|null, role: 'admin'|'member'|null, isAdmin: bool, loading: bool }
+  //   { user, role, isAdmin, isTournamentTester, loading }
   // Pages should treat loading=true as "unknown yet, don't render admin UI".
-  const state = { user: null, role: null, isAdmin: false, loading: true };
+  const state = { user: null, role: null, isAdmin: false, isTournamentTester: false, loading: true };
   const listeners = [];
   let userDocUnsub = null;
 
@@ -170,6 +172,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   function setState(patch) {
     Object.assign(state, patch);
     state.isAdmin = (state.role === 'admin');
+    state.isTournamentTester = !!state.isTournamentTester;
     notify();
   }
 
@@ -177,10 +180,14 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     if (userDocUnsub) { try { userDocUnsub(); } catch (_) {} userDocUnsub = null; }
     userDocUnsub = db.collection('users').doc(uid).onSnapshot(function (snap) {
       const d = snap.exists ? (snap.data() || {}) : {};
-      setState({ role: d.role || 'member', loading: false });
+      setState({
+        role: d.role || 'member',
+        isTournamentTester: d.tournamentTester === true,
+        loading: false
+      });
     }, function (err) {
       console.warn('[SmashAuth] users/' + uid + ' snapshot failed:', err);
-      setState({ role: null, loading: false });
+      setState({ role: null, isTournamentTester: false, loading: false });
     });
   }
 
@@ -190,6 +197,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     get currentRole()  { return state.role;  },
     /** Convenience: SmashAuth.isAdmin() */
     isAdmin: function () { return state.isAdmin; },
+    /** Member allowed to open Tournament while it is still admin-only. */
+    isTournamentTester: function () { return !!state.isTournamentTester; },
     /** Convenience: SmashAuth.isSignedIn() */
     isSignedIn: function () { return !!state.user; },
     /** True until the users/{uid} role snapshot has resolved. */
@@ -225,6 +234,24 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
         roleSetAt: FV.serverTimestamp(),
         roleSetBy: (state.user && state.user.email) || 'unknown'
       }, { merge: true });
+    },
+    /** Admin action: let a member open Tournament as a non-admin tester. */
+    grantTournamentTester: async function (uid) {
+      if (!state.isAdmin) throw new Error('Only admins can grant tester access.');
+      await db.collection('users').doc(uid).set({
+        tournamentTester: true,
+        tournamentTesterSetAt: FV.serverTimestamp(),
+        tournamentTesterSetBy: (state.user && state.user.email) || 'unknown'
+      }, { merge: true });
+    },
+    /** Admin action: remove Tournament tester access. */
+    revokeTournamentTester: async function (uid) {
+      if (!state.isAdmin) throw new Error('Only admins can revoke tester access.');
+      await db.collection('users').doc(uid).set({
+        tournamentTester: false,
+        tournamentTesterSetAt: FV.serverTimestamp(),
+        tournamentTesterSetBy: (state.user && state.user.email) || 'unknown'
+      }, { merge: true });
     }
   };
 
@@ -233,8 +260,9 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   //   collection "siteConfig"  (a settings folder; unused for other pages)
   //   document   "tournament"  (one field: openToEveryone true/false)
   // Default is admin-only. A missing doc, a failed read, or
-  // openToEveryone !== true all keep Tournament private. Admins flip the
-  // flag from the banner on tournament.html.
+  // openToEveryone !== true all keep Tournament private except for
+  // members with users/{uid}.tournamentTester === true. Admins flip the
+  // everyone flag from the banner on tournament.html.
   const tournamentAccess = {
     openToEveryone: false,
     loaded: false,
@@ -242,8 +270,15 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     unsub: null
   };
 
+  function currentUserCanSeeTournament() {
+    if (window.SmashAuth && SmashAuth.isAdmin()) return true;
+    if (tournamentAccess.openToEveryone) return true;
+    if (window.SmashAuth && SmashAuth.isTournamentTester()) return true;
+    return false;
+  }
+
   function applyTournamentNavVisibility() {
-    const show = !!(window.SmashAuth && SmashAuth.isAdmin()) || tournamentAccess.openToEveryone;
+    const show = currentUserCanSeeTournament();
     document.querySelectorAll('.js-tournament-nav').forEach(function (el) {
       el.hidden = !show;
     });
@@ -281,7 +316,11 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   window.TournamentAccess = {
     isOpenToEveryone: function () { return tournamentAccess.openToEveryone; },
     isLoaded: function () { return tournamentAccess.loaded; },
-    canSeeNav: function (isAdmin) { return !!isAdmin || tournamentAccess.openToEveryone; },
+    canSeeNav: function (isAdmin) {
+      if (isAdmin || tournamentAccess.openToEveryone) return true;
+      return !!(window.SmashAuth && SmashAuth.isTournamentTester());
+    },
+    canCurrentUserAccess: function () { return currentUserCanSeeTournament(); },
     onChange: function (fn) {
       if (typeof fn !== 'function') return function () {};
       tournamentAccess.listeners.push(fn);
@@ -1066,7 +1105,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   auth.onAuthStateChanged(async function (user) {
     if (!user) {
       if (userDocUnsub) { try { userDocUnsub(); } catch (_) {} userDocUnsub = null; }
-      setState({ user: null, role: null, loading: false });
+      setState({ user: null, role: null, isTournamentTester: false, loading: false });
       hideOnboardingModal();
       stopAdminBanner();
       return;
@@ -1074,7 +1113,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
     // Publish the user immediately so pages can start rendering; role
     // arrives shortly after via the users doc snapshot.
-    setState({ user: user, role: null, loading: true });
+    setState({ user: user, role: null, isTournamentTester: false, loading: true });
 
     await mirrorUserProfileAndBootstrapRole(user);
     subscribeToUserDoc(user.uid);

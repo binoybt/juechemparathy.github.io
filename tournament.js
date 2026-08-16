@@ -24,7 +24,8 @@
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
- *     missing/false → admin testing only; true → all signed-in members
+ *     missing/false → admin testing only (plus users with tournamentTester);
+ *     true → all signed-in members
  *
  *   tournament_matches/{docId}
  *     tournamentId  string
@@ -399,6 +400,7 @@
   const state = {
     user: null,
     isAdmin: false,
+    isTournamentTester: false,
     authLoading: true,
     tournaments: [],       // all tournaments (subscribed once)
     matches: [],           // matches for the current tournament only
@@ -445,13 +447,17 @@
     return !!(window.TournamentAccess && TournamentAccess.isOpenToEveryone());
   }
 
+  function isTournamentTester() {
+    return !!state.isTournamentTester;
+  }
+
   function canUseTournamentPage() {
     if (!state.user) return false;
-    return !!(state.isAdmin || tournamentOpenToEveryone());
+    return !!(state.isAdmin || tournamentOpenToEveryone() || isTournamentTester());
   }
 
   function tournamentAccessPending() {
-    if (state.isAdmin || tournamentOpenToEveryone()) return false;
+    if (state.isAdmin || tournamentOpenToEveryone() || isTournamentTester()) return false;
     if (state.authLoading) return true;
     if (window.TournamentAccess && !TournamentAccess.isLoaded()) return true;
     return false;
@@ -1765,9 +1771,16 @@
           <div class="t-card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
             <div>
               <div style="font-weight:700;color:var(--t-fg);">Admin testing only</div>
-              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Members cannot see Tournament in the nav and cannot open this page. Open it to everyone when you are ready.</div>
+              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">${(function () {
+                const n = (state.users || []).filter(function (u) { return u.tournamentTester && u.role !== 'admin'; }).length;
+                return (n ? n + ' tester' + (n === 1 ? '' : 's') + ' can open this page as members. ' : '')
+                  + 'Add testers from Members &amp; Admins. Testers see the member view (no admin tools). Open it to everyone when you are ready.';
+              })()}</div>
             </div>
-            <button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentOpen(true)">Open to everyone</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <a class="t-btn" href="admin-users.html">Manage testers</a>
+              <button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentOpen(true)">Open to everyone</button>
+            </div>
           </div>
         </div>
       </section>`;
@@ -4298,7 +4311,9 @@
           lastNameLower: (d.lastNameLower || d.lastName || '').toLowerCase(),
           familyId: d.familyId != null ? String(d.familyId) : '',
           memberId: d.memberId != null ? String(d.memberId) : '',
-          photoURL: d.photoURL || ''
+          photoURL: d.photoURL || '',
+          role: d.role || 'member',
+          tournamentTester: d.tournamentTester === true
         });
       });
       state.users.sort(function (a, b) {
@@ -4502,9 +4517,13 @@
     if (window.SmashAuth) {
       SmashAuth.onChange(function (s) {
         const nextAdmin = !!(s.user && s.isAdmin);
+        const nextTester = !!(s.user && s.isTournamentTester);
         const nextLoading = !!s.loading;
-        const changed = state.isAdmin !== nextAdmin || state.authLoading !== nextLoading;
+        const changed = state.isAdmin !== nextAdmin
+          || state.isTournamentTester !== nextTester
+          || state.authLoading !== nextLoading;
         state.isAdmin = nextAdmin;
+        state.isTournamentTester = nextTester;
         state.authLoading = nextLoading;
         if (changed) render();
       });
