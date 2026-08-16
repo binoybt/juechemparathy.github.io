@@ -1240,17 +1240,6 @@
         </div>
       </section>
       ` : ''}
-
-      ${state.user && !isAdminUi() && !canSeeUnpublishedTournaments() ? `
-      <section class="t-section">
-        <div class="t-card" style="border-color:var(--t-danger);background:#fef2f2;">
-          <div class="t-card-body">
-            <div style="font-weight:700;color:var(--t-fg);">Signed in as ${escapeHtml(state.user.email || '')}</div>
-            <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">This account isn't on the admin list. You can view published tournaments and live scores.</div>
-          </div>
-        </div>
-      </section>
-      ` : ''}
     `;
 
     const grid = document.getElementById('tTournamentGrid');
