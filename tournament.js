@@ -607,7 +607,7 @@
   // Used in the "Roster hidden" placeholder on the team card.
   function whyCantView(tournament, team) {
     if (!state.user) return 'Sign in to view rosters.';
-    const cap = team && (team.captainName || team.captainEmail);
+    const cap = toCamelCase(team && (team.captainName || team.captainEmail));
     if (isRosterLocked(team) && !tournament.revealLockedRosters) {
       return 'Locked. Only team members, ' + (cap ? 'Captain ' + cap : 'the team captain') + ', or an admin can view.';
     }
@@ -1014,23 +1014,52 @@
     return { a: match.playerA || '', b: match.playerB || '' };
   }
 
+  function toCamelCase(name) {
+    const s = String(name == null ? '' : name).trim();
+    if (!s) return '';
+    if (s.indexOf('@') !== -1) return s;
+    return s.toLowerCase().split(/\s+/).map(function (word) {
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    }).join(' ');
+  }
+
+  function formatCaptainHtml(raw) {
+    const text = toCamelCase(raw) || '(captain)';
+    return '<b class="t-captain-name">' + escapeHtml(text) + '</b>';
+  }
+
+  // Public team label: ward name when set, otherwise G1 / team id.
+  function teamPublicName(team) {
+    if (!team) return '—';
+    const wards = String(team.wards || '').trim();
+    if (wards) return wards;
+    return String(team.name || team.id || '—').trim() || '—';
+  }
+
   function displayName(tournament, sportId, id) {
     if (!tournament || tournament.format !== 'teams') return id || '—';
     const teams = teamsFor(tournament, sportId);
     const t = teams.find(function (x) { return x.id === id; });
-    return t ? t.name : (id || '—');
+    return t ? teamPublicName(t) : (id || '—');
   }
 
   function teamMeta(tournament, sportId, id) {
-    if (!tournament) return { name: id || '—', wards: '', color: 'var(--t-muted)' };
+    if (!tournament) return { name: id || '—', id: id || '', wards: '', color: 'var(--t-muted)' };
     if (tournament.format !== 'teams') {
-      return { name: id || '—', wards: '', color: TEAM_COLORS[Math.abs(hashCode(id || '')) % TEAM_COLORS.length] };
+      return { name: id || '—', id: id || '', wards: '', color: TEAM_COLORS[Math.abs(hashCode(id || '')) % TEAM_COLORS.length] };
     }
     const teams = teamsFor(tournament, sportId);
     const idx = teams.findIndex(function (x) { return x.id === id; });
     const t = teams[idx];
-    if (!t) return { name: id || '—', wards: '', color: 'var(--t-muted)' };
-    return { name: t.name, wards: t.wards || '', color: TEAM_COLORS[idx % TEAM_COLORS.length] };
+    if (!t) return { name: id || '—', id: id || '', wards: '', color: 'var(--t-muted)' };
+    const publicName = teamPublicName(t);
+    const wards = String(t.wards || '').trim();
+    return {
+      name: publicName,
+      id: t.id || id || '',
+      wards: wards && wards !== publicName ? wards : '',
+      color: TEAM_COLORS[idx % TEAM_COLORS.length]
+    };
   }
 
   function hashCode(s) {
@@ -1409,7 +1438,7 @@
       const rosterCount = Array.isArray(t.roster) ? t.roster.length : 0;
       const capAssigned = t.captainUid || t.captainName || t.captainEmail;
       const captainLabel = capAssigned
-        ? '👤 ' + escapeHtml(t.captainName || t.captainEmail || '(assigned)')
+        ? '👤 ' + formatCaptainHtml(t.captainName || t.captainEmail || '(assigned)')
           + (t.captainUid ? '' : ' <span class="t-badge nologin" style="font-size:.62rem;">no login</span>')
         : '<span style="color:var(--t-muted);">No captain</span>';
       row.innerHTML = `
@@ -2263,7 +2292,7 @@
       const meta = teamMeta(tournament, sport.id, team.id);
       const captainAssigned = team.captainUid || team.captainName || team.captainEmail;
       const captainName = captainAssigned
-        ? escapeHtml(team.captainName || team.captainEmail || '(captain)')
+        ? formatCaptainHtml(team.captainName || team.captainEmail || '(captain)')
           + (team.captainUid
               ? ''
               : ' <span class="t-badge nologin" style="margin-left:4px;font-size:.65rem;">no login yet</span>')
@@ -2285,8 +2314,8 @@
             <div class="t-roster-team">
               <span class="t-roster-dot" style="background:${meta.color || '#3b82f6'};"></span>
               <div>
-                <div class="t-roster-name">${escapeHtml(team.name || team.id)}${isMine ? ' <span class="t-badge you">Your team</span>' : ''} ${lockChip}</div>
-                <div class="t-roster-sub">${escapeHtml(team.wards || '')}</div>
+                <div class="t-roster-name">${escapeHtml(teamPublicName(team))}${isMine ? ' <span class="t-badge you">Your team</span>' : ''} ${lockChip}</div>
+                ${team.id && teamPublicName(team) !== team.id ? '<div class="t-roster-sub">' + escapeHtml(team.id) + '</div>' : ''}
               </div>
             </div>
             ${canManage ? `<button class="t-btn sm" onclick="window.__tournament.openCaptainPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">${captainAssigned ? 'Change captain' : 'Assign captain'}</button>` : ''}
@@ -2447,7 +2476,7 @@
       </div>
       <div class="t-match-body">
         <div class="t-match-team ${aWin ? 'winner' : ''}">
-          <span class="avatar" style="--team-color:${aMeta.color}">${escapeHtml((aMeta.name || 'A').slice(0, 2).toUpperCase())}</span>
+          <span class="avatar" style="--team-color:${aMeta.color}">${escapeHtml((aMeta.id || aMeta.name || 'A').slice(0, 2).toUpperCase())}</span>
           <div class="info">
             <div class="name">${escapeHtml(aMeta.name)}</div>
             ${aMeta.wards ? '<div class="wards">' + escapeHtml(aMeta.wards) + '</div>' : ''}
@@ -2459,7 +2488,7 @@
             <div class="name">${escapeHtml(bMeta.name)}</div>
             ${bMeta.wards ? '<div class="wards">' + escapeHtml(bMeta.wards) + '</div>' : ''}
           </div>
-          <span class="avatar" style="--team-color:${bMeta.color}">${escapeHtml((bMeta.name || 'B').slice(0, 2).toUpperCase())}</span>
+          <span class="avatar" style="--team-color:${bMeta.color}">${escapeHtml((bMeta.id || bMeta.name || 'B').slice(0, 2).toUpperCase())}</span>
         </div>
       </div>
     `;
@@ -2756,9 +2785,10 @@
     if (tournament.format === 'teams') {
       const teams = teamsFor(tournament, sport);
       const opts = ['<option value="">Select team…</option>'].concat(teams.map(function (tm) {
+        const label = teamPublicName(tm);
+        const extra = (tm.id && label !== tm.id) ? ' (' + tm.id + ')' : '';
         return '<option value="' + escapeHtml(tm.id) + '"' + (tm.id === selected ? ' selected' : '') + '>'
-          + escapeHtml(tm.name || tm.id)
-          + (tm.wards ? ' — ' + escapeHtml(tm.wards) : '')
+          + escapeHtml(label) + escapeHtml(extra)
           + '</option>';
       }));
       return '<select class="t-select" data-f="' + field + '">' + opts.join('') + '</select>';
@@ -3263,7 +3293,7 @@
     const sport = t ? getSportConfig(t, ctx.sportId) : null;
     const teams = sport ? (sport.teams || []) : [];
     const team = teams.find(function (x) { return x.id === ctx.teamId; });
-    const teamLabel = team ? (team.name || team.id) : ctx.teamId;
+    const teamLabel = team ? teamPublicName(team) : ctx.teamId;
     const sportLabel = sport ? ((sport.emoji || '') + ' ' + sport.label) : ctx.sportId;
 
     const { modal, body } = getOrCreateModal('tCaptainPicker', 'Assign captain — ' + sportLabel + ' · ' + teamLabel, { wide: false });
@@ -3271,7 +3301,7 @@
       ? `<div class="t-captain-current">
            <div>
              <div class="lbl">Current captain</div>
-             <div class="val">👤 ${escapeHtml(team.captainName || team.captainEmail || team.captainUid)}</div>
+             <div class="val">👤 ${formatCaptainHtml(team.captainName || team.captainEmail || team.captainUid)}</div>
              <div class="sub">
                ${team.captainEmail ? escapeHtml(team.captainEmail) : ''}
                ${team.captainEmail && team.captainFamilyId ? ' · ' : ''}
@@ -3523,7 +3553,7 @@
         console.warn('[tournament] verify read failed (write may still be OK):', verifyErr);
       }
       const wroteWhat = person
-        ? (captainPatch.captainName || captainPatch.captainEmail || '(assigned)')
+        ? (toCamelCase(captainPatch.captainName || captainPatch.captainEmail) || '(assigned)')
         : 'removed';
       if (serverTeam) {
         const okUid   = (captainPatch.captainUid   || null) === (serverTeam.captainUid   || null);
@@ -3599,12 +3629,12 @@
       return ((a.firstName || '') + (a.lastName || '')).localeCompare((b.firstName || '') + (b.lastName || ''));
     });
 
-    const title = (sport.emoji || '🏅') + ' ' + (sport.label || sport.id) + ' — ' + (team.name || team.id) + ' roster';
+    const title = (sport.emoji || '🏅') + ' ' + (sport.label || sport.id) + ' — ' + teamPublicName(team) + ' roster';
     const { modal, body } = getOrCreateModal('tRoster', title, { wide: true });
 
     const captainAssigned = team.captainUid || team.captainName || team.captainEmail;
     const captainLine = captainAssigned
-      ? '👤 Captain: <b>' + escapeHtml(team.captainName || team.captainEmail || '') + '</b>'
+      ? '👤 Captain: ' + formatCaptainHtml(team.captainName || team.captainEmail || '')
         + (team.captainFamilyId ? ' <small style="color:var(--t-muted);">· FID ' + escapeHtml(team.captainFamilyId) + '</small>' : '')
         + (team.captainUid ? '' : ' <span class="t-badge nologin">no login yet</span>')
       : '<span style="color:var(--t-muted);">No captain assigned yet.</span>';
@@ -3703,7 +3733,7 @@
       return 'This roster is locked. Only an admin can unlock it.';
     }
     if (!isCaptainOf(team)) {
-      const cap = team && (team.captainName || team.captainEmail);
+      const cap = toCamelCase(team && (team.captainName || team.captainEmail));
       return cap
         ? 'Only Captain ' + cap + ' or an admin can edit this team\'s roster.'
         : 'Only the team captain or an admin can edit this roster.';
@@ -3738,7 +3768,7 @@
 
     const { modal, body } = getOrCreateModal(
       'tMemberPicker',
-      'Add member — ' + (sport.label || sport.id) + ' · ' + (team.name || team.id),
+      'Add member — ' + (sport.label || sport.id) + ' · ' + teamPublicName(team),
       { wide: true }
     );
 
