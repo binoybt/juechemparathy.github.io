@@ -91,6 +91,55 @@ body.tournament {
 }
 .t-user-chip .dot { width: 7px; height: 7px; border-radius: 50%; background: #10b981; }
 
+.t-admin-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, .45);
+  background: rgba(251, 191, 36, .12);
+  color: #fde68a;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+.t-admin-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.t-admin-switch-ui {
+  width: 32px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.2);
+  position: relative;
+  flex-shrink: 0;
+}
+.t-admin-switch-ui::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform .15s ease;
+}
+.t-admin-switch input:checked + .t-admin-switch-ui { background: #fbbf24; }
+.t-admin-switch input:checked + .t-admin-switch-ui::after { transform: translateX(14px); }
+.t-admin-switch-label { white-space: nowrap; }
+body.t-member-preview .t-admin-switch {
+  border-color: rgba(148, 163, 184, .45);
+  background: rgba(148, 163, 184, .14);
+  color: #e2e8f0;
+}
+
 .t-access-banner { border-color: var(--t-warning) !important; background: #fffbeb; }
 .t-access-banner-open { border-color: var(--t-success) !important; background: #ecfdf5; }
 

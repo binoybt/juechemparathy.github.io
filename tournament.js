@@ -401,6 +401,7 @@
     user: null,
     isAdmin: false,
     isLabUser: false,
+    adminUi: true,
     authLoading: true,
     tournaments: [],       // all tournaments (subscribed once)
     matches: [],           // matches for the current tournament only
@@ -437,11 +438,34 @@
   // the captain of a specific team can edit that team's roster.
   function currentUid() { return state.user ? state.user.uid : null; }
 
-  function canEditTournamentConfig() { return state.isAdmin; }
+  const ADMIN_UI_KEY = 'smash.tournament.adminUi';
 
-  function canManageCaptains() { return state.isAdmin; }
+  function readAdminUiPref() {
+    try {
+      const v = localStorage.getItem(ADMIN_UI_KEY);
+      if (v === '0' || v === 'false') return false;
+    } catch (_) {}
+    return true;
+  }
 
-  function canEditSchedule() { return state.isAdmin; }
+  // Real admin role (from Firestore). Lab users never have this.
+  function isRealAdmin() { return !!state.isAdmin; }
+
+  // Admin tools in the UI. Admins can turn this off to preview the member view.
+  function isAdminUi() { return !!(state.isAdmin && state.adminUi); }
+
+  function setAdminUi(on) {
+    if (!state.isAdmin) return;
+    state.adminUi = !!on;
+    try { localStorage.setItem(ADMIN_UI_KEY, state.adminUi ? '1' : '0'); } catch (_) {}
+    render();
+  }
+
+  function canEditTournamentConfig() { return isAdminUi(); }
+
+  function canManageCaptains() { return isAdminUi(); }
+
+  function canEditSchedule() { return isAdminUi(); }
 
   function tournamentOpenToEveryone() {
     return !!(window.TournamentAccess && TournamentAccess.isOpenToEveryone());
@@ -555,11 +579,11 @@
   }
 
   // Only admins can toggle the lock. Once locked, no captain can edit.
-  function canLockRoster()      { return state.isAdmin; }
+  function canLockRoster()      { return isAdminUi(); }
 
   // Edit permissions: admin any time; captain only when unlocked.
   function canEditRoster(team) {
-    if (state.isAdmin) return true;
+    if (isAdminUi()) return true;
     if (isRosterLocked(team)) return false;
     return isCaptainOf(team);
   }
@@ -572,7 +596,7 @@
   //                          opted in via revealLockedRosters
   function canViewRoster(tournament, team) {
     if (!state.user) return false;
-    if (state.isAdmin) return true;
+    if (isAdminUi()) return true;
     if (isCaptainOf(team)) return true;
     if (isRosterMemberOf(team)) return true;
     if (isRosterLocked(team) && tournament && tournament.revealLockedRosters) return true;
@@ -1068,6 +1092,8 @@
   function renderTopbar() {
     const bar = document.getElementById('tTopbar');
     if (!bar) return;
+    document.body.classList.toggle('t-admin-ui-on', isAdminUi());
+    document.body.classList.toggle('t-member-preview', isRealAdmin() && !state.adminUi);
     const tournament = currentTournament();
     const homeCrumb = `<a href="tournament.html" class="t-nav-btn" onclick="event.preventDefault();window.__tournament.navigate({view:'list'});">🏆 <span class="hide-sm">All Tournaments</span></a>`;
     const currentCrumb = tournament ? `<span class="t-nav-btn" style="cursor:default;">${escapeHtml(tournament.name)}</span>` : '';
@@ -1082,7 +1108,14 @@
         ${homeCrumb}
         ${currentCrumb}
         <a href="index.html" class="t-nav-btn" title="Back to SMASH">← <span class="hide-sm">SMASH</span></a>
-        ${state.isAdmin ? '<a href="admin-users.html" class="t-nav-btn" title="Members &amp; Admins">👥 <span class="hide-sm">Members</span></a>' : ''}
+        ${isAdminUi() ? '<a href="admin-users.html" class="t-nav-btn" title="Members &amp; Admins">👥 <span class="hide-sm">Members</span></a>' : ''}
+        ${isRealAdmin() ? `
+          <label class="t-admin-switch" title="Turn on to see admin tools. Turn off to preview the member view.">
+            <input type="checkbox" ${state.adminUi ? 'checked' : ''} onchange="window.__tournament.setAdminUi(this.checked)" />
+            <span class="t-admin-switch-ui"></span>
+            <span class="t-admin-switch-label">${state.adminUi ? 'Admin controls' : 'Member view'}</span>
+          </label>
+        ` : ''}
         <div id="tUserBox"></div>
       </div>
     `;
@@ -1095,7 +1128,7 @@
     if (!state.user) {
       box.innerHTML = `<button class="t-nav-btn" onclick="window.__tournament.signIn()">Sign in</button>`;
     } else {
-      const label = state.isAdmin ? 'Admin' : (state.user.displayName || state.user.email || 'You');
+      const label = isAdminUi() ? 'Admin' : (state.user.displayName || state.user.email || 'You');
       box.innerHTML = `
         <span class="t-user-chip"><span class="dot"></span>${escapeHtml(label)}</span>
         <button class="t-nav-btn" onclick="window.__tournament.signOut()">Sign out</button>
@@ -1114,7 +1147,7 @@
       if (a.archived !== b.archived) return a.archived ? 1 : -1;
       return (b.createdAt && b.createdAt.seconds || 0) - (a.createdAt && a.createdAt.seconds || 0);
     });
-    const canCreate = state.isAdmin;
+    const canCreate = isAdminUi();
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
         <div>
@@ -1148,7 +1181,7 @@
       </section>
       ` : ''}
 
-      ${state.user && !state.isAdmin ? `
+      ${state.user && !isAdminUi() ? `
       <section class="t-section">
         <div class="t-card" style="border-color:var(--t-danger);background:#fef2f2;">
           <div class="t-card-body">
@@ -1203,7 +1236,7 @@
           <span><b>${(t.sports || []).length}</b> sports</span>
           ${t.format === 'teams' ? `<span>up to <b>${maxTeams}</b> teams</span>` : ''}
         </div>
-        ${state.isAdmin ? `
+        ${isAdminUi() ? `
           <div class="t-card-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--t-border);">
             <button class="t-btn sm" data-act="open">🔎 Open</button>
             <button class="t-btn sm" data-act="manage">⚙️ Manage</button>
@@ -1255,7 +1288,7 @@
   const scheduleEditByKey = {};
 
   function renderCreateOrManage(mode) {
-    if (!state.isAdmin) {
+    if (!isAdminUi()) {
       renderAdminGate();
       return;
     }
@@ -1731,7 +1764,7 @@
   }
 
   async function seedKoinonia() {
-    if (!state.isAdmin) return toast('Admin only', 'error');
+    if (!isAdminUi()) return toast('Admin only', 'error');
     try {
       const payload = koinoniaSeed();
       payload.createdAt = FieldValue.serverTimestamp();
@@ -1754,7 +1787,7 @@
   }
 
   function renderAccessBanner() {
-    if (!state.isAdmin) return '';
+    if (!isAdminUi()) return '';
     if (tournamentOpenToEveryone()) {
       return `
       <section class="t-section">
@@ -1791,7 +1824,7 @@
   }
 
   function setTournamentOpen(open) {
-    if (!state.isAdmin) return toast('Admin only', 'error');
+    if (!isAdminUi()) return toast('Admin only', 'error');
     if (!window.TournamentAccess) return toast('Visibility setting is unavailable', 'error');
     const next = !!open;
     const ok = next
@@ -1958,11 +1991,11 @@
 
   function renderRulesCard(opts) {
     const text = opts.text || '';
-    if (!state.isAdmin && !String(text).trim()) return '';
+    if (!isAdminUi() && !String(text).trim()) return '';
     const title = escapeHtml(opts.title || 'Rules');
     const subtitle = escapeHtml(opts.subtitle || '');
     const editorId = escapeHtml(opts.textareaId);
-    if (state.isAdmin) {
+    if (isAdminUi()) {
       return `
       <section class="t-section">
         <div class="t-section-header">
@@ -1986,7 +2019,7 @@
   }
 
   async function saveTournamentRules(tournamentId) {
-    if (!state.isAdmin) return toast('Admin only', 'error');
+    if (!isAdminUi()) return toast('Admin only', 'error');
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
     const rules = {
@@ -2009,7 +2042,7 @@
   }
 
   async function saveSportRules(tournamentId, sportId) {
-    if (!state.isAdmin) return toast('Admin only', 'error');
+    if (!isAdminUi()) return toast('Admin only', 'error');
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
     const rules = {
@@ -2024,7 +2057,7 @@
   }
 
   async function saveMaxRosterSize(tournamentId, sportId) {
-    if (!state.isAdmin) return toast('Admin only', 'error');
+    if (!isAdminUi()) return toast('Admin only', 'error');
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
     const sport = getSportConfig(t, sportId);
@@ -2056,6 +2089,7 @@
   window.__tournament.saveSportRules = saveSportRules;
   window.__tournament.saveMaxRosterSize = saveMaxRosterSize;
   window.__tournament.formatRules = formatRules;
+  window.__tournament.setAdminUi = setAdminUi;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TOURNAMENT VIEW
@@ -2107,7 +2141,7 @@
         saveCall: "saveTournamentRules('" + t.id + "')"
       })}
 
-      ${state.isAdmin ? `
+      ${isAdminUi() ? `
       <section class="t-section" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="t-btn" onclick="window.__tournament.navigate({view:'manage',tournamentId:'${t.id}'})">⚙️ Manage tournament</button>
       </section>
@@ -2131,7 +2165,7 @@
         <section class="t-section">
           <div class="t-empty">
             No sports have been added to this tournament yet.
-            ${state.isAdmin ? '<div style="margin-top:12px;"><button class="t-btn primary" onclick="window.__tournament.navigate({view:\'manage\',tournamentId:\'' + t.id + '\'})">⚙️ Manage tournament</button></div>' : ''}
+            ${isAdminUi() ? '<div style="margin-top:12px;"><button class="t-btn primary" onclick="window.__tournament.navigate({view:\'manage\',tournamentId:\'' + t.id + '\'})">⚙️ Manage tournament</button></div>' : ''}
           </div>
         </section>
       `}
@@ -2141,7 +2175,7 @@
         <section class="t-section" id="tRostersSection">
           <div class="t-section-header">
             <h2 class="t-section-title">Team rosters <small>captains &amp; members${maxRosterSize(sport) ? ' · max ' + maxRosterSize(sport) + ' per team' : ''}</small></h2>
-            ${state.isAdmin ? `
+            ${isAdminUi() ? `
               <div class="t-roster-cap">
                 <label for="tMaxRosterSize">Max per team</label>
                 <input type="number" min="0" class="t-input sm" id="tMaxRosterSize" placeholder="No limit" value="${maxRosterSize(sport) || ''}" onkeydown="if(event.key==='Enter'){event.preventDefault();window.__tournament.saveMaxRosterSize('${t.id}','${sport.id}');}" />
@@ -2195,7 +2229,7 @@
           <div class="t-bracket" id="tPlayoffs"></div>
         </section>
 
-        ${state.isAdmin ? `
+        ${isAdminUi() ? `
           <section class="t-section">
             <div class="t-section-header"><h2 class="t-section-title">Admin controls <small>score entry</small></h2></div>
             <div class="t-card">
@@ -2238,7 +2272,7 @@
       const atCap = isRosterAtCap(sport, team);
       const overCap = maxRosterSize(sport) > 0 && rosterCount > maxRosterSize(sport);
       const isMine = isCaptainOf(team) || isRosterMemberOf(team);
-      const canManage = state.isAdmin;
+      const canManage = isAdminUi();
       const locked = isRosterLocked(team);
       const canView = canViewRoster(tournament, team);
       const canEdit = canEditRoster(team);
@@ -2319,7 +2353,7 @@
     const published = scheduleIsPublished(sport);
     return state.matches.filter(function (m) {
       if (m.sport !== sportId) return false;
-      if (state.isAdmin) return true;
+      if (isAdminUi()) return true;
       if (m.fromSchedule || m.scheduleEntryId) return published;
       return true;
     });
@@ -2348,7 +2382,7 @@
       card.innerHTML = `<div class="t-card-header"><h3>${escapeHtml(title)}</h3></div><div class="t-card-body"></div>`;
       const body = card.querySelector('.t-card-body');
       if (!items.length) body.innerHTML = '<p class="t-empty" style="padding:12px;">Not scheduled yet.</p>';
-      items.forEach(function (m) { body.appendChild(matchWithActions(m, tournament, { canEdit: state.isAdmin })); });
+      items.forEach(function (m) { body.appendChild(matchWithActions(m, tournament, { canEdit: isAdminUi() })); });
       return card;
     };
     const sportCfg = getSportConfig(tournament, sportId);
@@ -2387,7 +2421,7 @@
     if (!matches.length) { sec.style.display = 'none'; return; }
     sec.style.display = '';
     list.innerHTML = '';
-    matches.forEach(function (m) { list.appendChild(matchWithActions(m, tournament, Object.assign({ canEdit: state.isAdmin }, opts || {}))); });
+    matches.forEach(function (m) { list.appendChild(matchWithActions(m, tournament, Object.assign({ canEdit: isAdminUi() }, opts || {}))); });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -3664,7 +3698,7 @@
   // edit the roster right now. Used by every edit entry point so admins and
   // captains see the actual reason instead of a generic "denied" toast.
   function whyCantEdit(team) {
-    if (state.isAdmin) return null; // admin always can
+    if (isAdminUi()) return null; // admin tools on: always can
     if (isRosterLocked(team)) {
       return 'This roster is locked. Only an admin can unlock it.';
     }
@@ -4387,11 +4421,11 @@
 
     // Non-admin, non-captain users hitting an admin-only URL get bounced to
     // the tournament view (or the list if no tournament is selected).
-    if (parsed.view === 'create' && !state.isAdmin) {
+    if (parsed.view === 'create' && !isAdminUi()) {
       navigate({ view: 'list' }, { replace: true });
       return;
     }
-    if (parsed.view === 'manage' && !state.isAdmin) {
+    if (parsed.view === 'manage' && !isAdminUi()) {
       navigate({ view: 'tournament', tournamentId: parsed.tournamentId }, { replace: true });
       return;
     }
@@ -4483,6 +4517,7 @@
   }
 
   function init() {
+    state.adminUi = readAdminUiPref();
     render();
     auth.onAuthStateChanged(function (user) {
       state.user = user;
