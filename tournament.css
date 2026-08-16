@@ -755,6 +755,7 @@ body.t-member-preview .t-admin-switch {
 .t-roster-line { display: flex; justify-content: space-between; align-items: center; font-size: .88rem; }
 .t-roster-line .lbl { color: var(--t-muted); text-transform: uppercase; letter-spacing: .04em; font-size: .74rem; font-weight: 600; }
 .t-roster-line .val { color: var(--t-fg); }
+.t-captain-name { font-weight: 700; }
 .t-roster-line .val.is-over { color: var(--t-danger); }
 .t-roster-cap {
   display: flex;
