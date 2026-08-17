@@ -17,7 +17,8 @@
  *                     draft.entries[]     working copy (admin only)
  *                     published.entries[] public copy (visible after Publish)
  *       rules       { text, updatedAt, updatedBy }  — sport-specific, admin-edit
- *       maxRosterSize number  — per-team member cap (0/omitted = no limit)
+ *       maxRosterSize number  — per-team member cap including the captain
+ *                               (0/omitted = no limit)
  *     rules         { text, updatedAt, updatedBy }  — tournament-wide, admin-edit
  *     archived      bool
  *     published     bool  — members see it only when true; missing = unpublished
@@ -174,8 +175,69 @@
     return parseMaxRosterSize(sport && sport.maxRosterSize);
   }
 
+  function hasCaptain(team) {
+    return !!(team && (team.captainUid || team.captainName || team.captainEmail));
+  }
+
+  // Captain stored as team fields, shaped like a roster row so they can
+  // match, count, and display as a regular team member.
+  function captainMember(team) {
+    if (!hasCaptain(team)) return null;
+    const split = splitName(team.captainName || '');
+    return {
+      uid: team.captainUid || '',
+      email: team.captainEmail || '',
+      firstName: split.firstName || '',
+      lastName: split.lastName || '',
+      familyId: team.captainFamilyId || '',
+      memberId: '',
+      name: team.captainName || '',
+      isCaptain: true
+    };
+  }
+
+  function isCaptainPerson(team, person) {
+    const cap = captainMember(team);
+    return !!(cap && person && membersMatch(cap, person));
+  }
+
+  // Unique people on the team: roster rows plus the captain when they are
+  // not already listed. Existing captains who were never added to roster[]
+  // still count toward the max and show in the member total.
+  function teamMembers(team) {
+    const roster = Array.isArray(team && team.roster) ? team.roster.slice() : [];
+    const cap = captainMember(team);
+    if (cap && !roster.some(function (r) { return membersMatch(cap, r); })) {
+      roster.unshift(cap);
+    }
+    return roster;
+  }
+
   function rosterCountOf(team) {
-    return Array.isArray(team && team.roster) ? team.roster.length : 0;
+    return teamMembers(team).length;
+  }
+
+  function memberRowFromPerson(person) {
+    return {
+      memberId: person.memberId || '',
+      familyId: person.familyId ? String(person.familyId) : '',
+      firstName: person.firstName || '',
+      lastName: person.lastName || '',
+      familyName: person.familyName || '',
+      uid: person.uid || '',
+      email: (person.email || '').toLowerCase() || '',
+      addedByUid: currentUid() || '',
+      addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
+      addedAt: new Date().toISOString()
+    };
+  }
+
+  function ensureCaptainOnRosterList(team, roster) {
+    const cap = captainMember(team);
+    if (!cap) return roster;
+    if (roster.some(function (r) { return membersMatch(cap, r); })) return roster;
+    roster.push(memberRowFromPerson(cap));
+    return roster;
   }
 
   function isRosterAtCap(sport, team) {
@@ -592,16 +654,18 @@
     if (!team || !state.user) return false;
     const me = resolveCurrentMemberIdentity();
     if (!me) return false;
+    if (isCaptainPerson(team, me)) return true;
     return (team.roster || []).some(function (r) { return membersMatch(me, r); });
   }
 
   // Within a sport, a person may belong to only one team. Returns the other
-  // team that already lists `member`, or null if they are free to add.
+  // team that already lists `member` (roster or captain), or null if free.
   function findOtherTeamForMember(teams, teamId, member) {
     teams = Array.isArray(teams) ? teams : [];
     for (let i = 0; i < teams.length; i++) {
       const tm = teams[i];
       if (tm.id === teamId) continue;
+      if (isCaptainPerson(tm, member)) return tm;
       const hit = (tm.roster || []).some(function (r) { return membersMatch(member, r); });
       if (hit) return tm;
     }
@@ -1466,7 +1530,7 @@
     }
     sport.teams.forEach(function (t, i) {
       const row = el('div', { class: 't-team-row' });
-      const rosterCount = Array.isArray(t.roster) ? t.roster.length : 0;
+      const rosterCount = rosterCountOf(t);
       const capAssigned = t.captainUid || t.captainName || t.captainEmail;
       const captainLabel = capAssigned
         ? '👤 ' + formatCaptainHtml(t.captainName || t.captainEmail || '(assigned)')
@@ -1589,7 +1653,7 @@
             <div class="t-form-field">
               <label>Max roster size</label>
               <input type="number" class="t-input" data-field="maxRosterSize" min="0" placeholder="No limit" value="${maxRosterSize(s) || ''}" />
-              <div style="color:var(--t-muted);font-size:.75rem;margin-top:2px;">Per team for this sport. Blank or 0 = no limit.</div>
+              <div style="color:var(--t-muted);font-size:.75rem;margin-top:2px;">Per team for this sport, including the captain. Blank or 0 = no limit.</div>
             </div>
             ${s.kind === 'racket' ? `
               <div class="t-form-field">
@@ -2366,7 +2430,7 @@
         ${t.format === 'teams' ? `
         <section class="t-section" id="tRostersSection">
           <div class="t-section-header">
-            <h2 class="t-section-title">Team rosters <small>captains &amp; members${maxRosterSize(sport) ? ' · max ' + maxRosterSize(sport) + ' per team' : ''}</small></h2>
+            <h2 class="t-section-title">Team rosters <small>captain counts as a member${maxRosterSize(sport) ? ' · max ' + maxRosterSize(sport) + ' per team' : ''}</small></h2>
             ${isAdminUi() ? `
               <div class="t-roster-cap">
                 <label for="tMaxRosterSize">Max per team</label>
@@ -3685,11 +3749,46 @@
           captainUid: null, captainName: null, captainEmail: null, captainFamilyId: null
         };
 
+    // Captain is a roster member and counts toward max. Keep the outgoing
+    // captain on the roster; add the incoming captain if they are new.
+    let nextRoster = Array.isArray(targetTeam.roster) ? targetTeam.roster.slice() : [];
+    nextRoster = ensureCaptainOnRosterList(targetTeam, nextRoster);
+    if (person) {
+      const incoming = {
+        memberId: person.memberId || '',
+        familyId: person.familyId ? String(person.familyId) : '',
+        firstName: person.firstName || '',
+        lastName: person.lastName || '',
+        familyName: person.familyName || '',
+        uid: person.uid || '',
+        email: (person.email || '').toLowerCase() || '',
+        name: ((person.firstName || '') + ' ' + (person.lastName || '')).trim()
+          || person.displayName || person.email || ''
+      };
+      const alreadyHere = nextRoster.some(function (r) { return membersMatch(incoming, r); })
+        || isCaptainPerson(targetTeam, incoming);
+      if (!alreadyHere) {
+        const otherTeam = findOtherTeamForMember(targetSport.teams || [], teamId, incoming);
+        if (otherTeam) {
+          toast((((person.firstName || '') + ' ' + (person.lastName || '')).trim() || 'That person')
+            + ' is already on ' + (otherTeam.name || otherTeam.id)
+            + ' for this sport. A person can only be on one team per sport.', 'error');
+          return;
+        }
+        if (isRosterAtCap(targetSport, Object.assign({}, targetTeam, { roster: nextRoster }))) {
+          toast('This team is at the maximum of ' + maxRosterSize(targetSport)
+            + ' members, including the captain. Remove someone before assigning a new captain.', 'error');
+          return;
+        }
+        nextRoster.push(memberRowFromPerson(incoming));
+      }
+    }
+
     const sports = (t.sports || []).map(function (s) {
       if (s.id !== sportId) return s;
       const teams = (s.teams || []).map(function (tm) {
         if (tm.id !== teamId) return tm;
-        return Object.assign({}, tm, captainPatch);
+        return Object.assign({}, tm, captainPatch, { roster: nextRoster });
       });
       return Object.assign({}, s, { teams: teams });
     });
@@ -3787,8 +3886,12 @@
     const locked     = isRosterLocked(team);
     const atCap      = isRosterAtCap(sport, team);
     const maxSize    = maxRosterSize(sport);
-    const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
+    const count      = rosterCountOf(team);
+    const roster = teamMembers(team);
     roster.sort(function (a, b) {
+      const aCap = isCaptainPerson(team, a) ? 0 : 1;
+      const bCap = isCaptainPerson(team, b) ? 0 : 1;
+      if (aCap !== bCap) return aCap - bCap;
       return ((a.firstName || '') + (a.lastName || '')).localeCompare((b.firstName || '') + (b.lastName || ''));
     });
 
@@ -3825,7 +3928,7 @@
     body.innerHTML = `
       <div class="t-roster-head">
         <div>${captainLine}</div>
-        <div class="t-roster-count${maxSize && roster.length > maxSize ? ' is-over' : ''}">${rosterCountLabel(sport, team)} member${roster.length === 1 ? '' : 's'}${maxSize ? ' max' : ''}</div>
+        <div class="t-roster-count${maxSize && count > maxSize ? ' is-over' : ''}">${rosterCountLabel(sport, team)} member${count === 1 ? '' : 's'}${maxSize ? ' max' : ''}</div>
       </div>
       ${lockBanner}
       ${canEdit && !atCap ? `
@@ -3834,7 +3937,7 @@
           ${!state.membersLoaded ? '<span style="color:var(--t-muted);font-size:.85rem;">Loading parishioner directory…</span>' : ''}
         </div>
       ` : (canEdit && atCap
-        ? '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">Roster is full (' + maxSize + ' max for this sport). Remove someone to add another.</div>'
+        ? '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">Roster is full (' + maxSize + ' max, including the captain). Remove someone to add another.</div>'
         : (locked
         ? '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">This roster is locked. Only an admin can unlock it.</div>'
         : '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">You can view this roster but only the team captain (or an admin) can edit it.</div>'
@@ -3844,14 +3947,16 @@
           ? '<div class="t-empty-note">No members added yet.</div>'
           : roster.map(function (r, i) {
               const nm = ((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.name || '(unnamed)';
+              const isCap = isCaptainPerson(team, r);
               return `
                 <div class="t-roster-row">
                   <div class="who">
-                    <div class="name">${escapeHtml(nm)}</div>
+                    <div class="name">${escapeHtml(nm)}${isCap ? ' <span class="t-badge you">Captain</span>' : ''}</div>
                     <div class="meta">Family: ${escapeHtml(r.familyName || '—')} · FID ${escapeHtml(r.familyId || '—')}${r.memberId ? ' · MID ' + escapeHtml(r.memberId) : ''}</div>
                     ${r.addedByName ? '<div class="sub">Added by ' + escapeHtml(r.addedByName) + '</div>' : ''}
                   </div>
-                  ${canEdit ? '<button class="t-btn danger sm" data-remove="' + i + '">Remove</button>' : ''}
+                  ${canEdit && !isCap ? '<button class="t-btn danger sm" data-remove="' + i + '">Remove</button>' : ''}
+                  ${canEdit && isCap ? '<span class="t-badge">Captain</span>' : ''}
                 </div>
               `;
             }).join('')}
@@ -3868,7 +3973,7 @@
       btn.addEventListener('click', async function () {
         const i = parseInt(btn.getAttribute('data-remove'), 10);
         if (!confirm('Remove this member from the roster?')) return;
-        await removeRosterMember(ctx.tournamentId, ctx.sportId, ctx.teamId, i);
+        await removeRosterMember(ctx.tournamentId, ctx.sportId, ctx.teamId, roster[i]);
       });
     });
     const lockBtn = body.querySelector('[data-toggle-lock]');
@@ -3913,7 +4018,7 @@
       return;
     }
     if (isRosterAtCap(sport, team)) {
-      toast('This team is at the maximum of ' + maxRosterSize(sport) + ' members for ' + (sport.label || 'this sport') + '.', 'error');
+      toast('This team is at the maximum of ' + maxRosterSize(sport) + ' members (including the captain) for ' + (sport.label || 'this sport') + '.', 'error');
       return;
     }
     openLiveModal = 'memberPicker';
@@ -3946,7 +4051,7 @@
         <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
           ${state.membersLoaded ? state.members.length + ' members in the directory' : 'Loading directory…'}
           · A person can only be on one team in this sport.
-          ${maxRosterSize(sport) ? ' · Max ' + maxRosterSize(sport) + ' members per team.' : ''}
+          ${maxRosterSize(sport) ? ' · Max ' + maxRosterSize(sport) + ' members per team, including the captain.' : ''}
         </div>
       </div>
       <div class="t-member-results" id="tMemberResults"></div>
@@ -3967,7 +4072,9 @@
       }
       results.innerHTML = list.map(function (m, idx) {
         const key = m.memberId ? ('M:' + m.memberId) : ('N:' + (m.firstName + '|' + m.lastName + '|' + m.familyId).toLowerCase());
-        const already = existingKeys.has(key) || (team.roster || []).some(function (r) { return membersMatch(m, r); });
+        const already = existingKeys.has(key)
+          || (team.roster || []).some(function (r) { return membersMatch(m, r); })
+          || isCaptainPerson(team, m);
         const otherTeam = already ? null : findOtherTeamForMember(teamsFor(t, sport), team.id, m);
         let actionHtml;
         if (already) {
@@ -4022,7 +4129,7 @@
       return;
     }
     const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
-    if (roster.some(function (r) { return membersMatch(member, r); })) {
+    if (roster.some(function (r) { return membersMatch(member, r); }) || isCaptainPerson(team, member)) {
       toast((member.firstName + ' ' + member.lastName).trim() + ' is already on this roster.', 'error');
       return;
     }
@@ -4034,7 +4141,7 @@
       return;
     }
     if (isRosterAtCap(sport, team)) {
-      toast('This team is at the maximum of ' + maxRosterSize(sport) + ' members for ' + (sport.label || 'this sport') + '.', 'error');
+      toast('This team is at the maximum of ' + maxRosterSize(sport) + ' members (including the captain) for ' + (sport.label || 'this sport') + '.', 'error');
       return;
     }
     const known = getKnownPeople().find(function (p) { return membersMatch(p, member); });
@@ -4057,7 +4164,7 @@
     toast('Added ' + (member.firstName + ' ' + member.lastName).trim(), 'success');
   }
 
-  async function removeRosterMember(tournamentId, sportId, teamId, index) {
+  async function removeRosterMember(tournamentId, sportId, teamId, member) {
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
     const sport = getSportConfig(t, sportId);
@@ -4068,8 +4175,11 @@
       toast(whyCantEdit(team) || 'You can\'t edit this roster.', 'error');
       return;
     }
-    const roster = (team.roster || []).slice();
-    roster.splice(index, 1);
+    if (isCaptainPerson(team, member)) {
+      toast('The captain is part of the roster. Assign a different captain first if you want to remove them.', 'error');
+      return;
+    }
+    const roster = (team.roster || []).filter(function (r) { return !membersMatch(r, member); });
     await writeTeamPatch(t, sportId, teamId, { roster: roster });
     toast('Member removed', 'success');
   }
