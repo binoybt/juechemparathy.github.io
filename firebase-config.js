@@ -296,10 +296,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   }
 
   function subscribeTournamentAccess() {
-    if (tournamentAccess.unsub) {
-      try { tournamentAccess.unsub(); } catch (_) {}
-      tournamentAccess.unsub = null;
-    }
+    if (tournamentAccess.unsub) return;
     tournamentAccess.unsub = db.collection('siteConfig').doc('tournament').onSnapshot(function (snap) {
       tournamentAccess.loaded = true;
       const d = snap.exists ? (snap.data() || {}) : {};
@@ -345,7 +342,6 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   };
 
   subscribeTournamentAccess();
-  auth.onAuthStateChanged(function () { subscribeTournamentAccess(); });
   window.SmashAuth.onChange(function () { applyTournamentNavVisibility(); });
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', applyTournamentNavVisibility);
@@ -715,8 +711,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       lastName:       nm.lastName,
       firstNameLower: nm.firstName.toLowerCase(),
       lastNameLower:  nm.lastName.toLowerCase(),
-      photoURL:       user.photoURL || '',
-      lastLoginAt:    FV.serverTimestamp()
+      photoURL:       user.photoURL || ''
     };
     let existing = null;
     try {
@@ -725,7 +720,6 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     } catch (err) {
       console.warn('[SmashAuth] users doc read failed:', err);
     }
-    if (!existing) payload.firstLoginAt = FV.serverTimestamp();
 
     // Do not overwrite directory-verified name / FID from Google displayName.
     if (existing && (existing.verified || existing.FID || existing.familyId || existing.memberId)) {
@@ -747,10 +741,26 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       payload.roleSetBy = existing ? 'default-migration' : 'default-signup';
     }
 
-    try {
-      await ref.set(payload, { merge: true });
-    } catch (err) {
-      console.error('[firebase-config] user profile mirror FAILED — check Firestore rules for /users/{uid}:', err);
+    // Skip the write when the profile is already current. Rewriting
+    // lastLoginAt on every page load updates /users/{uid} and bills a
+    // read for every listener on that collection (tournament, members page).
+    let needsWrite = !existing;
+    if (existing) {
+      if (payload.role && payload.role !== existing.role) needsWrite = true;
+      else if ((payload.email || '') !== String(existing.email || '').toLowerCase()) needsWrite = true;
+      else if ((payload.displayName || '') !== String(existing.displayName || '')) needsWrite = true;
+      else if ((payload.photoURL || '') !== String(existing.photoURL || '')) needsWrite = true;
+      else if (Object.prototype.hasOwnProperty.call(payload, 'firstName')
+          && (payload.firstName || '') !== String(existing.firstName || '')) needsWrite = true;
+    }
+    if (needsWrite) {
+      if (!existing) payload.firstLoginAt = FV.serverTimestamp();
+      payload.lastLoginAt = FV.serverTimestamp();
+      try {
+        await ref.set(payload, { merge: true });
+      } catch (err) {
+        console.error('[firebase-config] user profile mirror FAILED — check Firestore rules for /users/{uid}:', err);
+      }
     }
     return payload.role || (existing && existing.role) || 'member';
   }
@@ -783,11 +793,14 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     // Admins are trusted and never see the onboarding modal.
     if (state.isAdmin || isBootstrapAdminEmail(user.email)) {
       try {
-        await db.collection('users').doc(user.uid).set({
-          verified:   true,
-          verifiedAt: FV.serverTimestamp(),
-          verifiedBy: 'admin-auto'
-        }, { merge: true });
+        const existing = await readUserDoc(user.uid);
+        if (!existing || existing.verified !== true) {
+          await db.collection('users').doc(user.uid).set({
+            verified:   true,
+            verifiedAt: FV.serverTimestamp(),
+            verifiedBy: 'admin-auto'
+          }, { merge: true });
+        }
       } catch (_) {}
       hideOnboardingModal();
       return;
