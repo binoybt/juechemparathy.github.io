@@ -813,24 +813,12 @@
   }
 
   async function loadMembersCsv() {
-    if (state.membersLoaded) return;
+    if (state.membersLoaded || state._membersLoadStarted) return;
+    state._membersLoadStarted = true;
     try {
-      let list = [];
-      if (window.__smashOnboarding && typeof window.__smashOnboarding.loadMembersDirectory === 'function') {
-        list = await window.__smashOnboarding.loadMembersDirectory();
-      } else {
-        const snap = await db.collection('members').get();
-        snap.forEach(function (d) {
-          const v = d.data() || {};
-          list.push({
-            familyId: String(v.FID || v.familyId || '').trim(),
-            firstName: String(v.firstName || '').trim(),
-            lastName: String(v.lastName || '').trim(),
-            familyName: String(v.familyName || '').trim(),
-            memberId: String(v.memberId || d.id || '').trim()
-          });
-        });
-      }
+      const res = await fetch('members.csv', { cache: 'no-cache' });
+      if (!res.ok) throw new Error('members.csv HTTP ' + res.status);
+      const list = parseMembersCsv(await res.text());
       state.members = list.map(function (m) {
         const fn = String(m.firstName || '').trim();
         const ln = String(m.lastName || '').trim();
@@ -846,12 +834,12 @@
         };
       });
       state.membersLoaded = true;
-      render();
       if (openLiveModal === 'memberPicker') rerenderMemberPicker();
       if (openLiveModal === 'roster') rerenderRoster();
     } catch (err) {
-      console.error('[tournament] Failed to load parishioner directory:', err);
-      toast('Could not load parishioner directory. Roster search will not work until an admin imports it.', 'error');
+      state._membersLoadStarted = false;
+      console.error('[tournament] Failed to load members.csv:', err);
+      toast('Could not load members.csv. Put that file on the site for roster search.', 'error');
     }
   }
 
@@ -867,103 +855,6 @@
       if (numeric && (m.familyId === q || m.memberId === q)) out.push(m);
     }
     return out;
-  }
-
-  // Union of everyone the app knows about — anyone who's ever RSVP'd (whether
-  // or not they were signed in at the time) plus anyone whose profile lives
-  // in the `users` collection. Deduped on Firebase uid when available,
-  // otherwise on a normalized firstName+lastName+familyId key. The person
-  // is "authenticatable" (i.e. can be assigned as captain and actually edit
-  // the roster themselves) only if their record carries a uid or email
-  // captured from a Google sign-in.
-  function normKey(firstName, lastName, familyId) {
-    return (String(firstName || '') + '|' + String(lastName || '') + '|' + String(familyId || ''))
-      .toLowerCase().trim();
-  }
-
-  function getKnownPeople() {
-    const byKey = new Map();
-
-    function upsert(rec) {
-      const uidKey = rec.uid ? ('U:' + rec.uid) : null;
-      const nameKey = 'N:' + normKey(rec.firstName, rec.lastName, rec.familyId);
-      // Prefer uid identity when we have one — merge onto that record.
-      const primaryKey = uidKey || nameKey;
-      const existing = byKey.get(primaryKey) || byKey.get(nameKey);
-      if (existing) {
-        // Merge — richer source wins per field.
-        existing.uid       = existing.uid       || rec.uid       || '';
-        existing.email     = existing.email     || rec.email     || '';
-        existing.firstName = existing.firstName || rec.firstName || '';
-        existing.lastName  = existing.lastName  || rec.lastName  || '';
-        existing.familyId  = existing.familyId  || rec.familyId  || '';
-        existing.memberId  = existing.memberId  || rec.memberId  || '';
-        existing.photoURL  = existing.photoURL  || rec.photoURL  || '';
-        existing.sources   = Array.from(new Set([...(existing.sources || []), rec.source]));
-        // Re-key under the uid-preferred key so future lookups converge.
-        if (uidKey && byKey.get(nameKey) === existing) byKey.delete(nameKey);
-        byKey.set(primaryKey, existing);
-      } else {
-        byKey.set(primaryKey, Object.assign({}, rec, { sources: [rec.source] }));
-      }
-    }
-
-    // Source 1: rsvpResponses (existing app data — most people are here).
-    (state.rsvpResponses || []).forEach(function (r) {
-      upsert({
-        uid:       r.uid || '',
-        email:     (r.email || '').toLowerCase(),
-        firstName: r.firstName || '',
-        lastName:  r.lastName || '',
-        familyId:  r.familyId != null ? String(r.familyId) : '',
-        photoURL:  '',
-        source:    'rsvp'
-      });
-    });
-
-    // Source 2: users collection (portal sign-ins).
-    (state.users || []).forEach(function (u) {
-      upsert({
-        uid:       u.uid || '',
-        email:     (u.email || '').toLowerCase(),
-        firstName: u.firstName || '',
-        lastName:  u.lastName || '',
-        familyId:  u.familyId != null ? String(u.familyId) : '',
-        memberId:  u.memberId != null ? String(u.memberId) : '',
-        photoURL:  u.photoURL || '',
-        source:    'portal'
-      });
-    });
-
-    const out = [];
-    byKey.forEach(function (v) {
-      // Skip records with no usable name at all.
-      if (!v.firstName && !v.lastName) return;
-      v.firstNameLower = (v.firstName || '').toLowerCase();
-      v.lastNameLower  = (v.lastName  || '').toLowerCase();
-      v.hasLogin       = !!(v.uid || v.email);
-      out.push(v);
-    });
-    out.sort(function (a, b) {
-      // People with a Google login first, then alphabetical.
-      if (a.hasLogin !== b.hasLogin) return a.hasLogin ? -1 : 1;
-      return (a.firstName + a.lastName).localeCompare(b.firstName + b.lastName);
-    });
-    return out;
-  }
-
-  function searchPeople(query) {
-    const people = getKnownPeople();
-    const q = String(query || '').trim().toLowerCase();
-    if (!q) return people.slice(0, 50);
-    const numeric = /^\d+$/.test(q);
-    return people.filter(function (p) {
-      if (p.firstNameLower.indexOf(q) !== -1) return true;
-      if (p.lastNameLower.indexOf(q) !== -1) return true;
-      if ((p.email || '').indexOf(q) !== -1) return true;
-      if (numeric && p.familyId === q) return true;
-      return false;
-    }).slice(0, 100);
   }
 
   function currentTournament() {
@@ -2052,11 +1943,7 @@
           <div class="t-card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;">
             <div>
               <div style="font-weight:700;color:var(--t-fg);">Admin testing only</div>
-              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">${(function () {
-                const n = (state.users || []).filter(function (u) { return u.labUser && u.role !== 'admin'; }).length;
-                return (n ? n + ' lab user' + (n === 1 ? '' : 's') + ' can open this page as members. ' : '')
-                  + 'Grant the lab-user role from Members &amp; Admins. Lab users see the member view (no admin tools) and can test other lab features later. Open it to everyone when you are ready.';
-              })()}</div>
+              <div style="color:var(--t-muted);font-size:.88rem;margin-top:2px;">Lab users can open this page as members. Grant the lab-user role from Members &amp; Admins. Lab users see the member view (no admin tools). Open it to everyone when you are ready.</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <a class="t-btn" href="admin-users.html">Manage lab users</a>
@@ -3503,13 +3390,36 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CAPTAIN PICKER (admin only) — search the users collection
+  // CAPTAIN PICKER (admin only) — one users/{email} lookup
   // ═══════════════════════════════════════════════════════════════════════════
+
+  async function lookupUserByEmail(email) {
+    const e = String(email || '').trim().toLowerCase();
+    if (!e || e.indexOf('@') < 1) {
+      throw new Error('Enter a valid email address');
+    }
+    const snap = await db.collection('users').where('email', '==', e).limit(1).get();
+    if (snap.empty) return { email: e, found: false };
+    const doc = snap.docs[0];
+    const d = doc.data() || {};
+    const split = splitName(d.displayName || '');
+    return {
+      found: true,
+      uid: doc.id,
+      email: (d.email || e).toLowerCase(),
+      firstName: d.firstName || split.firstName || '',
+      lastName: d.lastName || split.lastName || '',
+      familyId: d.familyId != null ? String(d.familyId) : (d.FID != null ? String(d.FID) : ''),
+      memberId: d.memberId != null ? String(d.memberId) : '',
+      photoURL: d.photoURL || '',
+      hasLogin: true
+    };
+  }
 
   function openCaptainPicker(tournamentId, sportId, teamId) {
     if (!canManageCaptains()) return;
     openLiveModal = 'userPicker';
-    openLiveModalContext = { tournamentId, sportId, teamId, query: '' };
+    openLiveModalContext = { tournamentId, sportId, teamId, query: '', result: null, looking: false, error: '' };
     rerenderUserPicker();
   }
 
@@ -3542,86 +3452,61 @@
          </div>`
       : `<div class="t-captain-current empty">No captain assigned yet.</div>`;
 
-    const totalKnown = getKnownPeople().length;
-    const usersCount = state.users.length;
-    const rsvpCount = state.rsvpResponses.length;
-
-    // Diagnostic pills — only shown when something's actually wrong (an error
-    // occurred, or a source returned zero records). When everything is
-    // healthy the picker stays clean. This keeps the debug affordance for
-    // future rules issues without cluttering the normal UI.
-    function pill(label, count, ready, err) {
-      let cls, txt;
-      if (err) { cls = 'err'; txt = 'blocked (' + (err.code || 'error') + ')'; }
-      else if (!ready) { cls = 'loading'; txt = 'loading…'; }
-      else if (count === 0) { cls = 'warn'; txt = 'empty'; }
-      else return ''; // healthy — no pill
-      return `<span class="t-diag-pill ${cls}"><b>${label}:</b> ${txt}</span>`;
+    let resultHtml = '';
+    if (ctx.looking) {
+      resultHtml = '<div style="padding:12px;color:var(--t-muted);">Looking up that email…</div>';
+    } else if (ctx.error) {
+      resultHtml = '<div style="padding:12px;color:#991b1b;">' + escapeHtml(ctx.error) + '</div>';
+    } else if (ctx.result && ctx.result.found) {
+      const u = ctx.result;
+      const fullName = ((u.firstName || '') + ' ' + (u.lastName || '')).trim();
+      const isCurrent = team && (
+        (team.captainUid && u.uid && u.uid === team.captainUid) ||
+        (team.captainEmail && u.email && u.email === String(team.captainEmail).toLowerCase())
+      );
+      const meta = [
+        u.familyId ? 'FID ' + escapeHtml(u.familyId) : null,
+        u.email ? escapeHtml(u.email) : null
+      ].filter(Boolean).join(' · ');
+      resultHtml = `
+        <div class="t-user-row">
+          <div class="who">
+            ${u.photoURL ? '<img src="' + escapeHtml(u.photoURL) + '" alt="">' : '<span class="avatar-placeholder">👤</span>'}
+            <div>
+              <div class="name">${escapeHtml(fullName || u.email)} <span class="t-badge login">✓ has login</span></div>
+              <div class="email">${meta}</div>
+            </div>
+          </div>
+          ${isCurrent
+            ? '<span class="t-badge">Current captain</span>'
+            : '<button class="t-btn sm primary" data-assign-found>Assign</button>'}
+        </div>`;
+    } else if (ctx.result && !ctx.result.found) {
+      resultHtml = `
+        <div style="padding:12px;color:var(--t-muted);">
+          No signed-in user with <b>${escapeHtml(ctx.result.email)}</b>. They must sign in with Google once first.
+          You can still assign this email; they can manage the roster after they sign in with that account.
+        </div>
+        <button class="t-btn sm primary" data-assign-email>Assign ${escapeHtml(ctx.result.email)}</button>`;
     }
-    const pills = [
-      pill('users collection', usersCount, state.ready.users, state.errors.users),
-      pill('rsvpResponses',   rsvpCount,   state.ready.rsvp,  state.errors.rsvp),
-      state.errors.upsert
-        ? '<span class="t-diag-pill err"><b>your profile write:</b> failed (' + escapeHtml(state.errors.upsert.code || 'error') + ')</span>'
-        : ''
-    ].filter(Boolean);
-    const statusRow = pills.length
-      ? '<div class="t-diag-row">' + pills.join('') + '</div>'
-      : '';
-
-    const rulesBlocks = [];
-    if (state.errors.users || (state.ready.users && usersCount === 0)) {
-      rulesBlocks.push({
-        title: '/users/{uid}',
-        why: state.errors.users
-          ? 'Read was blocked by Firestore rules.'
-          : 'Reads OK but the collection is empty — every sign-in should write a doc here.',
-        snippet: `match /users/{uid} {
-  allow read:          if request.auth != null;
-  allow create, update: if request.auth.uid == uid;
-  allow delete: if false;
-}`
-      });
-    }
-    if (state.errors.rsvp) {
-      rulesBlocks.push({
-        title: '/rsvpResponses/{doc}',
-        why: 'Read was blocked by Firestore rules — the app can\'t use RSVPs as a captain source until admins can read them.',
-        snippet: `match /rsvpResponses/{doc} {
-  allow read: if request.auth != null;
-  // keep your existing write rules
-}`
-      });
-    }
-    const rulesHint = rulesBlocks.length
-      ? `<div class="t-diag-hint">
-           <div style="font-weight:700;margin-bottom:6px;">⚠ Firestore rules need updating</div>
-           ${rulesBlocks.map(function (b) {
-             return `<div style="margin-top:8px;">
-               <div style="font-size:.82rem;">${escapeHtml(b.why)}</div>
-               <pre>${escapeHtml(b.snippet)}</pre>
-             </div>`;
-           }).join('')}
-         </div>`
-      : '';
 
     body.innerHTML = `
       ${currentCaptainRow}
-      ${statusRow}
-      ${rulesHint}
       <div style="margin-top:14px;">
-        <label class="t-form-label" for="tCaptainSearch">Search people (first name, last name, email, or Family ID)</label>
-        <input id="tCaptainSearch" type="text" class="t-input" placeholder="Type a name or Family ID…" value="${escapeHtml(ctx.query || '')}" autocomplete="off" />
+        <label class="t-form-label" for="tCaptainSearch">Captain Google email</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input id="tCaptainSearch" type="email" class="t-input" placeholder="name@gmail.com" value="${escapeHtml(ctx.query || '')}" autocomplete="off" style="flex:1;min-width:180px;" />
+          <button type="button" class="t-btn primary" data-lookup ${ctx.looking ? 'disabled' : ''}>Look up</button>
+        </div>
         <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
-          <b>${totalKnown}</b> known people total.
-          A ✓ badge means the person has a Google sign-in and can manage the roster themselves.
+          Looks up one signed-in user by email. Does not load the full members list.
         </div>
       </div>
-      <div class="t-user-results" id="tCaptainResults"></div>
+      <div class="t-user-results" id="tCaptainResults">${resultHtml}</div>
     `;
 
     const input = body.querySelector('#tCaptainSearch');
-    const results = body.querySelector('#tCaptainResults');
+    const lookupBtn = body.querySelector('[data-lookup]');
     const removeBtn = body.querySelector('[data-remove-captain]');
     if (removeBtn) {
       removeBtn.addEventListener('click', async function () {
@@ -3630,76 +3515,53 @@
       });
     }
 
-    // Keep the last rendered list around so index-based click handlers
-    // pick the right record even after re-rendering.
-    let lastList = [];
+    async function runLookup() {
+      ctx.query = input.value;
+      ctx.error = '';
+      ctx.result = null;
+      ctx.looking = true;
+      rerenderUserPicker();
+      try {
+        ctx.result = await lookupUserByEmail(ctx.query);
+      } catch (err) {
+        ctx.error = err.message || String(err);
+      }
+      ctx.looking = false;
+      rerenderUserPicker();
+    }
 
-    function paintResults() {
-      if (!state.ready.rsvp && !state.ready.users) {
-        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading people…</div>';
-        return;
-      }
-      lastList = searchPeople(input.value);
-      if (!lastList.length) {
-        const totalKnown = getKnownPeople().length;
-        if (totalKnown === 0) {
-          results.innerHTML = '<div style="padding:14px;color:#991b1b;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;">No people loaded from any source. See the diagnostic panel above — it usually means Firestore rules need updating.</div>';
-        } else {
-          results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">No matches for "' + escapeHtml(input.value) + '". Try a different name or a Family ID.</div>';
-        }
-        return;
-      }
-      results.innerHTML = lastList.map(function (u, idx) {
-        const isCurrent = team && (
-          (team.captainUid && u.uid && u.uid === team.captainUid) ||
-          (team.captainEmail && u.email && u.email === team.captainEmail.toLowerCase())
-        );
-        const fullName = ((u.firstName || '') + ' ' + (u.lastName || '')).trim();
-        const meta = [
-          u.familyId ? 'FID ' + escapeHtml(u.familyId) : null,
-          u.email ? escapeHtml(u.email) : null
-        ].filter(Boolean).join(' · ');
-        const loginBadge = u.hasLogin
-          ? '<span class="t-badge login" title="This person has a Google sign-in">✓ has login</span>'
-          : '<span class="t-badge nologin" title="Assignable, but this person must sign in with Google once before they can edit the roster">no login yet</span>';
-        return `
-          <div class="t-user-row">
-            <div class="who">
-              ${u.photoURL ? '<img src="' + escapeHtml(u.photoURL) + '" alt="">' : '<span class="avatar-placeholder">👤</span>'}
-              <div>
-                <div class="name">${escapeHtml(fullName || u.email || '(unnamed)')} ${loginBadge}</div>
-                <div class="email">${meta || '<i style="color:var(--t-muted-2);">no contact info</i>'}</div>
-              </div>
-            </div>
-            ${isCurrent
-              ? '<span class="t-badge">Current captain</span>'
-              : '<button class="t-btn sm primary" data-pick="' + idx + '">Assign</button>'}
-          </div>
-        `;
-      }).join('');
-      results.querySelectorAll('[data-pick]').forEach(function (btn) {
-        btn.addEventListener('click', async function () {
-          const idx = parseInt(btn.getAttribute('data-pick'), 10);
-          const person = lastList[idx];
-          if (!person) return;
-          if (!person.hasLogin) {
-            const fullName = ((person.firstName || '') + ' ' + (person.lastName || '')).trim();
-            if (!confirm(fullName + ' hasn\'t signed in with Google yet, so they can\'t edit their team\'s roster until they do. Assign anyway?')) return;
-          }
-          await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, person);
-          closeLiveModal('tCaptainPicker');
+    if (lookupBtn) lookupBtn.addEventListener('click', runLookup);
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); runLookup(); }
+    });
+    input.addEventListener('input', function () { ctx.query = input.value; });
+
+    const assignFound = body.querySelector('[data-assign-found]');
+    if (assignFound) {
+      assignFound.addEventListener('click', async function () {
+        await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, ctx.result);
+        closeLiveModal('tCaptainPicker');
+      });
+    }
+    const assignEmail = body.querySelector('[data-assign-email]');
+    if (assignEmail) {
+      assignEmail.addEventListener('click', async function () {
+        await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, {
+          uid: '',
+          email: ctx.result.email,
+          firstName: '',
+          lastName: '',
+          familyId: '',
+          hasLogin: false
         });
+        closeLiveModal('tCaptainPicker');
       });
     }
 
-    input.addEventListener('input', function () {
-      ctx.query = input.value;
-      paintResults();
-    });
-    paintResults();
     modal.classList.add('open');
-    setTimeout(function () { input.focus(); }, 30);
+    setTimeout(function () { if (input) input.focus(); }, 30);
   }
+
 
   async function setRosterLock(tournamentId, sportId, teamId, locked) {
     if (!canLockRoster()) { toast('Only admins can lock or unlock rosters', 'error'); return; }
@@ -3800,45 +3662,11 @@
 
     try {
       await ref.update({ sports: sports, updatedAt: FieldValue.serverTimestamp() });
-
-      // Verify the write actually landed on the server. Firestore's compat
-      // SDK normally resolves update() only after server confirmation, but
-      // caches, offline persistence, or a rules rollback can hide failures
-      // — reading with {source:'server'} sidesteps all of those.
-      let serverTeam = null;
-      try {
-        const fresh = await ref.get({ source: 'server' });
-        const fData = fresh.exists ? (fresh.data() || {}) : {};
-        const fSport = (fData.sports || []).find(function (s) { return s.id === sportId; });
-        serverTeam = fSport ? (fSport.teams || []).find(function (tm) { return tm.id === teamId; }) : null;
-      } catch (verifyErr) {
-        console.warn('[tournament] verify read failed (write may still be OK):', verifyErr);
-      }
       const wroteWhat = person
         ? (toCamelCase(captainPatch.captainName || captainPatch.captainEmail) || '(assigned)')
         : 'removed';
-      if (serverTeam) {
-        const okUid   = (captainPatch.captainUid   || null) === (serverTeam.captainUid   || null);
-        const okName  = (captainPatch.captainName  || null) === (serverTeam.captainName  || null);
-        const okEmail = (captainPatch.captainEmail || null) === (serverTeam.captainEmail || null);
-        if (!(okUid && okName && okEmail)) {
-          console.error('[tournament] captain write DID NOT stick on server:', {
-            intended: captainPatch, actualServer: {
-              captainUid:      serverTeam.captainUid      || null,
-              captainName:     serverTeam.captainName     || null,
-              captainEmail:    serverTeam.captainEmail    || null,
-              captainFamilyId: serverTeam.captainFamilyId || null
-            }
-          });
-          toast('Server did not accept the captain change. Check Firestore rules for tournaments.', 'error');
-          // Do not patch local state so the UI reflects reality.
-          return;
-        }
-      }
-
       const idx = state.tournaments.findIndex(function (x) { return x.id === tournamentId; });
       if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { sports: sports });
-      console.log('[tournament] captain updated for', sportId, teamId, '→', wroteWhat);
       toast(person ? ('Captain assigned: ' + wroteWhat) : 'Captain removed', 'success');
       render();
     } catch (err) {
@@ -4023,6 +3851,7 @@
     }
     openLiveModal = 'memberPicker';
     openLiveModalContext = { tournamentId, sportId, teamId, query: '' };
+    loadMembersCsv();
     rerenderMemberPicker();
   }
 
@@ -4049,7 +3878,7 @@
         <label class="t-form-label" for="tMemberSearch">Search parishioner directory (name or Family ID)</label>
         <input id="tMemberSearch" type="text" class="t-input" placeholder="e.g. Joseph, or 16" value="${escapeHtml(ctx.query || '')}" autocomplete="off" />
         <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
-          ${state.membersLoaded ? state.members.length + ' members in the directory' : 'Loading directory…'}
+          ${state.membersLoaded ? state.members.length + ' members in members.csv' : 'Loading members.csv…'}
           · A person can only be on one team in this sport.
           ${maxRosterSize(sport) ? ' · Max ' + maxRosterSize(sport) + ' members per team, including the captain.' : ''}
         </div>
@@ -4062,7 +3891,7 @@
 
     function paintResults() {
       if (!state.membersLoaded) {
-        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading parishioner directory…</div>';
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading members.csv…</div>';
         return;
       }
       const list = searchMembers(input.value);
@@ -4144,15 +3973,14 @@
       toast('This team is at the maximum of ' + maxRosterSize(sport) + ' members (including the captain) for ' + (sport.label || 'this sport') + '.', 'error');
       return;
     }
-    const known = getKnownPeople().find(function (p) { return membersMatch(p, member); });
     const newEntry = {
       memberId: member.memberId || '',
       familyId: member.familyId || '',
       firstName: member.firstName || '',
       lastName: member.lastName || '',
       familyName: member.familyName || '',
-      uid: (known && known.uid) || '',
-      email: (known && known.email) || '',
+      uid: '',
+      email: '',
       addedByUid: currentUid() || '',
       addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
       // Use an ISO string rather than serverTimestamp — Firestore does not
@@ -4598,35 +4426,6 @@
     });
   }
 
-  function subscribeRsvpResponses() {
-    if (state.unsubRsvp) return;
-    state.unsubRsvp = db.collection('rsvpResponses').onSnapshot(function (snap) {
-      state.rsvpResponses = [];
-      snap.forEach(function (doc) {
-        const d = doc.data() || {};
-        state.rsvpResponses.push({
-          uid: d.uid || '',
-          email: d.email || '',
-          firstName: d.firstName || '',
-          lastName: d.lastName || '',
-          familyId: d.familyId != null ? String(d.familyId) : ''
-        });
-      });
-      state.ready.rsvp = true;
-      state.errors.rsvp = null;
-      console.log('[tournament] rsvpResponses:', state.rsvpResponses.length, 'docs');
-      render();
-      if (openLiveModal === 'roster') rerenderRoster();
-      if (openLiveModal === 'memberPicker') rerenderMemberPicker();
-      if (openLiveModal === 'userPicker') rerenderUserPicker();
-    }, function (err) {
-      state.errors.rsvp = err;
-      state.ready.rsvp = true;
-      console.error('[tournament] rsvpResponses read FAILED — check Firestore rules for /rsvpResponses:', err);
-      if (openLiveModal === 'userPicker') rerenderUserPicker();
-    });
-  }
-
   function unsubscribeUserData() {
     if (state.unsubUsers) { state.unsubUsers(); state.unsubUsers = null; }
     if (state.unsubRsvp)  { state.unsubRsvp();  state.unsubRsvp  = null; }
@@ -4634,45 +4433,6 @@
     state.rsvpResponses = [];
     state.ready.users = false;
     state.ready.rsvp  = false;
-  }
-
-  function subscribeUsers() {
-    if (state.unsubUsers) return;
-    state.unsubUsers = db.collection('users').onSnapshot(function (snap) {
-      state.users = [];
-      snap.forEach(function (doc) {
-        const d = doc.data() || {};
-        state.users.push({
-          uid: doc.id,
-          email: d.email || '',
-          displayName: d.displayName || '',
-          firstName: d.firstName || '',
-          lastName: d.lastName || '',
-          firstNameLower: (d.firstNameLower || d.firstName || '').toLowerCase(),
-          lastNameLower: (d.lastNameLower || d.lastName || '').toLowerCase(),
-          familyId: d.familyId != null ? String(d.familyId) : '',
-          memberId: d.memberId != null ? String(d.memberId) : '',
-          photoURL: d.photoURL || '',
-          role: d.role || 'member',
-          labUser: d.labUser === true
-        });
-      });
-      state.users.sort(function (a, b) {
-        return (a.firstName + a.lastName).localeCompare(b.firstName + b.lastName);
-      });
-      state.ready.users = true;
-      state.errors.users = null;
-      console.log('[tournament] users collection:', state.users.length, 'profiles');
-      render();
-      if (openLiveModal === 'roster') rerenderRoster();
-      if (openLiveModal === 'memberPicker') rerenderMemberPicker();
-      if (openLiveModal === 'userPicker') rerenderUserPicker();
-    }, function (err) {
-      state.errors.users = err;
-      state.ready.users = true;
-      console.error('[tournament] users read FAILED — Firestore rules likely block reading /users:', err);
-      if (openLiveModal === 'userPicker') rerenderUserPicker();
-    });
   }
 
   function subscribeMatchesFor(tournamentId) {
@@ -4818,14 +4578,6 @@
   function ensureTournamentData() {
     if (!canUseTournamentPage()) return;
     if (!state.unsubTournaments) subscribeTournaments();
-    if (state.user) {
-      subscribeUsers();
-      subscribeRsvpResponses();
-    }
-    if (!state._membersLoadStarted) {
-      state._membersLoadStarted = true;
-      loadMembersCsv();
-    }
   }
 
   function init() {
@@ -4835,12 +4587,6 @@
       state.user = user;
       sessionInitialized = true;
       if (user) {
-        // Persist this sign-in into users/{uid} (fire-and-forget). This is
-        // how the users collection grows to contain everyone who has ever
-        // signed into any part of the site.
-        upsertUserProfile(user);
-        // People-list subscriptions start from ensureTournamentData() once
-        // this user is allowed to use the page (admin, or open to everyone).
         if (!window.SmashAuth) {
           const FALLBACK_ADMIN_EMAILS = [
             'jue.george@gmail.com',
