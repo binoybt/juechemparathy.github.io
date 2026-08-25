@@ -156,9 +156,9 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
   // ── SmashAuth (role-aware auth state exposed to every page) ───────────
   // Shape passed to onChange listeners:
-  //   { user, role, isAdmin, isLabUser, loading }
+  //   { user, profile, role, isAdmin, isLabUser, loading }
   // Pages should treat loading=true as "unknown yet, don't render admin UI".
-  const state = { user: null, role: null, isAdmin: false, isLabUser: false, loading: true };
+  const state = { user: null, profile: null, role: null, isAdmin: false, isLabUser: false, loading: true };
   const listeners = [];
   let userDocUnsub = null;
 
@@ -181,19 +181,21 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     userDocUnsub = db.collection('users').doc(uid).onSnapshot(function (snap) {
       const d = snap.exists ? (snap.data() || {}) : {};
       setState({
+        profile: Object.assign({ uid: uid }, d),
         role: d.role || 'member',
         isLabUser: d.labUser === true,
         loading: false
       });
     }, function (err) {
       console.warn('[SmashAuth] users/' + uid + ' snapshot failed:', err);
-      setState({ role: null, isLabUser: false, loading: false });
+      setState({ profile: null, role: null, isLabUser: false, loading: false });
     });
   }
 
   window.SmashAuth = {
     /** True if a listener has been registered before we resolved auth. */
     get currentUser()  { return state.user;  },
+    get currentProfile() { return state.profile; },
     get currentRole()  { return state.role;  },
     /** Convenience: SmashAuth.isAdmin() */
     isAdmin: function () { return state.isAdmin; },
@@ -1118,7 +1120,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   auth.onAuthStateChanged(async function (user) {
     if (!user) {
       if (userDocUnsub) { try { userDocUnsub(); } catch (_) {} userDocUnsub = null; }
-      setState({ user: null, role: null, isLabUser: false, loading: false });
+      setState({ user: null, profile: null, role: null, isLabUser: false, loading: false });
       hideOnboardingModal();
       stopAdminBanner();
       return;
@@ -1126,7 +1128,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
     // Publish the user immediately so pages can start rendering; role
     // arrives shortly after via the users doc snapshot.
-    setState({ user: user, role: null, isLabUser: false, loading: true });
+    setState({ user: user, profile: null, role: null, isLabUser: false, loading: true });
 
     await mirrorUserProfileAndBootstrapRole(user);
     subscribeToUserDoc(user.uid);
@@ -1144,6 +1146,65 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     else           stopAdminBanner();
   });
 
+  async function updateCurrentProfileByFirstNameAndFid(firstName, familyId) {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Please sign in first.');
+    const first = normKey(firstName);
+    const fid = normKey(familyId);
+    if (!first || !fid) throw new Error('First name and FID are required.');
+
+    membersCache = null;
+    additionalMembersCache = null;
+    const directory = await loadMembersDirectory();
+    const matches = directory.filter(function (m) {
+      return normKey(m.firstName) === first
+        && (normKey(m.FID) === fid || normKey(m.familyId) === fid);
+    });
+    if (matches.length === 0) {
+      return { status: 'not-found' };
+    }
+    if (matches.length > 1) {
+      return { status: 'duplicate', count: matches.length };
+    }
+
+    const match = matches[0];
+    const currentDoc = await readUserDoc(user.uid);
+    const currentMemberId = String((currentDoc && currentDoc.memberId) || '').trim();
+    const nextMemberId = String(match.memberId || '').trim();
+    if (currentMemberId && nextMemberId && currentMemberId !== nextMemberId) {
+      return { status: 'different-member' };
+    }
+    const existing = await findExistingUserClaim(match, user.uid);
+    if (existing) {
+      return { status: 'claimed', email: existing.email || '' };
+    }
+    const claim = await claimIdentity(user, match);
+    if (!claim.ok) {
+      return { status: 'claimed', email: (claim.claimedBy && claim.claimedBy.email) || '' };
+    }
+
+    const payload = Object.assign(verifiedMemberPayload(match), {
+      uid: user.uid,
+      email: (user.email || '').toLowerCase(),
+      displayName: user.displayName || '',
+      profileUpdatedAt: FV.serverTimestamp(),
+      profileUpdatedBy: user.uid
+    });
+    await db.collection('users').doc(user.uid).set(payload, { merge: true });
+    return {
+      status: 'updated',
+      profile: {
+        uid: user.uid,
+        email: payload.email,
+        firstName: match.firstName || '',
+        lastName: match.lastName || '',
+        familyId: String(match.FID || match.familyId || '').trim(),
+        memberId: String(match.memberId || '').trim(),
+        familyName: match.familyName || ''
+      }
+    };
+  }
+
   // Expose helpers so pending-users.html can reuse the same directory logic.
   window.__smashOnboarding = {
     findMemberMatch:          findMemberMatch,
@@ -1155,6 +1216,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     importMembersFromRows:    importMembersFromRows,
     memberDocId:              memberDocId,
     memberDocPayload:         memberDocPayload,
+    updateCurrentProfileByFirstNameAndFid: updateCurrentProfileByFirstNameAndFid,
     invalidateCaches:         function () { membersCache = null; additionalMembersCache = null; }
   };
 })();

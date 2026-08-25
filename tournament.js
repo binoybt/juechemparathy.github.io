@@ -471,6 +471,7 @@
     user: null,
     isAdmin: false,
     isLabUser: false,
+    currentProfile: null,
     adminUi: true,
     authLoading: true,
     tournaments: [],       // all tournaments (subscribed once)
@@ -479,7 +480,7 @@
     users: [],             // signed-in user profiles (from `users` collection)
     rsvpResponses: [],     // raw docs from rsvpResponses (existing app data)
     members: [],           // parishioner directory (Firestore `members` collection)
-    membersLoaded: false,  // becomes true once CSV has been fetched and parsed
+    membersLoaded: false,  // becomes true once the parishioner directory is loaded
     unsubTournaments: null,
     unsubMatches: null,
     unsubUsers: null,
@@ -630,14 +631,16 @@
     if (!state.user) return null;
     const uid = state.user.uid;
     const email = (state.user.email || '').toLowerCase();
-    const profile = (state.users || []).find(function (u) { return u.uid === uid; }) || {};
+    const profile = state.currentProfile
+      || (state.users || []).find(function (u) { return u.uid === uid; })
+      || {};
     const rsvp = (state.rsvpResponses || []).find(function (r) {
       return (r.uid && r.uid === uid) || (r.email && r.email.toLowerCase() === email);
     }) || {};
     const split = splitName(state.user.displayName);
     const firstName = profile.firstName || rsvp.firstName || split.firstName || '';
     const lastName = profile.lastName || rsvp.lastName || split.lastName || '';
-    const familyId = String(profile.familyId || rsvp.familyId || '').trim();
+    const familyId = String(profile.familyId || profile.FID || rsvp.familyId || rsvp.FID || '').trim();
     let memberId = String(profile.memberId || '').trim();
     if (!memberId && state.membersLoaded && firstName && lastName) {
       const matches = state.members.filter(function (m) {
@@ -777,7 +780,7 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MEMBERS.CSV — parishioner directory (client-side cache)
+  // PARISHIONER DIRECTORY (client-side cache)
   // ═══════════════════════════════════════════════════════════════════════════
 
   // Very small CSV parser: no quoted fields in our file, so a simple split
@@ -816,9 +819,22 @@
     if (state.membersLoaded || state._membersLoadStarted) return;
     state._membersLoadStarted = true;
     try {
-      const res = await fetch('members.csv', { cache: 'no-cache' });
-      if (!res.ok) throw new Error('members.csv HTTP ' + res.status);
-      const list = parseMembersCsv(await res.text());
+      let list = [];
+      if (window.__smashOnboarding && typeof window.__smashOnboarding.loadMembersDirectory === 'function') {
+        list = await window.__smashOnboarding.loadMembersDirectory();
+      } else {
+        const snap = await db.collection('members').get();
+        snap.forEach(function (d) {
+          const v = d.data() || {};
+          list.push({
+            familyId: String(v.FID || v.familyId || '').trim(),
+            firstName: String(v.firstName || '').trim(),
+            lastName: String(v.lastName || '').trim(),
+            familyName: String(v.familyName || '').trim(),
+            memberId: String(v.memberId || d.id || '').trim()
+          });
+        });
+      }
       state.members = list.map(function (m) {
         const fn = String(m.firstName || '').trim();
         const ln = String(m.lastName || '').trim();
@@ -834,12 +850,13 @@
         };
       });
       state.membersLoaded = true;
+      render();
       if (openLiveModal === 'memberPicker') rerenderMemberPicker();
       if (openLiveModal === 'roster') rerenderRoster();
     } catch (err) {
       state._membersLoadStarted = false;
-      console.error('[tournament] Failed to load members.csv:', err);
-      toast('Could not load members.csv. Put that file on the site for roster search.', 'error');
+      console.error('[tournament] Failed to load parishioner directory:', err);
+      toast('Could not load parishioner directory. Roster search will not work until an admin imports it.', 'error');
     }
   }
 
@@ -1145,9 +1162,25 @@
       const label = isAdminUi() ? 'Admin' : (state.user.displayName || state.user.email || 'You');
       box.innerHTML = `
         <span class="t-user-chip"><span class="dot"></span>${escapeHtml(label)}</span>
+        <a class="t-nav-btn" href="profile.html?return=tournament.html">Profile</a>
         <button class="t-nav-btn" onclick="window.__tournament.signOut()">Sign out</button>
       `;
     }
+  }
+
+  function renderRosterProfileWarning() {
+    if (!state.user || isAdminUi()) return '';
+    const profile = state.currentProfile || {};
+    const firstName = String(profile.firstName || '').trim();
+    const familyId = String(profile.familyId || profile.FID || '').trim();
+    if (firstName && familyId) return '';
+    return `
+      <section class="t-profile-warning" role="status">
+        <span class="t-profile-warning-icon">⚠️</span>
+        <span>To see the team roster you are part of, update your first name and FID in Profile Settings.</span>
+        <a href="profile.html?return=tournament.html">Update profile</a>
+      </section>
+    `;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1173,6 +1206,7 @@
       </section>
 
       ${renderAccessBanner()}
+      ${renderRosterProfileWarning()}
 
       <section class="t-section">
         <div class="t-section-header">
@@ -3878,7 +3912,7 @@
         <label class="t-form-label" for="tMemberSearch">Search parishioner directory (name or Family ID)</label>
         <input id="tMemberSearch" type="text" class="t-input" placeholder="e.g. Joseph, or 16" value="${escapeHtml(ctx.query || '')}" autocomplete="off" />
         <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
-          ${state.membersLoaded ? state.members.length + ' members in members.csv' : 'Loading members.csv…'}
+          ${state.membersLoaded ? state.members.length + ' members in the parishioner directory' : 'Loading parishioner directory…'}
           · A person can only be on one team in this sport.
           ${maxRosterSize(sport) ? ' · Max ' + maxRosterSize(sport) + ' members per team, including the captain.' : ''}
         </div>
@@ -3891,7 +3925,7 @@
 
     function paintResults() {
       if (!state.membersLoaded) {
-        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading members.csv…</div>';
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading parishioner directory…</div>';
         return;
       }
       const list = searchMembers(input.value);
@@ -4616,12 +4650,15 @@
         const nextAdmin = !!(s.user && s.isAdmin);
         const nextLab = !!(s.user && s.isLabUser);
         const nextLoading = !!s.loading;
+        const nextProfile = s.profile || null;
         const changed = state.isAdmin !== nextAdmin
           || state.isLabUser !== nextLab
-          || state.authLoading !== nextLoading;
+          || state.authLoading !== nextLoading
+          || state.currentProfile !== nextProfile;
         state.isAdmin = nextAdmin;
         state.isLabUser = nextLab;
         state.authLoading = nextLoading;
+        state.currentProfile = nextProfile;
         if (changed) render();
       });
     }

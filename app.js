@@ -155,6 +155,9 @@ function renderUser() {
           <span class="dropdown-arrow">▼</span>
         </button>
         <div id="userDropdown" class="user-dropdown">
+          <a class="dropdown-item" href="profile.html" style="text-decoration:none;">
+            <span>👤</span> Profile Settings
+          </a>
           <button class="dropdown-item" onclick="openPreferencesModal()">
             <span>⚙️</span> Sport Preferences
           </button>

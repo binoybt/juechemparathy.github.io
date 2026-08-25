@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <link rel="icon" type="image/x-icon" href="icons/smash-logo.ico" />
+    <meta name="theme-color" content="#0f172a" />
+    <title>SMASH Profile Settings</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap" />
+    <style>
+        *, *::before, *::after { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; background: #f1f5f9; color: #0f172a;
+            font-family: 'Outfit', system-ui, sans-serif;
+        }
+        .topbar {
+            display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+            gap: 14px; padding: 10px 18px; background: #0f172a; color: #fff;
+            box-shadow: 0 2px 18px rgba(15,23,42,.28);
+        }
+        .topbar img { width: 44px; height: 44px; border-radius: 12px; object-fit: cover; }
+        .topbar h1 {
+            margin: 0; text-align: center; font-family: 'Barlow Condensed', sans-serif;
+            font-size: clamp(1.25rem,4vw,1.8rem); letter-spacing: .1em; text-transform: uppercase;
+        }
+        .back-link {
+            color: #e2e8f0; text-decoration: none; border: 1px solid rgba(255,255,255,.2);
+            padding: 8px 12px; border-radius: 8px; font-size: .85rem; font-weight: 600;
+        }
+        main { width: min(620px, calc(100% - 28px)); margin: 28px auto; }
+        .card {
+            background: #fff; border: 1px solid #e2e8f0; border-radius: 18px;
+            padding: clamp(20px,5vw,32px); box-shadow: 0 8px 28px rgba(15,23,42,.08);
+        }
+        h2 { margin: 0 0 8px; font-family: 'Barlow Condensed', sans-serif; font-size: 1.7rem; }
+        .intro { margin: 0 0 22px; color: #64748b; line-height: 1.5; font-size: .93rem; }
+        .account {
+            margin-bottom: 20px; padding: 10px 12px; border-radius: 10px;
+            background: #f8fafc; border: 1px solid #e2e8f0; color: #475569; font-size: .85rem;
+        }
+        .field { margin-bottom: 16px; }
+        label { display: block; margin-bottom: 6px; font-size: .82rem; font-weight: 700; color: #334155; }
+        input {
+            width: 100%; padding: 11px 13px; border: 1.5px solid #cbd5e1;
+            border-radius: 9px; font: inherit; color: #0f172a;
+        }
+        input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
+        .hint { margin-top: 5px; color: #64748b; font-size: .78rem; line-height: 1.4; }
+        .actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 22px; }
+        button, .button {
+            border: 1px solid #cbd5e1; border-radius: 9px; padding: 10px 17px;
+            background: #fff; color: #0f172a; font: inherit; font-weight: 700;
+            cursor: pointer; text-decoration: none;
+        }
+        button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+        button:disabled { opacity: .6; cursor: wait; }
+        .message { display: none; margin: 18px 0 0; padding: 12px 14px; border-radius: 10px; line-height: 1.45; font-size: .88rem; }
+        .message.show { display: block; }
+        .message.error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+        .message.success { background: #ecfdf5; border: 1px solid #a7f3d0; color: #166534; }
+        .message.info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+        .current {
+            display: none; margin-bottom: 20px; padding: 12px 14px; border-radius: 10px;
+            background: #ecfdf5; border: 1px solid #a7f3d0; color: #166534; font-size: .86rem;
+        }
+        .current.show { display: block; }
+        #profileForm, #signInPanel { display: none; }
+        @media (max-width: 540px) {
+            .topbar { grid-template-columns: auto 1fr; }
+            .topbar h1 { text-align: left; }
+            .back-link { grid-column: 1 / -1; text-align: center; }
+        }
+    </style>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+</head>
+<body>
+<header class="topbar">
+    <img src="icons/smash-logo.png" alt="SMASH" />
+    <h1>Profile Settings</h1>
+    <a id="backLink" class="back-link" href="index.html">← Back</a>
+</header>
+
+<main>
+    <section class="card">
+        <h2>Link your parish profile</h2>
+        <p class="intro">Enter your first name and parish Family ID (FID). We use these details to identify the tournament team roster you belong to.</p>
+
+        <div id="loadingMessage" class="message info show">Loading your profile…</div>
+
+        <div id="signInPanel">
+            <div class="message info show">Sign in with your SMASH Google account before updating your profile.</div>
+            <div class="actions"><button id="signInButton" class="primary" type="button">Sign in with Google</button></div>
+        </div>
+
+        <form id="profileForm">
+            <div id="account" class="account"></div>
+            <div id="currentProfile" class="current"></div>
+
+            <div class="field">
+                <label for="firstName">First name</label>
+                <input id="firstName" name="firstName" type="text" required autocomplete="given-name" maxlength="80" />
+                <div class="hint">Use the first name listed in the parish directory.</div>
+            </div>
+
+            <div class="field">
+                <label for="familyId">FID (Family ID)</label>
+                <input id="familyId" name="familyId" type="text" required inputmode="numeric" maxlength="20" />
+                <div class="hint">Family members share an FID. Your first name identifies the individual member.</div>
+            </div>
+
+            <div id="resultMessage" class="message" role="alert"></div>
+            <div class="actions">
+                <a id="cancelLink" class="button" href="index.html">Cancel</a>
+                <button id="saveButton" class="primary" type="submit">Save profile</button>
+            </div>
+        </form>
+    </section>
+</main>
+
+<script src="firebase-config.js?v=15"></script>
+<script>
+(function () {
+    const params = new URLSearchParams(window.location.search);
+    const requestedReturn = params.get('return');
+    const returnUrl = requestedReturn === 'tournament.html' ? 'tournament.html' : 'index.html';
+    const backLink = document.getElementById('backLink');
+    const cancelLink = document.getElementById('cancelLink');
+    backLink.href = returnUrl;
+    cancelLink.href = returnUrl;
+
+    const loading = document.getElementById('loadingMessage');
+    const signInPanel = document.getElementById('signInPanel');
+    const form = document.getElementById('profileForm');
+    const account = document.getElementById('account');
+    const current = document.getElementById('currentProfile');
+    const firstName = document.getElementById('firstName');
+    const familyId = document.getElementById('familyId');
+    const result = document.getElementById('resultMessage');
+    const saveButton = document.getElementById('saveButton');
+    let lastUid = '';
+
+    function escapeHtml(value) {
+        const div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
+
+    function showResult(type, html) {
+        result.className = 'message show ' + type;
+        result.innerHTML = html;
+    }
+
+    function renderState(s) {
+        if (s.loading) return;
+        loading.classList.remove('show');
+        if (!s.user) {
+            signInPanel.style.display = 'block';
+            form.style.display = 'none';
+            lastUid = '';
+            return;
+        }
+
+        signInPanel.style.display = 'none';
+        form.style.display = 'block';
+        account.innerHTML = '<strong>Signed in:</strong> ' + escapeHtml(s.user.email || s.user.displayName || '');
+        const profile = s.profile || {};
+        const fid = String(profile.familyId || profile.FID || '').trim();
+        if (lastUid !== s.user.uid) {
+            firstName.value = profile.firstName || '';
+            familyId.value = fid;
+            lastUid = s.user.uid;
+        }
+        if (profile.firstName && fid) {
+            const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
+            current.className = 'current show';
+            current.innerHTML = '<strong>Current linked profile:</strong> ' + escapeHtml(fullName)
+                + ' · FID ' + escapeHtml(fid)
+                + (profile.memberId ? ' · Member ID ' + escapeHtml(profile.memberId) : '');
+        } else {
+            current.className = 'current';
+            current.innerHTML = '';
+        }
+    }
+
+    document.getElementById('signInButton').addEventListener('click', function () {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        auth.signInWithPopup(provider).catch(function (err) {
+            showResult('error', escapeHtml(err.message || 'Sign-in failed.'));
+        });
+    });
+
+    form.addEventListener('submit', async function (event) {
+        event.preventDefault();
+        result.className = 'message';
+        saveButton.disabled = true;
+        saveButton.textContent = 'Checking…';
+        try {
+            const helper = window.__smashOnboarding
+                && window.__smashOnboarding.updateCurrentProfileByFirstNameAndFid;
+            if (typeof helper !== 'function') throw new Error('Profile service is unavailable. Please reload and try again.');
+            const response = await helper(firstName.value.trim(), familyId.value.trim());
+            if (response.status === 'updated') {
+                const p = response.profile || {};
+                showResult('success', '<strong>Profile updated.</strong> You can now return to Tournament to see the team roster you are part of.'
+                    + '<div style="margin-top:10px;"><a class="button" href="' + returnUrl + '">Return</a></div>');
+            } else if (response.status === 'duplicate') {
+                showResult('error', 'More than one parish member has this first name and FID. Please reach out to admin <strong>Binoy or Jue</strong>.');
+            } else if (response.status === 'claimed') {
+                showResult('error', 'This parish member is already linked to another login. Please reach out to admin <strong>Binoy or Jue</strong>.');
+            } else if (response.status === 'different-member') {
+                showResult('error', 'Your login is already linked to a different parish member. Please reach out to admin <strong>Binoy or Jue</strong> to correct it.');
+            } else {
+                showResult('error', 'We could not find a parish member with this first name and FID. Check the details or reach out to admin <strong>Binoy or Jue</strong>.');
+            }
+        } catch (err) {
+            showResult('error', escapeHtml(err && err.message ? err.message : 'Unable to update your profile.'));
+        } finally {
+            saveButton.disabled = false;
+            saveButton.textContent = 'Save profile';
+        }
+    });
+
+    if (window.SmashAuth) {
+        SmashAuth.onChange(renderState);
+    }
+})();
+</script>
+</body>
+</html>
