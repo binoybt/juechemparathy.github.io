@@ -172,6 +172,9 @@ function renderUser() {
             <button class="dropdown-item admin-item" onclick="openBlockDaysModal()">
               <span>🚫</span> Block Days
             </button>
+            <button class="dropdown-item admin-item" onclick="openReservePracticeModal()">
+              <span>🟢</span> Reserve Practice
+            </button>
             <div class="dropdown-divider"></div>
             <button class="dropdown-item admin-item" onclick="seedWeeklyIfEmpty()">
               <span>🌱</span> Seed Schedule
@@ -817,6 +820,197 @@ async function saveBlockedDays() {
 }
 
 /*********************
+ * GROUP PRACTICE RESERVATIONS
+ * Overlay on a day + time window. Original P0/P1 sports are unchanged.
+ *********************/
+function getWindowReservation(slot) {
+  const r = slot && slot.reservation;
+  if (!r || !r.title) return null;
+  return r;
+}
+
+function listReservations() {
+  const seen = new Set();
+  const items = [];
+  (latestSlots || []).forEach(slot => {
+    const res = getWindowReservation(slot);
+    if (!res) return;
+    const key = `${slot.dayIndex}_${slot.blockId}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    items.push({
+      slotId: slot.id,
+      title: res.title,
+      dayIndex: slot.dayIndex,
+      dayName: res.dayName || DAYS[slot.dayIndex],
+      blockId: slot.blockId
+    });
+  });
+  return items.sort((a, b) => {
+    const dayDiff = (a.dayIndex ?? 0) - (b.dayIndex ?? 0);
+    if (dayDiff !== 0) return dayDiff;
+    const orderA = TIME_BLOCKS.findIndex(t => t.id === a.blockId);
+    const orderB = TIME_BLOCKS.findIndex(t => t.id === b.blockId);
+    return orderA - orderB;
+  });
+}
+
+function refreshReservePracticeModal() {
+  const modal = document.getElementById("reservePracticeModal");
+  if (!modal || modal.style.display !== "flex") return;
+  populateReserveTimeOptions();
+  renderCurrentReservations();
+}
+
+function openReservePracticeModal() {
+  const modal = document.getElementById("reservePracticeModal");
+  if (!modal) return;
+
+  const dropdown = document.getElementById("userDropdown");
+  if (dropdown) dropdown.classList.remove("show");
+
+  const daySelect = document.getElementById("reserveDay");
+  daySelect.innerHTML = DAYS.map((day, idx) => `<option value="${idx}">${day}</option>`).join("");
+  const todayIndex = new Date().getDay();
+  daySelect.value = String(todayIndex);
+  daySelect.onchange = populateReserveTimeOptions;
+
+  document.getElementById("reserveTitle").value = "";
+  populateReserveTimeOptions();
+  renderCurrentReservations();
+  modal.style.display = "flex";
+}
+
+function closeReservePracticeModal() {
+  const modal = document.getElementById("reservePracticeModal");
+  if (modal) modal.style.display = "none";
+}
+
+function populateReserveTimeOptions() {
+  const daySelect = document.getElementById("reserveDay");
+  const timeSelect = document.getElementById("reserveTime");
+  if (!daySelect || !timeSelect) return;
+
+  const dayIndex = parseInt(daySelect.value, 10);
+  const prev = timeSelect.value;
+  const daySlots = (latestSlots || [])
+    .filter(slot => slot.dayIndex === dayIndex)
+    .sort((a, b) => {
+      const orderA = TIME_BLOCKS.findIndex(t => t.id === a.blockId);
+      const orderB = TIME_BLOCKS.findIndex(t => t.id === b.blockId);
+      return orderA - orderB;
+    });
+
+  if (!daySlots.length) {
+    timeSelect.innerHTML = `<option value="">No time windows for this day</option>`;
+    return;
+  }
+
+  timeSelect.innerHTML = daySlots.map(slot => {
+    const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
+    const label = block?.label || slot.blockId;
+    const reserved = getWindowReservation(slot);
+    const suffix = reserved ? ` — reserved: ${reserved.title}` : "";
+    return `<option value="${slot.blockId}">${label}${suffix}</option>`;
+  }).join("");
+
+  if (prev && [...timeSelect.options].some(o => o.value === prev)) {
+    timeSelect.value = prev;
+  }
+}
+
+function renderCurrentReservations() {
+  const list = document.getElementById("currentReservations");
+  if (!list) return;
+
+  const items = listReservations();
+  if (!items.length) {
+    list.innerHTML = `<div class="reserve-empty">No group-practice reservations.</div>`;
+    return;
+  }
+
+  list.innerHTML = "";
+  items.forEach(res => {
+    const block = TIME_BLOCKS.find(t => t.id === res.blockId);
+    const item = document.createElement("div");
+    item.className = "reserve-item";
+
+    const info = document.createElement("div");
+    info.className = "reserve-item-info";
+    info.innerHTML = `
+      <div class="reserve-item-title">${escapeHtmlJs(res.title)}</div>
+      <div class="reserve-item-meta">${escapeHtmlJs(res.dayName || DAYS[res.dayIndex] || "")} · ${escapeHtmlJs(block?.label || res.blockId || "")}</div>
+    `;
+
+    const clearBtn = document.createElement("button");
+    clearBtn.type = "button";
+    clearBtn.className = "btn danger";
+    clearBtn.textContent = "Clear";
+    clearBtn.onclick = () => clearGroupReservation(res.slotId);
+
+    item.appendChild(info);
+    item.appendChild(clearBtn);
+    list.appendChild(item);
+  });
+}
+
+async function saveGroupReservation(event) {
+  event.preventDefault();
+  if (!currentUser || !isCurrentUserAdmin()) {
+    return alert("Admins only.");
+  }
+
+  const title = (document.getElementById("reserveTitle").value || "").trim();
+  const dayIndex = parseInt(document.getElementById("reserveDay").value, 10);
+  const blockId = document.getElementById("reserveTime").value;
+
+  if (!title) return alert("Please enter a title.");
+  if (Number.isNaN(dayIndex) || !blockId) return alert("Please choose a day and time.");
+
+  const slot = (latestSlots || []).find(s => s.dayIndex === dayIndex && s.blockId === blockId);
+  if (!slot) return alert("That time window is not on the schedule.");
+
+  const existing = getWindowReservation(slot);
+  if (existing && !confirm(`This window is already reserved for "${existing.title}". Replace it with "${title}"?`)) {
+    return;
+  }
+
+  try {
+    await db.collection("slots").doc(slot.id).update({
+      reservation: {
+        title,
+        dayIndex,
+        dayName: DAYS[dayIndex],
+        blockId,
+        reservedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        reservedBy: currentUser.email
+      }
+    });
+    document.getElementById("reserveTitle").value = "";
+  } catch (error) {
+    console.error("Error saving reservation:", error);
+    alert("❌ Failed to reserve: " + error.message);
+  }
+}
+
+async function clearGroupReservation(slotId) {
+  if (!currentUser || !isCurrentUserAdmin()) {
+    return alert("Admins only.");
+  }
+  if (!slotId) return;
+  if (!confirm("Clear this reservation and restore the original game slots?")) return;
+
+  try {
+    await db.collection("slots").doc(slotId).update({
+      reservation: firebase.firestore.FieldValue.delete()
+    });
+  } catch (error) {
+    console.error("Error clearing reservation:", error);
+    alert("❌ Failed to clear: " + error.message);
+  }
+}
+
+/*********************
  * ACTIVE PRIORITY LOGIC
  * P0 is active unless (now >= cutoff AND P0 players < min) → then P1 is active
  *********************/
@@ -920,6 +1114,7 @@ function subscribeSchedule() {
 
       renderTabs(sports);
       renderTabContent();
+      refreshReservePracticeModal();
       
       // Handle deep link after content is rendered
       handleDeepLink();
@@ -1194,15 +1389,15 @@ function renderSlotCard(slot, prio) {
   const active = computeActivePriority(slot) === prio;
   const dayBlocked = isDayBlocked(slot.dayIndex);
   const slotBlocked = isSlotBlocked(slot.id, prio);
+  const reservation = getWindowReservation(slot);
   const isAdmin = currentUser && isCurrentUserAdmin();
 
   const mainLimit = meta.mainLimit || 10;
   const totalPlayers = (p.players || []).length;
-  const mainPlayers = Math.min(totalPlayers, mainLimit);
   const waitingPlayers = Math.max(0, totalPlayers - mainLimit);
 
   const card = document.createElement("div");
-  card.className = `slot-card${active ? " active" : ""}`;
+  card.className = `slot-card${active ? " active" : ""}${reservation ? " reserved" : ""}`;
   card.setAttribute("data-slot-id", slot.id);
   card.setAttribute("data-prio", prio);
 
@@ -1256,19 +1451,44 @@ function renderSlotCard(slot, prio) {
     addGuestBtn.onclick = () => showGuestModal(slot.id, prio);
     buttonContainer.appendChild(addGuestBtn);
   }
+
+  if (isAdmin && reservation && prio === 0) {
+    const clearReserveBtn = document.createElement("button");
+    clearReserveBtn.className = "btn clear-reserve-btn-top";
+    clearReserveBtn.textContent = "Clear";
+    clearReserveBtn.title = "Clear this group-practice reservation";
+    clearReserveBtn.onclick = () => clearGroupReservation(slot.id);
+    buttonContainer.appendChild(clearReserveBtn);
+  }
   
   card.appendChild(top);
 
   const sportTag = document.createElement("div");
   sportTag.className = "sport-tag";
-  sportTag.innerHTML = `<span class="priority-pill ${prio === 0 ? "p0" : "p1"}">${prio === 0 ? "P0" : "P1"}</span><span>${p.sport}</span>`;
+  if (reservation) {
+    sportTag.innerHTML = `<span class="priority-pill reserved">Reserved</span><span class="priority-pill ${prio === 0 ? "p0" : "p1"}">${prio === 0 ? "P0" : "P1"}</span><span>${escapeHtmlJs(reservation.title)}</span>`;
+  } else {
+    sportTag.innerHTML = `<span class="priority-pill ${prio === 0 ? "p0" : "p1"}">${prio === 0 ? "P0" : "P1"}</span><span>${escapeHtmlJs(p.sport)}</span>`;
+  }
   card.appendChild(sportTag);
+
+  if (reservation) {
+    const reserveNotice = document.createElement("div");
+    reserveNotice.className = "slot-reserve-notice";
+    reserveNotice.innerHTML = `<span class="block-icon">🟢</span><span class="block-text">Reserved for ${escapeHtmlJs(reservation.title)}</span>`;
+    card.appendChild(reserveNotice);
+
+    const orig = document.createElement("div");
+    orig.className = "reserved-original";
+    orig.textContent = `Original: ${p.sport}`;
+    card.appendChild(orig);
+  }
   
   // Show blocked slot notice if individual slot is blocked
   if (slotBlocked) {
     const slotBlockNotice = document.createElement("div");
     slotBlockNotice.className = "slot-block-notice";
-    slotBlockNotice.innerHTML = `<span class="block-icon">🚫</span><span class="block-text">${blockedSlots[`${slot.id}_${prio}`].note}</span>`;
+    slotBlockNotice.innerHTML = `<span class="block-icon">🚫</span><span class="block-text">${escapeHtmlJs(blockedSlots[`${slot.id}_${prio}`].note)}</span>`;
     card.appendChild(slotBlockNotice);
   }
 
@@ -1491,10 +1711,14 @@ function appendToTrack(track, entries) {
     } else {
       const pair = document.createElement("div");
       pair.className = "slot-pair";
+      const reservation = getWindowReservation(slotEntries[0].slot);
+      if (reservation) pair.classList.add("reserved");
       const pairBlock = TIME_BLOCKS.find(b => b.id === slotEntries[0].slot.blockId);
       const pairHeader = document.createElement("div");
       pairHeader.className = "slot-pair-header";
-      pairHeader.textContent = pairBlock?.label ?? slotEntries[0].slot.blockId;
+      pairHeader.innerHTML = reservation
+        ? `${escapeHtmlJs(pairBlock?.label ?? slotEntries[0].slot.blockId)} <span class="reserved-header-badge">Reserved</span>`
+        : (pairBlock?.label ?? slotEntries[0].slot.blockId);
       pair.appendChild(pairHeader);
       slotEntries.forEach(e => pair.appendChild(renderSlotCard(e.slot, e.prio)));
       track.appendChild(pair);
@@ -2034,9 +2258,10 @@ function shareSlotOnWhatsApp(slot, prio, p, block) {
   const dayName = DAYS[slot.dayIndex];
   const dateLabel = getDateLabel(slot.dayIndex);
   const timeLabel = block?.label ?? slot.blockId;
-  const sport = p.sport;
+  const reservation = getWindowReservation(slot);
+  const sport = reservation ? reservation.title : p.sport;
   const totalPlayers = (p.players || []).length;
-  const maxPlayers = (SPORT_META[sport] || { max: 20 }).max;
+  const maxPlayers = (SPORT_META[p.sport] || { max: 20 }).max;
   
   // Create deep link URL
   const baseUrl = window.location.origin + window.location.pathname;
@@ -2047,7 +2272,9 @@ function shareSlotOnWhatsApp(slot, prio, p, block) {
   const playerNames = (p.players || [])
     .map(pl => toCamelCase(pl.name || "Player"))
     .join(", ");
+  const reservedLine = reservation ? `🟢 *Reserved* for ${reservation.title}\n` : "";
   const message = `🏸 *Come join us for ${sport}!* 🎉\n` +
+    reservedLine +
     `📅 ${dayName}, ${dateLabel}\n` +
     `⏰ ${timeLabel}\n` +
     `👥 ${totalPlayers}/${maxPlayers} spots filled\n` +
