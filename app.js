@@ -252,65 +252,7 @@ if (window.SmashAuth) {
   });
 }
 
-function isReservationPreview() {
-  return new URLSearchParams(window.location.search).get("preview") === "reservation";
-}
-
-function mockPreviewSlot(dayIndex, blockId, p0Sport, p1Sport, reservedTitle) {
-  const slot = {
-    id: `${dayIndex}_${blockId}`,
-    dayIndex,
-    day: DAYS[dayIndex],
-    blockId,
-    cutoff: new Date(Date.now() + 86400000),
-    p0: { sport: p0Sport, minPlayers: 4, maxPlayers: 20, players: [{ uid: "u1", name: "Alex Thomas" }] },
-    p1: { sport: p1Sport, minPlayers: 4, maxPlayers: 20, players: [] }
-  };
-  if (reservedTitle) {
-    slot.reservation = {
-      title: reservedTitle,
-      dayIndex,
-      dayName: DAYS[dayIndex],
-      blockId
-    };
-  }
-  return slot;
-}
-
-let reservationPreviewApplied = false;
-
-function applyReservationPreview() {
-  if (reservationPreviewApplied && currentUser && currentUser.uid === "preview-admin" && latestSlots.length) {
-    return;
-  }
-  reservationPreviewApplied = true;
-  currentUser = { uid: "preview-admin", displayName: "Preview Admin", email: "preview@smash.local" };
-  currentUserIsAdmin = true;
-  showAllSignups = true;
-  selectedSport = "All Games";
-  const todayIndex = new Date().getDay();
-  latestSlots = [
-    mockPreviewSlot(todayIndex, "6-8", "Pickleball", "Open Badminton"),
-    mockPreviewSlot(todayIndex, "1-5", "Open Badminton", "Pickleball", "Youth Group Practice"),
-    mockPreviewSlot((todayIndex + 1) % 7, "8-10", "Women Badminton", "Open Badminton")
-  ];
-
-  const legend = document.querySelector(".legend");
-  const filtersSection = document.getElementById("filtersSection");
-  if (legend) legend.style.display = "flex";
-  if (filtersSection) filtersSection.style.display = "flex";
-
-  renderUser();
-  renderTabs(["My Games", "All Games", "Pickleball", "Open Badminton", "Women Badminton"]);
-  renderTabContent();
-}
-
 auth.onAuthStateChanged(u => {
-  if (isReservationPreview()) {
-    applyReservationPreview();
-    return;
-  }
-
   currentUser = u;
   renderUser();
   
@@ -355,12 +297,6 @@ auth.onAuthStateChanged(u => {
     `;
   }
 });
-
-if (isReservationPreview()) {
-  window.addEventListener("load", () => {
-    setTimeout(applyReservationPreview, 400);
-  });
-}
 
 /*********************
  * USER PREFERENCES
@@ -1048,14 +984,6 @@ async function saveGroupReservation(event) {
     reservedBy: currentUser.email
   };
 
-  if (isReservationPreview()) {
-    slot.reservation = reservation;
-    document.getElementById("reserveTitle").value = "";
-    renderTabContent();
-    refreshReservePracticeModal();
-    return;
-  }
-
   try {
     reservation.reservedAt = firebase.firestore.FieldValue.serverTimestamp();
     await db.collection("slots").doc(slot.id).update({ reservation });
@@ -1072,14 +1000,6 @@ async function clearGroupReservation(slotId) {
   }
   if (!slotId) return;
   if (!confirm("Clear this reservation and restore the original game slots?")) return;
-
-  if (isReservationPreview()) {
-    const slot = (latestSlots || []).find(s => s.id === slotId);
-    if (slot) delete slot.reservation;
-    renderTabContent();
-    refreshReservePracticeModal();
-    return;
-  }
 
   try {
     await db.collection("slots").doc(slotId).update({
@@ -2277,22 +2197,6 @@ async function submitGuest(event) {
 
 async function addGuest(slotId, prio, guestData) {
   if (!currentUser) return alert("Please sign in first.");
-  if (isReservationPreview()) {
-    const slot = (latestSlots || []).find(s => s.id === slotId);
-    if (!slot) return alert("Slot not found");
-    const key = `p${prio}`;
-    const p = slot[key] || { players: [], sport: "No Games" };
-    p.players = [...(p.players || []), {
-      uid: `guest_${Date.now()}`,
-      name: guestData.fullName,
-      isGuest: true,
-      parishionerName: guestData.parishionerName,
-      familyId: guestData.familyId
-    }];
-    slot[key] = p;
-    renderTabContent();
-    return;
-  }
   const ref = db.collection("slots").doc(slotId);
 
   await db.runTransaction(async tx => {
@@ -2341,14 +2245,6 @@ async function addReservationGuest(slotId, guestData) {
     addedAt: new Date().toISOString()
   };
 
-  if (isReservationPreview()) {
-    const slot = (latestSlots || []).find(s => s.id === slotId);
-    if (!slot || !getWindowReservation(slot)) return alert("Reservation not found");
-    slot.reservation.players = [...(slot.reservation.players || []), guestPlayer];
-    renderTabContent();
-    return;
-  }
-
   const ref = db.collection("slots").doc(slotId);
   await db.runTransaction(async tx => {
     const snap = await tx.get(ref);
@@ -2363,14 +2259,6 @@ async function addReservationGuest(slotId, guestData) {
 async function removeReservationGuest(slotId, guestUid) {
   if (!currentUser || !isCurrentUserAdmin()) {
     return alert("Only admins can remove guest players.");
-  }
-
-  if (isReservationPreview()) {
-    const slot = (latestSlots || []).find(s => s.id === slotId);
-    if (!slot || !getWindowReservation(slot)) return;
-    slot.reservation.players = (slot.reservation.players || []).filter(player => player.uid !== guestUid);
-    renderTabContent();
-    return;
   }
 
   const ref = db.collection("slots").doc(slotId);
@@ -2417,18 +2305,6 @@ async function updateReservationSignup(slotId, action) {
   if (!currentUser) return alert("Please sign in first.");
   const me = { uid: currentUser.uid, name: currentUser.displayName || "Player" };
 
-  if (isReservationPreview()) {
-    const slot = (latestSlots || []).find(s => s.id === slotId);
-    if (!slot || !getWindowReservation(slot)) return alert("Reservation not found");
-    const players = slot.reservation.players || [];
-    const exists = players.some(player => player.uid === me.uid);
-    slot.reservation.players = action === "join"
-      ? (exists ? players : [...players, me])
-      : players.filter(player => player.uid !== me.uid);
-    renderTabContent();
-    return;
-  }
-
   const ref = db.collection("slots").doc(slotId);
   await db.runTransaction(async tx => {
     const snap = await tx.get(ref);
@@ -2446,22 +2322,6 @@ async function updateReservationSignup(slotId, action) {
 
 async function updateSignup(slotId, prio, action) {
   if (!currentUser) return alert("Please sign in first.");
-  if (isReservationPreview()) {
-    const slot = (latestSlots || []).find(s => s.id === slotId);
-    if (!slot) return alert("Slot not found");
-    const key = `p${prio}`;
-    const p = slot[key] || { players: [], sport: "No Games" };
-    const me = { uid: currentUser.uid, name: currentUser.displayName || "Player" };
-    const exists = (p.players || []).some(x => x.uid === me.uid);
-    if (action === "join") {
-      if (!exists) p.players = [...(p.players || []), me];
-    } else {
-      p.players = (p.players || []).filter(x => x.uid !== me.uid);
-    }
-    slot[key] = p;
-    renderTabContent();
-    return;
-  }
   const ref = db.collection("slots").doc(slotId);
 
   await db.runTransaction(async tx => {
