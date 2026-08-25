@@ -207,9 +207,8 @@
             if (typeof helper !== 'function') throw new Error('Profile service is unavailable. Please reload and try again.');
             const response = await helper(firstName.value.trim(), familyId.value.trim());
             if (response.status === 'updated') {
-                const p = response.profile || {};
-                showResult('success', '<strong>Profile updated.</strong> You can now return to Tournament to see the team roster you are part of.'
-                    + '<div style="margin-top:10px;"><a class="button" href="' + returnUrl + '">Return</a></div>');
+                result.className = 'message';
+                result.innerHTML = '';
             } else if (response.status === 'duplicate') {
                 showResult('error', 'More than one parish member has this first name and FID. Please reach out to admin <strong>Binoy or Jue</strong>.');
             } else if (response.status === 'claimed') {

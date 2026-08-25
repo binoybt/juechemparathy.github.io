@@ -1153,10 +1153,17 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     const fid = normKey(familyId);
     if (!first || !fid) throw new Error('First name and FID are required.');
 
-    membersCache = null;
-    additionalMembersCache = null;
-    const directory = await loadMembersDirectory();
-    const matches = directory.filter(function (m) {
+    // FID is a family-level value, so this query reads only that family's
+    // records instead of downloading the full parish directory.
+    let familySnap = await db.collection('members').where('FID', '==', String(familyId).trim()).get();
+    if (familySnap.empty && /^\d+$/.test(String(familyId).trim())) {
+      familySnap = await db.collection('members').where('FID', '==', Number(familyId)).get();
+    }
+    const familyMembers = [];
+    familySnap.forEach(function (doc) {
+      familyMembers.push(normalizeMemberRecord(doc.data() || {}, doc.id, 'members'));
+    });
+    const matches = familyMembers.filter(function (m) {
       return normKey(m.firstName) === first
         && (normKey(m.FID) === fid || normKey(m.familyId) === fid);
     });
