@@ -339,6 +339,27 @@ body {
   border-color: #22c55e;
   box-shadow: 0 2px 10px rgba(22,163,74,.18);
 }
+.reservation-window-card {
+  min-width: 300px;
+  max-width: 360px;
+  padding: 14px;
+  gap: 10px;
+}
+.reservation-window-card .slot-time { color: #047857; }
+.reservation-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  color: #14532d;
+  text-transform: uppercase;
+}
+.reservation-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 .slot-time {
   font-weight: 800;

@@ -252,7 +252,65 @@ if (window.SmashAuth) {
   });
 }
 
+function isReservationPreview() {
+  return new URLSearchParams(window.location.search).get("preview") === "reservation";
+}
+
+function mockPreviewSlot(dayIndex, blockId, p0Sport, p1Sport, reservedTitle) {
+  const slot = {
+    id: `${dayIndex}_${blockId}`,
+    dayIndex,
+    day: DAYS[dayIndex],
+    blockId,
+    cutoff: new Date(Date.now() + 86400000),
+    p0: { sport: p0Sport, minPlayers: 4, maxPlayers: 20, players: [{ uid: "u1", name: "Alex Thomas" }] },
+    p1: { sport: p1Sport, minPlayers: 4, maxPlayers: 20, players: [] }
+  };
+  if (reservedTitle) {
+    slot.reservation = {
+      title: reservedTitle,
+      dayIndex,
+      dayName: DAYS[dayIndex],
+      blockId
+    };
+  }
+  return slot;
+}
+
+let reservationPreviewApplied = false;
+
+function applyReservationPreview() {
+  if (reservationPreviewApplied && currentUser && currentUser.uid === "preview-admin" && latestSlots.length) {
+    return;
+  }
+  reservationPreviewApplied = true;
+  currentUser = { uid: "preview-admin", displayName: "Preview Admin", email: "preview@smash.local" };
+  currentUserIsAdmin = true;
+  showAllSignups = true;
+  selectedSport = "All Games";
+  const todayIndex = new Date().getDay();
+  latestSlots = [
+    mockPreviewSlot(todayIndex, "6-8", "Pickleball", "Open Badminton"),
+    mockPreviewSlot(todayIndex, "1-5", "Open Badminton", "Pickleball", "Youth Group Practice"),
+    mockPreviewSlot((todayIndex + 1) % 7, "8-10", "Women Badminton", "Open Badminton")
+  ];
+
+  const legend = document.querySelector(".legend");
+  const filtersSection = document.getElementById("filtersSection");
+  if (legend) legend.style.display = "flex";
+  if (filtersSection) filtersSection.style.display = "flex";
+
+  renderUser();
+  renderTabs(["My Games", "All Games", "Pickleball", "Open Badminton", "Women Badminton"]);
+  renderTabContent();
+}
+
 auth.onAuthStateChanged(u => {
+  if (isReservationPreview()) {
+    applyReservationPreview();
+    return;
+  }
+
   currentUser = u;
   renderUser();
   
@@ -297,6 +355,12 @@ auth.onAuthStateChanged(u => {
     `;
   }
 });
+
+if (isReservationPreview()) {
+  window.addEventListener("load", () => {
+    setTimeout(applyReservationPreview, 400);
+  });
+}
 
 /*********************
  * USER PREFERENCES
@@ -975,17 +1039,26 @@ async function saveGroupReservation(event) {
     return;
   }
 
+  const reservation = {
+    title,
+    dayIndex,
+    dayName: DAYS[dayIndex],
+    blockId,
+    players: (existing && existing.players) || [],
+    reservedBy: currentUser.email
+  };
+
+  if (isReservationPreview()) {
+    slot.reservation = reservation;
+    document.getElementById("reserveTitle").value = "";
+    renderTabContent();
+    refreshReservePracticeModal();
+    return;
+  }
+
   try {
-    await db.collection("slots").doc(slot.id).update({
-      reservation: {
-        title,
-        dayIndex,
-        dayName: DAYS[dayIndex],
-        blockId,
-        reservedAt: firebase.firestore.FieldValue.serverTimestamp(),
-        reservedBy: currentUser.email
-      }
-    });
+    reservation.reservedAt = firebase.firestore.FieldValue.serverTimestamp();
+    await db.collection("slots").doc(slot.id).update({ reservation });
     document.getElementById("reserveTitle").value = "";
   } catch (error) {
     console.error("Error saving reservation:", error);
@@ -999,6 +1072,14 @@ async function clearGroupReservation(slotId) {
   }
   if (!slotId) return;
   if (!confirm("Clear this reservation and restore the original game slots?")) return;
+
+  if (isReservationPreview()) {
+    const slot = (latestSlots || []).find(s => s.id === slotId);
+    if (slot) delete slot.reservation;
+    renderTabContent();
+    refreshReservePracticeModal();
+    return;
+  }
 
   try {
     await db.collection("slots").doc(slotId).update({
@@ -1099,8 +1180,10 @@ function subscribeSchedule() {
         const userHasGames = latestSlots.some(slot => {
           const p0Players = slot.p0?.players || [];
           const p1Players = slot.p1?.players || [];
+          const reservationPlayers = getWindowReservation(slot)?.players || [];
           return p0Players.some(p => p.uid === currentUser.uid) || 
-                 p1Players.some(p => p.uid === currentUser.uid);
+                 p1Players.some(p => p.uid === currentUser.uid) ||
+                 reservationPlayers.some(p => p.uid === currentUser.uid);
         });
         
         // Default to "My Games" if user has games, otherwise "All Games"
@@ -1256,6 +1339,11 @@ function renderMyGamesContent() {
       .filter(slot => !isTimeSlotInPast(slot.dayIndex, slot.blockId))
       .flatMap(slot => {
         const result = [];
+        const reservation = getWindowReservation(slot);
+        if (reservation) {
+          const hasCheckedIn = (reservation.players || []).some(pl => pl.uid === currentUser.uid);
+          return hasCheckedIn ? [{ slot, prio: "reservation" }] : result;
+        }
         ["p0", "p1"].forEach(key => {
           const prio = key === "p0" ? 0 : 1;
           const payload = slot[key];
@@ -1329,6 +1417,9 @@ function renderAllGamesContent() {
       .filter(slot => !isTimeSlotInPast(slot.dayIndex, slot.blockId))
       .flatMap(slot => {
         const result = [];
+        if (getWindowReservation(slot)) {
+          return [{ slot, prio: "reservation" }];
+        }
         ["p0", "p1"].forEach(key => {
           const prio = key === "p0" ? 0 : 1;
           const payload = slot[key];
@@ -1586,6 +1677,135 @@ function renderSlotCard(slot, prio) {
   return card;
 }
 
+function renderReservedWindowCard(slot) {
+  const reservation = getWindowReservation(slot);
+  const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
+  const players = (reservation && reservation.players) || [];
+  const isAdmin = currentUser && isCurrentUserAdmin();
+  const isIn = !!currentUser && players.some(pl => pl.uid === currentUser.uid);
+  const blocked = isDayBlocked(slot.dayIndex);
+
+  const ICON = {
+    share:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" x2="11" y1="2" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>`,
+    guest:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+    join:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>`,
+    joined: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>`,
+    leave:  `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>`
+  };
+
+  const card = document.createElement("div");
+  card.className = "slot-card reserved reservation-window-card";
+  card.setAttribute("data-slot-id", slot.id);
+  card.setAttribute("data-reservation", "true");
+
+  const top = document.createElement("div");
+  top.className = "slot-time";
+  top.innerHTML = `<span>${escapeHtmlJs(block?.label ?? slot.blockId)}</span><span class="reserved-header-badge">Reserved</span>`;
+  card.appendChild(top);
+
+  const title = document.createElement("div");
+  title.className = "reservation-title";
+  title.textContent = reservation.title;
+  card.appendChild(title);
+
+  const notice = document.createElement("div");
+  notice.className = "slot-reserve-notice";
+  notice.innerHTML = `<span class="block-icon">🟢</span><span class="block-text">Reserved for ${escapeHtmlJs(reservation.title)}</span>`;
+  card.appendChild(notice);
+
+  const metrics = document.createElement("div");
+  metrics.className = "metrics";
+  metrics.textContent = `${players.length} checked in`;
+  card.appendChild(metrics);
+
+  const playersList = document.createElement("div");
+  playersList.className = "players";
+  if (!players.length) {
+    const empty = document.createElement("span");
+    empty.className = "empty";
+    empty.textContent = "No players yet";
+    playersList.appendChild(empty);
+  } else {
+    for (let rowStart = 0; rowStart < players.length; rowStart += 4) {
+      const row = document.createElement("div");
+      row.className = "player-row";
+      players.slice(rowStart, rowStart + 4).forEach(pl => {
+        const wrapper = document.createElement("span");
+        wrapper.className = "player-wrapper";
+        const chip = document.createElement("span");
+        chip.className = "player";
+        chip.textContent = pl.isGuest ? `*${toCamelCase(pl.name)}` : toCamelCase(pl.name);
+        if (pl.isGuest) {
+          chip.title = `Guest - Parishioner: ${pl.parishionerName || "N/A"}, Family ID: ${pl.familyId || "N/A"}`;
+        }
+        wrapper.appendChild(chip);
+        if (pl.isGuest && isAdmin) {
+          const removeBtn = document.createElement("span");
+          removeBtn.className = "remove-guest";
+          removeBtn.textContent = "×";
+          removeBtn.title = "Remove guest player";
+          removeBtn.onclick = e => {
+            e.stopPropagation();
+            if (confirm(`Remove guest player ${pl.name}?`)) {
+              removeReservationGuest(slot.id, pl.uid);
+            }
+          };
+          wrapper.appendChild(removeBtn);
+        }
+        row.appendChild(wrapper);
+      });
+      playersList.appendChild(row);
+    }
+  }
+  card.appendChild(playersList);
+
+  const actions = document.createElement("div");
+  actions.className = "reservation-actions";
+
+  const joinBtn = document.createElement("button");
+  joinBtn.className = "btn primary";
+  joinBtn.innerHTML = isIn ? ICON.joined : ICON.join;
+  joinBtn.title = blocked ? "Day is blocked" : (isIn ? "Checked in" : "Check in");
+  joinBtn.disabled = !currentUser || isIn || blocked;
+  joinBtn.onclick = () => updateReservationSignup(slot.id, "join");
+  actions.appendChild(joinBtn);
+
+  const leaveBtn = document.createElement("button");
+  leaveBtn.className = "btn";
+  leaveBtn.innerHTML = ICON.leave;
+  leaveBtn.title = blocked ? "Day is blocked" : "Leave";
+  leaveBtn.disabled = !currentUser || !isIn || blocked;
+  leaveBtn.onclick = () => updateReservationSignup(slot.id, "leave");
+  actions.appendChild(leaveBtn);
+
+  const guestBtn = document.createElement("button");
+  guestBtn.className = "btn guest-btn-top";
+  guestBtn.innerHTML = ICON.guest;
+  guestBtn.title = "Add Guest";
+  guestBtn.disabled = !currentUser || blocked;
+  guestBtn.onclick = () => showGuestModal(slot.id, "reservation");
+  actions.appendChild(guestBtn);
+
+  const shareBtn = document.createElement("button");
+  shareBtn.className = "btn share-btn-top";
+  shareBtn.innerHTML = ICON.share;
+  shareBtn.title = "Share on WhatsApp";
+  shareBtn.onclick = () => shareReservationOnWhatsApp(slot);
+  actions.appendChild(shareBtn);
+
+  if (isAdmin) {
+    const clearBtn = document.createElement("button");
+    clearBtn.className = "btn clear-reserve-btn-top";
+    clearBtn.textContent = "Clear";
+    clearBtn.title = "Clear this group-practice reservation";
+    clearBtn.onclick = () => clearGroupReservation(slot.id);
+    actions.appendChild(clearBtn);
+  }
+
+  card.appendChild(actions);
+  return card;
+}
+
 function escapeHtmlJs(str) {
   const div = document.createElement("div");
   div.textContent = str ?? "";
@@ -1706,19 +1926,18 @@ function appendToTrack(track, entries) {
   let adIndex = 0;
 
   seen.forEach(slotEntries => {
-    if (slotEntries.length === 1) {
+    const slot = slotEntries[0].slot;
+    if (getWindowReservation(slot)) {
+      track.appendChild(renderReservedWindowCard(slot));
+    } else if (slotEntries.length === 1) {
       track.appendChild(renderSlotCard(slotEntries[0].slot, slotEntries[0].prio));
     } else {
       const pair = document.createElement("div");
       pair.className = "slot-pair";
-      const reservation = getWindowReservation(slotEntries[0].slot);
-      if (reservation) pair.classList.add("reserved");
       const pairBlock = TIME_BLOCKS.find(b => b.id === slotEntries[0].slot.blockId);
       const pairHeader = document.createElement("div");
       pairHeader.className = "slot-pair-header";
-      pairHeader.innerHTML = reservation
-        ? `${escapeHtmlJs(pairBlock?.label ?? slotEntries[0].slot.blockId)} <span class="reserved-header-badge">Reserved</span>`
-        : (pairBlock?.label ?? slotEntries[0].slot.blockId);
+      pairHeader.textContent = pairBlock?.label ?? slotEntries[0].slot.blockId;
       pair.appendChild(pairHeader);
       slotEntries.forEach(e => pair.appendChild(renderSlotCard(e.slot, e.prio)));
       track.appendChild(pair);
@@ -2034,7 +2253,8 @@ async function submitGuest(event) {
   
   const form = event.target;
   const slotId = form.dataset.slotId;
-  const prio = parseInt(form.dataset.prio);
+  const isReservation = form.dataset.prio === "reservation";
+  const prio = isReservation ? null : parseInt(form.dataset.prio);
   
   const guestData = {
     fullName: form.fullName.value.trim(),
@@ -2047,12 +2267,32 @@ async function submitGuest(event) {
     return;
   }
   
-  await addGuest(slotId, prio, guestData);
+  if (isReservation) {
+    await addReservationGuest(slotId, guestData);
+  } else {
+    await addGuest(slotId, prio, guestData);
+  }
   closeGuestModal();
 }
 
 async function addGuest(slotId, prio, guestData) {
   if (!currentUser) return alert("Please sign in first.");
+  if (isReservationPreview()) {
+    const slot = (latestSlots || []).find(s => s.id === slotId);
+    if (!slot) return alert("Slot not found");
+    const key = `p${prio}`;
+    const p = slot[key] || { players: [], sport: "No Games" };
+    p.players = [...(p.players || []), {
+      uid: `guest_${Date.now()}`,
+      name: guestData.fullName,
+      isGuest: true,
+      parishionerName: guestData.parishionerName,
+      familyId: guestData.familyId
+    }];
+    slot[key] = p;
+    renderTabContent();
+    return;
+  }
   const ref = db.collection("slots").doc(slotId);
 
   await db.runTransaction(async tx => {
@@ -2089,6 +2329,61 @@ async function addGuest(slotId, prio, guestData) {
   }).catch(e => alert(e.message));
 }
 
+async function addReservationGuest(slotId, guestData) {
+  if (!currentUser) return alert("Please sign in first.");
+  const guestPlayer = {
+    uid: `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    name: guestData.fullName,
+    isGuest: true,
+    parishionerName: guestData.parishionerName,
+    familyId: guestData.familyId,
+    addedBy: currentUser.email,
+    addedAt: new Date().toISOString()
+  };
+
+  if (isReservationPreview()) {
+    const slot = (latestSlots || []).find(s => s.id === slotId);
+    if (!slot || !getWindowReservation(slot)) return alert("Reservation not found");
+    slot.reservation.players = [...(slot.reservation.players || []), guestPlayer];
+    renderTabContent();
+    return;
+  }
+
+  const ref = db.collection("slots").doc(slotId);
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Slot not found");
+    const reservation = snap.data().reservation;
+    if (!reservation || !reservation.title) throw new Error("Reservation not found");
+    reservation.players = [...(reservation.players || []), guestPlayer];
+    tx.update(ref, { reservation });
+  }).catch(e => alert(e.message));
+}
+
+async function removeReservationGuest(slotId, guestUid) {
+  if (!currentUser || !isCurrentUserAdmin()) {
+    return alert("Only admins can remove guest players.");
+  }
+
+  if (isReservationPreview()) {
+    const slot = (latestSlots || []).find(s => s.id === slotId);
+    if (!slot || !getWindowReservation(slot)) return;
+    slot.reservation.players = (slot.reservation.players || []).filter(player => player.uid !== guestUid);
+    renderTabContent();
+    return;
+  }
+
+  const ref = db.collection("slots").doc(slotId);
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Slot not found");
+    const reservation = snap.data().reservation;
+    if (!reservation || !reservation.title) throw new Error("Reservation not found");
+    reservation.players = (reservation.players || []).filter(player => player.uid !== guestUid);
+    tx.update(ref, { reservation });
+  }).catch(e => alert(e.message));
+}
+
 async function removeGuest(slotId, prio, guestUid) {
   if (!currentUser || !isCurrentUserAdmin()) {
     return alert("Only admins can remove guest players.");
@@ -2118,8 +2413,55 @@ async function removeGuest(slotId, prio, guestUid) {
 /*********************
  * JOIN / LEAVE (transaction)
  *********************/
+async function updateReservationSignup(slotId, action) {
+  if (!currentUser) return alert("Please sign in first.");
+  const me = { uid: currentUser.uid, name: currentUser.displayName || "Player" };
+
+  if (isReservationPreview()) {
+    const slot = (latestSlots || []).find(s => s.id === slotId);
+    if (!slot || !getWindowReservation(slot)) return alert("Reservation not found");
+    const players = slot.reservation.players || [];
+    const exists = players.some(player => player.uid === me.uid);
+    slot.reservation.players = action === "join"
+      ? (exists ? players : [...players, me])
+      : players.filter(player => player.uid !== me.uid);
+    renderTabContent();
+    return;
+  }
+
+  const ref = db.collection("slots").doc(slotId);
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new Error("Slot not found");
+    const reservation = snap.data().reservation;
+    if (!reservation || !reservation.title) throw new Error("Reservation not found");
+    const players = reservation.players || [];
+    const exists = players.some(player => player.uid === me.uid);
+    reservation.players = action === "join"
+      ? (exists ? players : [...players, me])
+      : players.filter(player => player.uid !== me.uid);
+    tx.update(ref, { reservation });
+  }).catch(e => alert(e.message));
+}
+
 async function updateSignup(slotId, prio, action) {
   if (!currentUser) return alert("Please sign in first.");
+  if (isReservationPreview()) {
+    const slot = (latestSlots || []).find(s => s.id === slotId);
+    if (!slot) return alert("Slot not found");
+    const key = `p${prio}`;
+    const p = slot[key] || { players: [], sport: "No Games" };
+    const me = { uid: currentUser.uid, name: currentUser.displayName || "Player" };
+    const exists = (p.players || []).some(x => x.uid === me.uid);
+    if (action === "join") {
+      if (!exists) p.players = [...(p.players || []), me];
+    } else {
+      p.players = (p.players || []).filter(x => x.uid !== me.uid);
+    }
+    slot[key] = p;
+    renderTabContent();
+    return;
+  }
   const ref = db.collection("slots").doc(slotId);
 
   await db.runTransaction(async tx => {
@@ -2254,6 +2596,26 @@ const dayDate = `${date.toString()}`;
 /*********************
  * SHARE FUNCTIONALITY
  *********************/
+function shareReservationOnWhatsApp(slot) {
+  const reservation = getWindowReservation(slot);
+  if (!reservation) return;
+  const block = TIME_BLOCKS.find(b => b.id === slot.blockId);
+  const dayName = DAYS[slot.dayIndex];
+  const dateLabel = getDateLabel(slot.dayIndex);
+  const timeLabel = block?.label ?? slot.blockId;
+  const players = reservation.players || [];
+  const playerNames = players.map(pl => toCamelCase(pl.name || "Player")).join(", ");
+  const baseUrl = window.location.origin + window.location.pathname;
+  const deepLink = `${baseUrl}?slotId=${encodeURIComponent(slot.id)}&reservation=1`;
+  const message = `🟢 *${reservation.title} — Reserved*\n` +
+    `📅 ${dayName}, ${dateLabel}\n` +
+    `⏰ ${timeLabel}\n` +
+    `👥 ${players.length} checked in\n` +
+    (playerNames ? `\n${playerNames}\n` : "") +
+    `\nTap to check in:\n \n${deepLink}`;
+  window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_self");
+}
+
 function shareSlotOnWhatsApp(slot, prio, p, block) {
   const dayName = DAYS[slot.dayIndex];
   const dateLabel = getDateLabel(slot.dayIndex);
@@ -2295,8 +2657,9 @@ function handleDeepLink() {
   const urlParams = new URLSearchParams(window.location.search);
   const slotId = urlParams.get('slotId');
   const prio = urlParams.get('prio');
+  const isReservationLink = urlParams.get('reservation') === '1';
   
-  if (!slotId || prio === null) return;
+  if (!slotId || (!isReservationLink && prio === null)) return;
   
   deepLinkHandled = true; // Mark as handled
   
@@ -2310,17 +2673,23 @@ function handleDeepLink() {
     const slot = latestSlots.find(s => s.id === slotId);
     if (!slot) return;
     
-    const priority = parseInt(prio);
-    const sport = slot[`p${priority}`]?.sport;
-    if (!sport || sport === "No Games") return;
-    
-    // Navigate to the sport tab
-    selectedSport = sport;
+    const priority = isReservationLink ? null : parseInt(prio);
+    if (isReservationLink) {
+      if (!getWindowReservation(slot)) return;
+      selectedSport = ALL_GAMES_TAB;
+    } else {
+      const sport = slot[`p${priority}`]?.sport;
+      if (!sport || sport === "No Games") return;
+      selectedSport = sport;
+    }
     renderTabContent();
     
     // Scroll to the slot after a short delay to allow rendering
     setTimeout(() => {
-      const slotCard = document.querySelector(`[data-slot-id="${slotId}"][data-prio="${priority}"]`);
+      const selector = isReservationLink
+        ? `[data-slot-id="${slotId}"][data-reservation="true"]`
+        : `[data-slot-id="${slotId}"][data-prio="${priority}"]`;
+      const slotCard = document.querySelector(selector);
       if (slotCard) {
         slotCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
         // Highlight the card briefly
