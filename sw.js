@@ -1,8 +1,8 @@
-const CACHE_NAME = 'smash-signup-v7'; // Increment version on each deployment
+const CACHE_NAME = 'smash-signup-v8'; // Increment version on each deployment
 
 // Install event - activate immediately
 self.addEventListener('install', (event) => {
-  console.log('Service Worker: Installing v7 with network-first strategy');
+  console.log('Service Worker: Installing v8 with network-first strategy');
   self.skipWaiting(); // Activate immediately
 });
 
@@ -63,7 +63,7 @@ self.addEventListener('activate', (event) => {
         })
       );
     }).then(() => {
-      console.log('Service Worker: Activated v7, taking control of all pages');
+      console.log('Service Worker: Activated v8, taking control of all pages');
       return self.clients.claim(); // Take control of all pages immediately
     })
   );

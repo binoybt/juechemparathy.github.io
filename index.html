@@ -26,7 +26,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap">
-    <link rel="stylesheet" href="style.css?v=7" />
+    <link rel="stylesheet" href="style.css?v=8" />
 
     <!-- Firebase SDKs (Compat builds for simple <script> use) -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -68,6 +68,7 @@
                 Guidelines
             </a>
         </div>
+        <div><span class="pill reserved">Reserved</span> Group Practice</div>
     </section>
 
     <section id="filtersSection" class="filters">
@@ -174,11 +175,42 @@
     </div>
 </div>
 
+<!-- Reserve Group Practice Modal (Admin Only) -->
+<div id="reservePracticeModal" class="modal">
+    <div class="modal-content" style="max-width: 640px; max-height: 80vh; overflow-y: auto;">
+        <span class="modal-close" onclick="closeReservePracticeModal()">&times;</span>
+        <h2>Reserve Group Practice</h2>
+        <p style="color:#6b7280;font-size:14px;margin-bottom:16px;">Reserve a time window for a group. The daily schedule will show the group name in green as Reserved. Check-in, guest players, and WhatsApp share stay available. Clearing a reservation restores the original game slots.</p>
+        <form id="reservePracticeForm" onsubmit="saveGroupReservation(event)">
+            <div class="form-group">
+                <label for="reserveTitle">Title *</label>
+                <input type="text" id="reserveTitle" name="reserveTitle" required placeholder="e.g. Youth Group Practice" maxlength="80" />
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="reserveDay">Day *</label>
+                    <select id="reserveDay" name="reserveDay" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="reserveTime">Time *</label>
+                    <select id="reserveTime" name="reserveTime" required></select>
+                </div>
+            </div>
+            <div class="form-actions" style="margin-top:8px;">
+                <button type="button" class="btn" onclick="closeReservePracticeModal()">Close</button>
+                <button type="submit" class="btn primary">Reserve Window</button>
+            </div>
+        </form>
+        <h3 class="reserve-list-heading">Current reservations</h3>
+        <div id="currentReservations" class="reserve-list"></div>
+    </div>
+</div>
+
 <!-- Your Firebase config -->
 <script src="firebase-config.js?v=14"></script>
 
 <!-- App logic -->
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 
 <!-- Service Worker Registration for PWA -->
 <script>
