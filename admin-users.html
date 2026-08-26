@@ -669,7 +669,11 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
                 profileUpdatedBy: (currentUser && currentUser.uid) || ''
             }, { merge: true });
 
-            if (nextClaimRef) {
+            // Admins may update an existing identity claim, but current
+            // Firestore rules only let the member create a missing claim for
+            // their own UID. Skip creation here; verified members create it
+            // automatically on their next normal sign-in.
+            if (nextClaimRef && nextClaimSnap && nextClaimSnap.exists) {
                 tx.set(nextClaimRef, {
                     uid: u.__id,
                     email: String(u.email || '').toLowerCase(),
