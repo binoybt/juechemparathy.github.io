@@ -3768,6 +3768,9 @@
         + (team.captainFamilyId ? ' <small style="color:var(--t-muted);">· FID ' + escapeHtml(team.captainFamilyId) + '</small>' : '')
         + (team.captainUid ? '' : ' <span class="t-badge nologin">no login yet</span>')
       : '<span style="color:var(--t-muted);">No captain assigned yet.</span>';
+    const removeCaptainAction = captainAssigned && canManageCaptains()
+      ? '<button class="t-btn danger sm" data-remove-roster-captain>Remove captain</button>'
+      : '';
 
     // Lock state banner + admin lock/unlock control.
     const lockBanner = locked
@@ -3791,7 +3794,7 @@
 
     body.innerHTML = `
       <div class="t-roster-head">
-        <div>${captainLine}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${captainLine}${removeCaptainAction}</div>
         <div class="t-roster-count${maxSize && count > maxSize ? ' is-over' : ''}">${rosterCountLabel(sport, team)} member${count === 1 ? '' : 's'}${maxSize ? ' max' : ''}</div>
       </div>
       ${lockBanner}
@@ -3831,6 +3834,14 @@
     if (addBtn) {
       addBtn.addEventListener('click', function () {
         openMemberPicker(ctx.tournamentId, ctx.sportId, ctx.teamId);
+      });
+    }
+    const removeCaptainBtn = body.querySelector('[data-remove-roster-captain]');
+    if (removeCaptainBtn) {
+      removeCaptainBtn.addEventListener('click', async function () {
+        if (!confirm('Remove this captain and remove them from the team roster?')) return;
+        await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, null);
+        rerenderRoster();
       });
     }
     body.querySelectorAll('[data-remove]').forEach(function (btn) {
