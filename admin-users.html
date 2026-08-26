@@ -471,7 +471,7 @@ function renderAll() {
             : (isLab
                 ? '<button class="btn danger" data-action="revoke-lab">Revoke lab access</button>'
                 : '<button class="btn" data-action="grant-lab">Grant lab access</button>');
-        const profileBtn = '<button class="btn" data-action="edit-profile">Edit profile</button>';
+        const profileBtn = '<button class="btn" data-action="edit-profile">Update profile data</button>';
 
         const fid = String(u.FID || u.familyId || '').trim();
         const tr = document.createElement('tr');

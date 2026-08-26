@@ -227,7 +227,7 @@
       uid: person.uid || '',
       email: (person.email || '').toLowerCase() || '',
       addedByUid: currentUid() || '',
-      addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
+      addedByName: signedInDisplayName(),
       addedAt: new Date().toISOString()
     };
   }
@@ -508,6 +508,11 @@
   // known-user. Admin can always do everything. A signed-in user who is also
   // the captain of a specific team can edit that team's roster.
   function currentUid() { return state.user ? state.user.uid : null; }
+  function signedInDisplayName() {
+    const profile = state.currentProfile || {};
+    const profileName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
+    return profileName || (state.user && (state.user.displayName || state.user.email)) || '';
+  }
 
   const ADMIN_UI_KEY = 'smash.tournament.adminUi';
 
@@ -1159,7 +1164,7 @@
     if (!state.user) {
       box.innerHTML = `<button class="t-nav-btn" onclick="window.__tournament.signIn()">Sign in</button>`;
     } else {
-      const label = isAdminUi() ? 'Admin' : (state.user.displayName || state.user.email || 'You');
+      const label = isAdminUi() ? 'Admin' : (signedInDisplayName() || 'You');
       box.innerHTML = `
         <span class="t-user-chip"><span class="dot"></span>${escapeHtml(label)}</span>
         <a class="t-nav-btn" href="profile.html?return=tournament.html">Profile</a>
@@ -4016,7 +4021,7 @@
       uid: '',
       email: '',
       addedByUid: currentUid() || '',
-      addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
+      addedByName: signedInDisplayName(),
       // Use an ISO string rather than serverTimestamp — Firestore does not
       // allow FieldValue sentinels inside nested arrays.
       addedAt: new Date().toISOString()
