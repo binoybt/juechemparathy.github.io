@@ -157,6 +157,34 @@
         .toast.error { background: #ef4444; }
 
         .loading-state { text-align: center; padding: 40px; color: #6b7280; }
+        .modal {
+            display: none; position: fixed; inset: 0; z-index: 1000;
+            align-items: center; justify-content: center; padding: 18px;
+            background: rgba(15,23,42,.65);
+        }
+        .modal.open { display: flex; }
+        .modal-card {
+            width: min(500px, 100%); max-height: 90vh; overflow-y: auto;
+            background: #fff; border-radius: 16px; padding: 24px;
+            box-shadow: 0 24px 60px rgba(15,23,42,.3);
+        }
+        .modal-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .modal-head h2 { font-size: 1.25rem; }
+        .modal-close { border: 0; background: transparent; cursor: pointer; font-size: 1.4rem; color: #6b7280; }
+        .modal-copy { color: #6b7280; font-size: .86rem; line-height: 1.45; margin-bottom: 18px; }
+        .profile-account {
+            padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 9px;
+            background: #f9fafb; color: #4b5563; font-size: .84rem; margin-bottom: 16px;
+        }
+        .form-field { margin-bottom: 14px; }
+        .form-field label { display: block; margin-bottom: 5px; font-size: .82rem; font-weight: 700; color: #374151; }
+        .form-field input {
+            width: 100%; padding: 10px 12px; border: 1.5px solid #d1d5db;
+            border-radius: 8px; font: inherit;
+        }
+        .form-field input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.12); }
+        .modal-status { min-height: 20px; color: #b91c1c; font-size: .84rem; margin-top: 4px; }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
     </style>
 
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -240,6 +268,36 @@
     </div>
 </main>
 
+<div id="profileEditor" class="modal" role="dialog" aria-modal="true" aria-labelledby="profileEditorTitle">
+    <div class="modal-card">
+        <div class="modal-head">
+            <h2 id="profileEditorTitle">Update profile data</h2>
+            <button type="button" class="modal-close" onclick="closeProfileEditor()" aria-label="Close">&times;</button>
+        </div>
+        <p class="modal-copy">Enter the member's details exactly as listed in members.csv. Saving updates the selected user profile and roster identity.</p>
+        <div id="profileEditorAccount" class="profile-account"></div>
+        <form id="profileEditorForm">
+            <div class="form-field">
+                <label for="profileFirstName">First name</label>
+                <input id="profileFirstName" type="text" required autocomplete="off" />
+            </div>
+            <div class="form-field">
+                <label for="profileLastName">Last name</label>
+                <input id="profileLastName" type="text" required autocomplete="off" />
+            </div>
+            <div class="form-field">
+                <label for="profileFid">FID (Family ID)</label>
+                <input id="profileFid" type="text" required inputmode="numeric" autocomplete="off" />
+            </div>
+            <div id="profileEditorStatus" class="modal-status" role="alert"></div>
+            <div class="modal-actions">
+                <button type="button" class="btn" onclick="closeProfileEditor()">Cancel</button>
+                <button id="profileEditorSave" type="submit" class="btn primary">Save profile</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script src="firebase-config.js?v=15"></script>
@@ -249,6 +307,8 @@ let currentFilter = 'all';
 let currentUser = null;
 let searchTimer = null;
 let searchRequestToken = 0;
+let editingProfileUser = null;
+let membersCsvCache = null;
 
 function toast(msg, type) {
     const el = document.getElementById('toast');
@@ -489,7 +549,7 @@ function renderAll() {
         tr.querySelectorAll('[data-action]').forEach(function (actionBtn) {
             actionBtn.addEventListener('click', function () {
                 const action = actionBtn.getAttribute('data-action');
-                if (action === 'edit-profile') editMemberProfile(u, actionBtn);
+                if (action === 'edit-profile') openProfileEditor(u);
                 else if (action === 'promote') promote(u, actionBtn);
                 else if (action === 'demote') demote(u, actionBtn);
                 else if (action === 'grant-lab') grantLabUser(u, actionBtn);
@@ -500,72 +560,83 @@ function renderAll() {
     });
 }
 
-async function editMemberProfile(u, btn) {
+function openProfileEditor(u) {
+    editingProfileUser = u;
     const names = displayNames(u);
-    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
-    const enteredFirst = prompt('First name in the parish directory for ' + label + ':', names.first || '');
-    if (enteredFirst === null) return;
-    const firstName = enteredFirst.trim();
-    if (!firstName) {
-        toast('First name is required.', 'error');
+    document.getElementById('profileEditorAccount').textContent =
+        u.email || ((names.first + ' ' + names.last).trim()) || u.__id;
+    document.getElementById('profileFirstName').value = names.first || '';
+    document.getElementById('profileLastName').value = names.last || '';
+    document.getElementById('profileFid').value = String(u.FID || u.familyId || '').trim();
+    document.getElementById('profileEditorStatus').textContent = '';
+    document.getElementById('profileEditor').classList.add('open');
+    setTimeout(function () { document.getElementById('profileFirstName').focus(); }, 0);
+}
+
+function closeProfileEditor() {
+    document.getElementById('profileEditor').classList.remove('open');
+    document.getElementById('profileEditorStatus').textContent = '';
+    editingProfileUser = null;
+}
+
+async function loadMembersCsvForProfileEditor() {
+    if (membersCsvCache) return membersCsvCache;
+    const response = await fetch('members.csv', { cache: 'no-cache' });
+    if (!response.ok) throw new Error('Could not load members.csv (HTTP ' + response.status + ').');
+    const helpers = window.__smashOnboarding || {};
+    if (typeof helpers.parseMembersCsv !== 'function') {
+        throw new Error('members.csv parser is unavailable. Reload the page and try again.');
+    }
+    membersCsvCache = helpers.parseMembersCsv(await response.text());
+    return membersCsvCache;
+}
+
+document.getElementById('profileEditorForm').addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const u = editingProfileUser;
+    if (!u) return;
+    const firstName = document.getElementById('profileFirstName').value.trim();
+    const lastName = document.getElementById('profileLastName').value.trim();
+    const fid = document.getElementById('profileFid').value.trim();
+    const status = document.getElementById('profileEditorStatus');
+    const saveBtn = document.getElementById('profileEditorSave');
+    status.textContent = '';
+
+    if (!firstName || !lastName || !fid) {
+        status.textContent = 'First name, last name, and FID are required.';
         return;
     }
 
-    const enteredLast = prompt('Last name in the parish directory for ' + label + ':', names.last || '');
-    if (enteredLast === null) return;
-    const lastName = enteredLast.trim();
-    if (!lastName) {
-        toast('Last name is required.', 'error');
-        return;
-    }
-
-    const currentFid = String(u.FID || u.familyId || '').trim();
-    const enteredFid = prompt('Enter the parish Family ID (FID) for ' + label + ':', currentFid);
-    if (enteredFid === null) return;
-    const fid = enteredFid.trim();
-    if (!fid) {
-        toast('FID is required.', 'error');
-        return;
-    }
-
-    const originalText = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Checking…';
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
     try {
-        let familySnap = await db.collection('members').where('FID', '==', fid).get();
-        if (familySnap.empty && /^\d+$/.test(fid)) {
-            familySnap = await db.collection('members').where('FID', '==', Number(fid)).get();
-        }
-
-        const matches = [];
-        familySnap.forEach(function (doc) {
-            const member = doc.data() || {};
-            if (String(member.firstName || '').trim().toLowerCase() === firstName.toLowerCase()
-                && String(member.lastName || '').trim().toLowerCase() === lastName.toLowerCase()) {
-                matches.push({
-                    firstName: String(member.firstName || '').trim(),
-                    lastName: String(member.lastName || '').trim(),
-                    familyName: String(member.familyName || '').trim(),
-                    familyId: String(member.FID || member.familyId || fid).trim(),
-                    memberId: String(member.memberId || '').trim()
-                });
-            }
+        const directory = await loadMembersCsvForProfileEditor();
+        const matches = directory.filter(function (member) {
+            return String(member.firstName || '').trim().toLowerCase() === firstName.toLowerCase()
+                && String(member.lastName || '').trim().toLowerCase() === lastName.toLowerCase()
+                && String(member.familyId || member.FID || '').trim() === fid;
         });
-
         if (!matches.length) {
-            throw new Error('No parish member matches that first name, last name, and FID.');
+            throw new Error('No members.csv record matches that first name, last name, and FID.');
         }
         if (matches.length > 1) {
-            throw new Error('Multiple parish members match that name and FID. Resolve the duplicate in the directory first.');
+            throw new Error('Multiple members.csv records match those details. Resolve the duplicate first.');
         }
 
         const member = matches[0];
+        const canonical = {
+            firstName: String(member.firstName || '').trim(),
+            lastName: String(member.lastName || '').trim(),
+            familyName: String(member.familyName || '').trim(),
+            familyId: String(member.familyId || member.FID || fid).trim(),
+            memberId: String(member.memberId || '').trim()
+        };
         const userRef = db.collection('users').doc(u.__id);
-        const nextClaimRef = member.memberId
-            ? db.collection('identityClaims').doc('mid:' + member.memberId)
+        const nextClaimRef = canonical.memberId
+            ? db.collection('identityClaims').doc('mid:' + canonical.memberId)
             : null;
         const oldMemberId = String(u.memberId || '').trim();
-        const oldClaimRef = oldMemberId && oldMemberId !== member.memberId
+        const oldClaimRef = oldMemberId && oldMemberId !== canonical.memberId
             ? db.collection('identityClaims').doc('mid:' + oldMemberId)
             : null;
         const FV = firebase.firestore.FieldValue;
@@ -586,14 +657,14 @@ async function editMemberProfile(u, btn) {
                 verified: true,
                 verifiedAt: FV.serverTimestamp(),
                 verifiedBy: (currentUser && currentUser.email) || 'admin',
-                firstName: member.firstName,
-                lastName: member.lastName,
-                firstNameLower: member.firstName.toLowerCase(),
-                lastNameLower: member.lastName.toLowerCase(),
-                familyId: member.familyId,
-                FID: member.familyId,
-                familyName: member.familyName,
-                memberId: member.memberId,
+                firstName: canonical.firstName,
+                lastName: canonical.lastName,
+                firstNameLower: canonical.firstName.toLowerCase(),
+                lastNameLower: canonical.lastName.toLowerCase(),
+                familyId: canonical.familyId,
+                FID: canonical.familyId,
+                familyName: canonical.familyName,
+                memberId: canonical.memberId,
                 profileUpdatedAt: FV.serverTimestamp(),
                 profileUpdatedBy: (currentUser && currentUser.uid) || ''
             }, { merge: true });
@@ -602,10 +673,10 @@ async function editMemberProfile(u, btn) {
                 tx.set(nextClaimRef, {
                     uid: u.__id,
                     email: String(u.email || '').toLowerCase(),
-                    FID: member.familyId,
-                    firstName: member.firstName,
-                    lastName: member.lastName,
-                    memberId: member.memberId,
+                    FID: canonical.familyId,
+                    firstName: canonical.firstName,
+                    lastName: canonical.lastName,
+                    memberId: canonical.memberId,
                     claimedAt: FV.serverTimestamp()
                 }, { merge: true });
             }
@@ -614,17 +685,36 @@ async function editMemberProfile(u, btn) {
             }
         });
 
-        toast('Profile updated for ' + label + '.');
+        Object.assign(u, {
+            firstName: canonical.firstName,
+            lastName: canonical.lastName,
+            firstNameLower: canonical.firstName.toLowerCase(),
+            lastNameLower: canonical.lastName.toLowerCase(),
+            familyId: canonical.familyId,
+            FID: canonical.familyId,
+            familyName: canonical.familyName,
+            memberId: canonical.memberId
+        });
+        closeProfileEditor();
+        toast('Profile data saved for ' + canonical.firstName + ' ' + canonical.lastName + '.');
         await refreshCurrentSearch();
-        btn.disabled = false;
-        btn.textContent = originalText;
     } catch (err) {
         console.error('Profile update failed:', err);
-        toast('Could not update profile: ' + (err.message || err), 'error');
-        btn.disabled = false;
-        btn.textContent = originalText;
+        status.textContent = err.message || String(err);
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save profile';
     }
-}
+});
+
+document.getElementById('profileEditor').addEventListener('click', function (event) {
+    if (event.target === this) closeProfileEditor();
+});
+document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && document.getElementById('profileEditor').classList.contains('open')) {
+        closeProfileEditor();
+    }
+});
 
 async function promote(u, btn) {
     const names = displayNames(u);
