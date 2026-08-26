@@ -84,7 +84,7 @@ function toCamelCase(name) {
 
 function currentUserDisplayName() {
   const profileName = currentUserProfile
-    ? [currentUserProfile.firstName, currentUserProfile.lastName].filter(Boolean).join(' ').trim()
+    ? [currentUserProfile.firstName, currentUserProfile.middleName, currentUserProfile.lastName].filter(Boolean).join(' ').trim()
     : '';
   return profileName
     || (currentUser && currentUser.displayName)

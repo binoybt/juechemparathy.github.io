@@ -116,6 +116,11 @@
             </div>
 
             <div class="field">
+                <label for="middleName">Middle name (optional)</label>
+                <input id="middleName" name="middleName" type="text" autocomplete="additional-name" maxlength="80" />
+            </div>
+
+            <div class="field">
                 <label for="familyId">FID (Family ID)</label>
                 <input id="familyId" name="familyId" type="text" required inputmode="numeric" maxlength="20" />
                 <div class="hint">Family members share an FID. Your first name identifies the individual member.</div>
@@ -130,7 +135,7 @@
     </section>
 </main>
 
-<script src="firebase-config.js?v=15"></script>
+<script src="firebase-config.js?v=16"></script>
 <script>
 (function () {
     const params = new URLSearchParams(window.location.search);
@@ -147,6 +152,7 @@
     const account = document.getElementById('account');
     const current = document.getElementById('currentProfile');
     const firstName = document.getElementById('firstName');
+    const middleName = document.getElementById('middleName');
     const familyId = document.getElementById('familyId');
     const result = document.getElementById('resultMessage');
     const saveButton = document.getElementById('saveButton');
@@ -180,11 +186,12 @@
         const fid = String(profile.familyId || profile.FID || '').trim();
         if (lastUid !== s.user.uid) {
             firstName.value = profile.firstName || '';
+            middleName.value = profile.middleName || '';
             familyId.value = fid;
             lastUid = s.user.uid;
         }
         if (profile.firstName && fid) {
-            const fullName = [profile.firstName, profile.lastName].filter(Boolean).join(' ');
+            const fullName = [profile.firstName, profile.middleName, profile.lastName].filter(Boolean).join(' ');
             current.className = 'current show';
             current.innerHTML = '<strong>Current linked profile:</strong> ' + escapeHtml(fullName)
                 + ' · FID ' + escapeHtml(fid)
@@ -211,7 +218,7 @@
             const helper = window.__smashOnboarding
                 && window.__smashOnboarding.updateCurrentProfileByFirstNameAndFid;
             if (typeof helper !== 'function') throw new Error('Profile service is unavailable. Please reload and try again.');
-            const response = await helper(firstName.value.trim(), familyId.value.trim());
+            const response = await helper(firstName.value.trim(), familyId.value.trim(), middleName.value.trim());
             if (response.status === 'updated') {
                 result.className = 'message';
                 result.innerHTML = '';

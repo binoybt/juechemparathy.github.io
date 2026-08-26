@@ -222,6 +222,7 @@
       memberId: person.memberId || '',
       familyId: person.familyId ? String(person.familyId) : '',
       firstName: person.firstName || '',
+      middleName: person.middleName || '',
       lastName: person.lastName || '',
       familyName: person.familyName || '',
       uid: person.uid || '',
@@ -510,7 +511,7 @@
   function currentUid() { return state.user ? state.user.uid : null; }
   function signedInDisplayName() {
     const profile = state.currentProfile || {};
-    const profileName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
+    const profileName = [profile.firstName, profile.middleName, profile.lastName].filter(Boolean).join(' ').trim();
     return profileName || (state.user && (state.user.displayName || state.user.email)) || '';
   }
 
@@ -3434,6 +3435,7 @@
       uid: doc.id,
       email: (d.email || e).toLowerCase(),
       firstName: d.firstName || split.firstName || '',
+      middleName: d.middleName || '',
       lastName: d.lastName || split.lastName || '',
       familyId: d.familyId != null ? String(d.familyId) : (d.FID != null ? String(d.FID) : ''),
       memberId: d.memberId != null ? String(d.memberId) : '',
@@ -3485,7 +3487,7 @@
       resultHtml = '<div style="padding:12px;color:#991b1b;">' + escapeHtml(ctx.error) + '</div>';
     } else if (ctx.result && ctx.result.found) {
       const u = ctx.result;
-      const fullName = ((u.firstName || '') + ' ' + (u.lastName || '')).trim();
+      const fullName = [u.firstName, u.middleName, u.lastName].filter(Boolean).join(' ').trim();
       const isCurrent = team && (
         (team.captainUid && u.uid && u.uid === team.captainUid) ||
         (team.captainEmail && u.email && u.email === String(team.captainEmail).toLowerCase())
@@ -3627,7 +3629,7 @@
       ? {
           captainUid:      person.uid || null,
           captainName:     (
-                             ((person.firstName || '') + ' ' + (person.lastName || '')).trim()
+                             [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim()
                              || person.displayName || person.email || null
                            ),
           captainEmail:    (person.email || '').toLowerCase() || null,
@@ -3656,11 +3658,12 @@
         memberId: person.memberId || '',
         familyId: person.familyId ? String(person.familyId) : '',
         firstName: person.firstName || '',
+        middleName: person.middleName || '',
         lastName: person.lastName || '',
         familyName: person.familyName || '',
         uid: person.uid || '',
         email: (person.email || '').toLowerCase() || '',
-        name: ((person.firstName || '') + ' ' + (person.lastName || '')).trim()
+        name: [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim()
           || person.displayName || person.email || ''
       };
       const alreadyHere = nextRoster.some(function (r) { return membersMatch(incoming, r); })
@@ -3668,7 +3671,7 @@
       if (!alreadyHere) {
         const otherTeam = findOtherTeamForMember(targetSport.teams || [], teamId, incoming);
         if (otherTeam) {
-          toast((((person.firstName || '') + ' ' + (person.lastName || '')).trim() || 'That person')
+          toast(([person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim() || 'That person')
             + ' is already on ' + (otherTeam.name || otherTeam.id)
             + ' for this sport. A person can only be on one team per sport.', 'error');
           return;
@@ -3763,8 +3766,8 @@
       const aCap = isCaptainPerson(team, a.member) ? 0 : 1;
       const bCap = isCaptainPerson(team, b.member) ? 0 : 1;
       if (aCap !== bCap) return aCap - bCap;
-      return ((a.member.firstName || '') + (a.member.lastName || ''))
-        .localeCompare((b.member.firstName || '') + (b.member.lastName || ''));
+      return [a.member.firstName, a.member.middleName, a.member.lastName].filter(Boolean).join(' ')
+        .localeCompare([b.member.firstName, b.member.middleName, b.member.lastName].filter(Boolean).join(' '));
     });
 
     const title = (sport.emoji || '🏅') + ' ' + (sport.label || sport.id) + ' — ' + teamPublicName(team) + ' roster';
@@ -3822,7 +3825,7 @@
           ? '<div class="t-empty-note">No members added yet.</div>'
           : rosterEntries.map(function (entry) {
               const r = entry.member;
-              const nm = ((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.name || '(unnamed)';
+              const nm = [r.firstName, r.middleName, r.lastName].filter(Boolean).join(' ').trim() || r.name || '(unnamed)';
               const isCap = isCaptainPerson(team, r);
               let rowAction = '';
               if (isCap && canManageCaptains()) {
