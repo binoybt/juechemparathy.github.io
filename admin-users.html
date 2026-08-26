@@ -192,7 +192,7 @@
     <div id="mainContent" style="display:none;">
         <div class="header-card">
             <h2>All members</h2>
-            <p>Everyone who has signed in is listed here. Grant or revoke admin, or grant the lab-user role so they can test in-progress features (Tournament now; more later) as regular members. FID is stored after they match the parishioner directory. You can't revoke your own admin access.</p>
+            <p>Everyone who has signed in is listed here. Update a member's FID, grant or revoke admin, or grant the lab-user role so they can test in-progress features as regular members. FID updates are matched against the parishioner directory. You can't revoke your own admin access.</p>
         </div>
 
         <div class="import-card">
@@ -242,7 +242,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=14"></script>
+<script src="firebase-config.js?v=15"></script>
 <script>
 let allUsers = [];
 let currentFilter = 'all';
@@ -410,6 +410,7 @@ function renderAll() {
             : (isLab
                 ? '<button class="btn danger" data-action="revoke-lab">Revoke lab access</button>'
                 : '<button class="btn" data-action="grant-lab">Grant lab access</button>');
+        const fidBtn = '<button class="btn" data-action="update-fid">Update FID</button>';
 
         const fid = String(u.FID || u.familyId || '').trim();
         const tr = document.createElement('tr');
@@ -422,12 +423,13 @@ function renderAll() {
             '<td><span class="role-badge ' + role + '">' + role + '</span>' +
                 (isLab && role !== 'admin' ? '<span class="role-badge labuser">lab user</span>' : '') +
             '</td>' +
-            '<td><div class="action-cell">' + adminBtn + labBtn + '</div></td>';
+            '<td><div class="action-cell">' + fidBtn + adminBtn + labBtn + '</div></td>';
 
         tr.querySelectorAll('[data-action]').forEach(function (actionBtn) {
             actionBtn.addEventListener('click', function () {
                 const action = actionBtn.getAttribute('data-action');
-                if (action === 'promote') promote(u, actionBtn);
+                if (action === 'update-fid') updateMemberFid(u, actionBtn);
+                else if (action === 'promote') promote(u, actionBtn);
                 else if (action === 'demote') demote(u, actionBtn);
                 else if (action === 'grant-lab') grantLabUser(u, actionBtn);
                 else if (action === 'revoke-lab') revokeLabUser(u, actionBtn);
@@ -435,6 +437,122 @@ function renderAll() {
         });
         body.appendChild(tr);
     });
+}
+
+async function updateMemberFid(u, btn) {
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
+    const enteredFirst = prompt('First name in the parish directory for ' + label + ':', names.first || '');
+    if (enteredFirst === null) return;
+    const firstName = enteredFirst.trim();
+    if (!firstName) {
+        toast('First name is required.', 'error');
+        return;
+    }
+
+    const currentFid = String(u.FID || u.familyId || '').trim();
+    const enteredFid = prompt('Enter the parish Family ID (FID) for ' + label + ':', currentFid);
+    if (enteredFid === null) return;
+    const fid = enteredFid.trim();
+    if (!fid) {
+        toast('FID is required.', 'error');
+        return;
+    }
+
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Checking…';
+    try {
+        let familySnap = await db.collection('members').where('FID', '==', fid).get();
+        if (familySnap.empty && /^\d+$/.test(fid)) {
+            familySnap = await db.collection('members').where('FID', '==', Number(fid)).get();
+        }
+
+        const matches = [];
+        familySnap.forEach(function (doc) {
+            const member = doc.data() || {};
+            if (String(member.firstName || '').trim().toLowerCase() === firstName.toLowerCase()) {
+                matches.push({
+                    firstName: String(member.firstName || '').trim(),
+                    lastName: String(member.lastName || '').trim(),
+                    familyName: String(member.familyName || '').trim(),
+                    familyId: String(member.FID || member.familyId || fid).trim(),
+                    memberId: String(member.memberId || '').trim()
+                });
+            }
+        });
+
+        if (!matches.length) {
+            throw new Error('No parish member matches that first name and FID.');
+        }
+        if (matches.length > 1) {
+            throw new Error('Multiple parish members match that first name and FID. Resolve the duplicate in the directory first.');
+        }
+
+        const member = matches[0];
+        const userRef = db.collection('users').doc(u.__id);
+        const nextClaimRef = member.memberId
+            ? db.collection('identityClaims').doc('mid:' + member.memberId)
+            : null;
+        const oldMemberId = String(u.memberId || '').trim();
+        const oldClaimRef = oldMemberId && oldMemberId !== member.memberId
+            ? db.collection('identityClaims').doc('mid:' + oldMemberId)
+            : null;
+        const FV = firebase.firestore.FieldValue;
+
+        await db.runTransaction(async function (tx) {
+            const nextClaimSnap = nextClaimRef ? await tx.get(nextClaimRef) : null;
+            const oldClaimSnap = oldClaimRef ? await tx.get(oldClaimRef) : null;
+            if (nextClaimSnap && nextClaimSnap.exists) {
+                const claim = nextClaimSnap.data() || {};
+                if (claim.uid && claim.uid !== u.__id) {
+                    throw new Error('That parish member is already linked to another login.');
+                }
+            }
+
+            tx.set(userRef, {
+                uid: u.__id,
+                email: String(u.email || '').toLowerCase(),
+                verified: true,
+                verifiedAt: FV.serverTimestamp(),
+                verifiedBy: (currentUser && currentUser.email) || 'admin',
+                firstName: member.firstName,
+                lastName: member.lastName,
+                firstNameLower: member.firstName.toLowerCase(),
+                lastNameLower: member.lastName.toLowerCase(),
+                familyId: member.familyId,
+                FID: member.familyId,
+                familyName: member.familyName,
+                memberId: member.memberId,
+                profileUpdatedAt: FV.serverTimestamp(),
+                profileUpdatedBy: (currentUser && currentUser.uid) || ''
+            }, { merge: true });
+
+            if (nextClaimRef) {
+                tx.set(nextClaimRef, {
+                    uid: u.__id,
+                    email: String(u.email || '').toLowerCase(),
+                    FID: member.familyId,
+                    firstName: member.firstName,
+                    lastName: member.lastName,
+                    memberId: member.memberId,
+                    claimedAt: FV.serverTimestamp()
+                }, { merge: true });
+            }
+            if (oldClaimSnap && oldClaimSnap.exists && (oldClaimSnap.data() || {}).uid === u.__id) {
+                tx.delete(oldClaimRef);
+            }
+        });
+
+        toast('FID updated for ' + label + '.');
+        btn.disabled = false;
+        btn.textContent = originalText;
+    } catch (err) {
+        console.error('FID update failed:', err);
+        toast('Could not update FID: ' + (err.message || err), 'error');
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
 }
 
 async function promote(u, btn) {
