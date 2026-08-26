@@ -3637,10 +3637,20 @@
           captainUid: null, captainName: null, captainEmail: null, captainFamilyId: null
         };
 
-    // Captain is a roster member and counts toward max. Keep the outgoing
-    // captain on the roster; add the incoming captain if they are new.
+    // Captain is a roster member and counts toward max. Explicit removal
+    // removes the outgoing captain from the roster as well. Direct
+    // replacement keeps the outgoing captain as a regular roster member.
     let nextRoster = Array.isArray(targetTeam.roster) ? targetTeam.roster.slice() : [];
-    nextRoster = ensureCaptainOnRosterList(targetTeam, nextRoster);
+    if (person) {
+      nextRoster = ensureCaptainOnRosterList(targetTeam, nextRoster);
+    } else {
+      const outgoingCaptain = captainMember(targetTeam);
+      if (outgoingCaptain) {
+        nextRoster = nextRoster.filter(function (member) {
+          return !membersMatch(outgoingCaptain, member);
+        });
+      }
+    }
     if (person) {
       const incoming = {
         memberId: person.memberId || '',
