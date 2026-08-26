@@ -591,6 +591,100 @@ async function loadMembersCsvForProfileEditor() {
     return membersCsvCache;
 }
 
+function profileMatchesRosterMember(member, user, canonical) {
+    if (!member) return false;
+    if (member.uid && member.uid === user.__id) return true;
+    const userEmail = String(user.email || '').trim().toLowerCase();
+    if (member.email && userEmail && String(member.email).trim().toLowerCase() === userEmail) return true;
+    const memberMid = String(member.memberId || '').trim();
+    const oldMid = String(user.memberId || '').trim();
+    if (memberMid && (memberMid === oldMid || memberMid === canonical.memberId)) return true;
+
+    const oldNames = displayNames(user);
+    const oldFid = String(user.FID || user.familyId || '').trim();
+    return !!(oldNames.first && oldNames.last && oldFid
+        && String(member.firstName || '').trim().toLowerCase() === oldNames.first.toLowerCase()
+        && String(member.lastName || '').trim().toLowerCase() === oldNames.last.toLowerCase()
+        && String(member.familyId || member.FID || '').trim() === oldFid);
+}
+
+function profileMatchesCaptain(team, user, canonical) {
+    if (!team) return false;
+    if (team.captainUid && team.captainUid === user.__id) return true;
+    const userEmail = String(user.email || '').trim().toLowerCase();
+    if (team.captainEmail && userEmail
+        && String(team.captainEmail).trim().toLowerCase() === userEmail) return true;
+    const oldNames = displayNames(user);
+    const oldFullName = (oldNames.first + ' ' + oldNames.last).trim().toLowerCase();
+    const newFullName = (canonical.firstName + ' ' + canonical.lastName).trim().toLowerCase();
+    const captainName = String(team.captainName || '').trim().toLowerCase();
+    const captainFid = String(team.captainFamilyId || '').trim();
+    const oldFid = String(user.FID || user.familyId || '').trim();
+    return !!(captainName && captainFid
+        && (captainName === oldFullName || captainName === newFullName)
+        && (captainFid === oldFid || captainFid === canonical.familyId));
+}
+
+async function syncProfileToTournamentStore(user, canonical) {
+    const snapshot = await db.collection('tournaments').get();
+    const updates = [];
+    snapshot.forEach(function (doc) {
+        const tournament = doc.data() || {};
+        let changed = false;
+        const sports = (tournament.sports || []).map(function (sport) {
+            let sportChanged = false;
+            const teams = (sport.teams || []).map(function (team) {
+                let teamChanged = false;
+                const roster = (team.roster || []).map(function (member) {
+                    if (!profileMatchesRosterMember(member, user, canonical)) return member;
+                    teamChanged = true;
+                    return Object.assign({}, member, {
+                        uid: user.__id,
+                        email: String(user.email || '').toLowerCase(),
+                        firstName: canonical.firstName,
+                        lastName: canonical.lastName,
+                        familyName: canonical.familyName,
+                        familyId: canonical.familyId,
+                        memberId: canonical.memberId,
+                        name: (canonical.firstName + ' ' + canonical.lastName).trim()
+                    });
+                });
+
+                let captainPatch = {};
+                if (profileMatchesCaptain(team, user, canonical)) {
+                    teamChanged = true;
+                    captainPatch = {
+                        captainUid: user.__id,
+                        captainEmail: String(user.email || '').toLowerCase(),
+                        captainName: (canonical.firstName + ' ' + canonical.lastName).trim(),
+                        captainFamilyId: canonical.familyId
+                    };
+                }
+                if (!teamChanged) return team;
+                sportChanged = true;
+                return Object.assign({}, team, captainPatch, { roster: roster });
+            });
+            if (!sportChanged) return sport;
+            changed = true;
+            return Object.assign({}, sport, { teams: teams });
+        });
+        if (changed) updates.push({ ref: doc.ref, sports: sports });
+    });
+
+    const FV = firebase.firestore.FieldValue;
+    for (let start = 0; start < updates.length; start += 400) {
+        const batch = db.batch();
+        updates.slice(start, start + 400).forEach(function (update) {
+            batch.update(update.ref, {
+                sports: update.sports,
+                updatedAt: FV.serverTimestamp()
+            });
+        });
+        await batch.commit();
+    }
+    return updates.length;
+}
+
 document.getElementById('profileEditorForm').addEventListener('submit', async function (event) {
     event.preventDefault();
     const u = editingProfileUser;
@@ -689,6 +783,15 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
             }
         });
 
+        let tournamentUpdates = 0;
+        let tournamentSyncError = null;
+        try {
+            tournamentUpdates = await syncProfileToTournamentStore(u, canonical);
+        } catch (syncErr) {
+            console.error('Tournament profile sync failed:', syncErr);
+            tournamentSyncError = syncErr;
+        }
+
         Object.assign(u, {
             firstName: canonical.firstName,
             lastName: canonical.lastName,
@@ -699,9 +802,15 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
             familyName: canonical.familyName,
             memberId: canonical.memberId
         });
-        closeProfileEditor();
-        toast('Profile data saved for ' + canonical.firstName + ' ' + canonical.lastName + '.');
         await refreshCurrentSearch();
+        if (tournamentSyncError) {
+            status.textContent = 'Profile data was saved, but tournament rosters could not be updated: '
+                + (tournamentSyncError.message || tournamentSyncError);
+            return;
+        }
+        closeProfileEditor();
+        toast('Profile data saved for ' + canonical.firstName + ' ' + canonical.lastName
+            + (tournamentUpdates ? ' and synchronized to ' + tournamentUpdates + ' tournament(s).' : '.'));
     } catch (err) {
         console.error('Profile update failed:', err);
         status.textContent = err.message || String(err);

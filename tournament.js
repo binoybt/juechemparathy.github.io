@@ -3637,10 +3637,20 @@
           captainUid: null, captainName: null, captainEmail: null, captainFamilyId: null
         };
 
-    // Captain is a roster member and counts toward max. Keep the outgoing
-    // captain on the roster; add the incoming captain if they are new.
+    // Captain is a roster member and counts toward max. Explicit removal
+    // removes the outgoing captain from the roster as well. Direct
+    // replacement keeps the outgoing captain as a regular roster member.
     let nextRoster = Array.isArray(targetTeam.roster) ? targetTeam.roster.slice() : [];
-    nextRoster = ensureCaptainOnRosterList(targetTeam, nextRoster);
+    if (person) {
+      nextRoster = ensureCaptainOnRosterList(targetTeam, nextRoster);
+    } else {
+      const outgoingCaptain = captainMember(targetTeam);
+      if (outgoingCaptain) {
+        nextRoster = nextRoster.filter(function (member) {
+          return !membersMatch(outgoingCaptain, member);
+        });
+      }
+    }
     if (person) {
       const incoming = {
         memberId: person.memberId || '',
@@ -3758,6 +3768,9 @@
         + (team.captainFamilyId ? ' <small style="color:var(--t-muted);">· FID ' + escapeHtml(team.captainFamilyId) + '</small>' : '')
         + (team.captainUid ? '' : ' <span class="t-badge nologin">no login yet</span>')
       : '<span style="color:var(--t-muted);">No captain assigned yet.</span>';
+    const removeCaptainAction = captainAssigned && canManageCaptains()
+      ? '<button class="t-btn danger sm" data-remove-roster-captain>Remove captain</button>'
+      : '';
 
     // Lock state banner + admin lock/unlock control.
     const lockBanner = locked
@@ -3781,7 +3794,7 @@
 
     body.innerHTML = `
       <div class="t-roster-head">
-        <div>${captainLine}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">${captainLine}${removeCaptainAction}</div>
         <div class="t-roster-count${maxSize && count > maxSize ? ' is-over' : ''}">${rosterCountLabel(sport, team)} member${count === 1 ? '' : 's'}${maxSize ? ' max' : ''}</div>
       </div>
       ${lockBanner}
@@ -3821,6 +3834,14 @@
     if (addBtn) {
       addBtn.addEventListener('click', function () {
         openMemberPicker(ctx.tournamentId, ctx.sportId, ctx.teamId);
+      });
+    }
+    const removeCaptainBtn = body.querySelector('[data-remove-roster-captain]');
+    if (removeCaptainBtn) {
+      removeCaptainBtn.addEventListener('click', async function () {
+        if (!confirm('Remove this captain and remove them from the team roster?')) return;
+        await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, null);
+        rerenderRoster();
       });
     }
     body.querySelectorAll('[data-remove]').forEach(function (btn) {
