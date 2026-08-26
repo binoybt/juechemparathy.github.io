@@ -227,7 +227,7 @@
       uid: person.uid || '',
       email: (person.email || '').toLowerCase() || '',
       addedByUid: currentUid() || '',
-      addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
+      addedByName: signedInDisplayName(),
       addedAt: new Date().toISOString()
     };
   }
@@ -479,8 +479,8 @@
     currentId: null,       // tournamentId currently subscribed for matches
     users: [],             // signed-in user profiles (from `users` collection)
     rsvpResponses: [],     // raw docs from rsvpResponses (existing app data)
-    members: [],           // parishioner directory (Firestore `members` collection)
-    membersLoaded: false,  // becomes true once the parishioner directory is loaded
+    members: [],           // parishioner directory loaded from members.csv for roster selection
+    membersLoaded: false,  // becomes true once members.csv is fetched and parsed
     unsubTournaments: null,
     unsubMatches: null,
     unsubUsers: null,
@@ -508,6 +508,11 @@
   // known-user. Admin can always do everything. A signed-in user who is also
   // the captain of a specific team can edit that team's roster.
   function currentUid() { return state.user ? state.user.uid : null; }
+  function signedInDisplayName() {
+    const profile = state.currentProfile || {};
+    const profileName = [profile.firstName, profile.lastName].filter(Boolean).join(' ').trim();
+    return profileName || (state.user && (state.user.displayName || state.user.email)) || '';
+  }
 
   const ADMIN_UI_KEY = 'smash.tournament.adminUi';
 
@@ -819,22 +824,9 @@
     if (state.membersLoaded || state._membersLoadStarted) return;
     state._membersLoadStarted = true;
     try {
-      let list = [];
-      if (window.__smashOnboarding && typeof window.__smashOnboarding.loadMembersDirectory === 'function') {
-        list = await window.__smashOnboarding.loadMembersDirectory();
-      } else {
-        const snap = await db.collection('members').get();
-        snap.forEach(function (d) {
-          const v = d.data() || {};
-          list.push({
-            familyId: String(v.FID || v.familyId || '').trim(),
-            firstName: String(v.firstName || '').trim(),
-            lastName: String(v.lastName || '').trim(),
-            familyName: String(v.familyName || '').trim(),
-            memberId: String(v.memberId || d.id || '').trim()
-          });
-        });
-      }
+      const response = await fetch('members.csv', { cache: 'no-cache' });
+      if (!response.ok) throw new Error('members.csv HTTP ' + response.status);
+      const list = parseMembersCsv(await response.text());
       state.members = list.map(function (m) {
         const fn = String(m.firstName || '').trim();
         const ln = String(m.lastName || '').trim();
@@ -855,8 +847,8 @@
       if (openLiveModal === 'roster') rerenderRoster();
     } catch (err) {
       state._membersLoadStarted = false;
-      console.error('[tournament] Failed to load parishioner directory:', err);
-      toast('Could not load parishioner directory. Roster search will not work until an admin imports it.', 'error');
+      console.error('[tournament] Failed to load members.csv:', err);
+      toast('Could not load members.csv. Roster search is unavailable.', 'error');
     }
   }
 
@@ -1159,7 +1151,7 @@
     if (!state.user) {
       box.innerHTML = `<button class="t-nav-btn" onclick="window.__tournament.signIn()">Sign in</button>`;
     } else {
-      const label = isAdminUi() ? 'Admin' : (state.user.displayName || state.user.email || 'You');
+      const label = isAdminUi() ? 'Admin' : (signedInDisplayName() || 'You');
       box.innerHTML = `
         <span class="t-user-chip"><span class="dot"></span>${escapeHtml(label)}</span>
         <a class="t-nav-btn" href="profile.html?return=tournament.html">Profile</a>
@@ -3796,7 +3788,7 @@
       ${canEdit && !atCap ? `
         <div class="t-roster-actions">
           <button class="t-btn primary" data-add-member>➕ Add member from directory</button>
-          ${!state.membersLoaded ? '<span style="color:var(--t-muted);font-size:.85rem;">Loading parishioner directory…</span>' : ''}
+          ${!state.membersLoaded ? '<span style="color:var(--t-muted);font-size:.85rem;">Loading members.csv…</span>' : ''}
         </div>
       ` : (canEdit && atCap
         ? '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">Roster is full (' + maxSize + ' max, including the captain). Remove someone to add another.</div>'
@@ -3851,7 +3843,7 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // MEMBER PICKER (captain/admin) — search parishioner directory
+  // MEMBER PICKER (captain/admin) — search members.csv
   // ═══════════════════════════════════════════════════════════════════════════
 
   // Explains — for a specific team — why the current user is not allowed to
@@ -3909,10 +3901,10 @@
 
     body.innerHTML = `
       <div>
-        <label class="t-form-label" for="tMemberSearch">Search parishioner directory (name or Family ID)</label>
+        <label class="t-form-label" for="tMemberSearch">Search members.csv (name or Family ID)</label>
         <input id="tMemberSearch" type="text" class="t-input" placeholder="e.g. Joseph, or 16" value="${escapeHtml(ctx.query || '')}" autocomplete="off" />
         <div style="font-size:.78rem;color:var(--t-muted);margin-top:6px;">
-          ${state.membersLoaded ? state.members.length + ' members in the parishioner directory' : 'Loading parishioner directory…'}
+          ${state.membersLoaded ? state.members.length + ' members in members.csv' : 'Loading members.csv…'}
           · A person can only be on one team in this sport.
           ${maxRosterSize(sport) ? ' · Max ' + maxRosterSize(sport) + ' members per team, including the captain.' : ''}
         </div>
@@ -3925,7 +3917,7 @@
 
     function paintResults() {
       if (!state.membersLoaded) {
-        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading parishioner directory…</div>';
+        results.innerHTML = '<div style="padding:12px;color:var(--t-muted);">Loading members.csv…</div>';
         return;
       }
       const list = searchMembers(input.value);
@@ -4016,7 +4008,7 @@
       uid: '',
       email: '',
       addedByUid: currentUid() || '',
-      addedByName: (state.user && (state.user.displayName || state.user.email)) || '',
+      addedByName: signedInDisplayName(),
       // Use an ISO string rather than serverTimestamp — Firestore does not
       // allow FieldValue sentinels inside nested arrays.
       addedAt: new Date().toISOString()

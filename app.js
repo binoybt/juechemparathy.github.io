@@ -34,6 +34,7 @@ let currentUserIsAdmin = false;
 function isCurrentUserAdmin() { return !!currentUserIsAdmin; }
 
 let currentUser = null;
+let currentUserProfile = null;
 let showAllSignups = false; // Admin toggle state - default to show upcoming only
 let userPreferences = null; // User's sport preferences
 let deepLinkHandled = false; // Track if deep link has been handled
@@ -79,6 +80,16 @@ function toCamelCase(name) {
     .split(' ')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+function currentUserDisplayName() {
+  const profileName = currentUserProfile
+    ? [currentUserProfile.firstName, currentUserProfile.lastName].filter(Boolean).join(' ').trim()
+    : '';
+  return profileName
+    || (currentUser && currentUser.displayName)
+    || (currentUser && currentUser.email)
+    || 'Player';
 }
 
 // Normalize apostrophes and quotes to handle different character encodings
@@ -151,7 +162,7 @@ function renderUser() {
     userBox.innerHTML = `
       <div class="user-menu">
         <button id="userMenuBtn" class="user-menu-btn">
-          <span>${toCamelCase(currentUser.displayName)}</span>
+          <span>${toCamelCase(currentUserDisplayName())}</span>
           <span class="dropdown-arrow">▼</span>
         </button>
         <div id="userDropdown" class="user-dropdown">
@@ -249,9 +260,13 @@ function toggleViewMode() {
 // Keep admin state up-to-date whenever role changes in Firestore.
 if (window.SmashAuth) {
   SmashAuth.onChange(s => {
-    const was = currentUserIsAdmin;
+    const wasAdmin = currentUserIsAdmin;
+    const previousName = currentUserDisplayName();
     currentUserIsAdmin = !!(s.user && s.isAdmin);
-    if (was !== currentUserIsAdmin && currentUser) renderUser();
+    currentUserProfile = s.profile || null;
+    if ((wasAdmin !== currentUserIsAdmin || previousName !== currentUserDisplayName()) && currentUser) {
+      renderUser();
+    }
   });
 }
 
@@ -2157,9 +2172,9 @@ function showGuestModal(slotId, prio) {
   document.getElementById("familyId").value = "";
   
   // Auto-fill parishioner name from signed-in user (after clearing other fields)
-  if (currentUser && currentUser.displayName) {
+  if (currentUser) {
     const parishionerNameField = document.getElementById("parishionerName");
-    parishionerNameField.value = toCamelCase(currentUser.displayName);
+    parishionerNameField.value = toCamelCase(currentUserDisplayName());
   }
   
   // Show modal
@@ -2306,7 +2321,7 @@ async function removeGuest(slotId, prio, guestUid) {
  *********************/
 async function updateReservationSignup(slotId, action) {
   if (!currentUser) return alert("Please sign in first.");
-  const me = { uid: currentUser.uid, name: currentUser.displayName || "Player" };
+  const me = { uid: currentUser.uid, name: currentUserDisplayName() };
 
   const ref = db.collection("slots").doc(slotId);
   await db.runTransaction(async tx => {
@@ -2334,7 +2349,7 @@ async function updateSignup(slotId, prio, action) {
     const key = `p${prio}`;
     const p = data[key] || { players: [], minPlayers: 0, maxPlayers: 0, sport: "No Games" };
 
-    const me = { uid: currentUser.uid, name: currentUser.displayName || "Player" };
+    const me = { uid: currentUser.uid, name: currentUserDisplayName() };
     const exists = (p.players || []).some(x => x.uid === me.uid);
 
     if (action === "join") {
