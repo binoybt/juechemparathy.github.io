@@ -3751,12 +3751,20 @@
     const atCap      = isRosterAtCap(sport, team);
     const maxSize    = maxRosterSize(sport);
     const count      = rosterCountOf(team);
-    const roster = teamMembers(team);
-    roster.sort(function (a, b) {
-      const aCap = isCaptainPerson(team, a) ? 0 : 1;
-      const bCap = isCaptainPerson(team, b) ? 0 : 1;
+    const rawRoster = Array.isArray(team.roster) ? team.roster : [];
+    const rosterEntries = rawRoster.map(function (member, rawIndex) {
+      return { member: member, rawIndex: rawIndex, syntheticCaptain: false };
+    });
+    const captain = captainMember(team);
+    if (captain && !rawRoster.some(function (member) { return membersMatch(captain, member); })) {
+      rosterEntries.unshift({ member: captain, rawIndex: -1, syntheticCaptain: true });
+    }
+    rosterEntries.sort(function (a, b) {
+      const aCap = isCaptainPerson(team, a.member) ? 0 : 1;
+      const bCap = isCaptainPerson(team, b.member) ? 0 : 1;
       if (aCap !== bCap) return aCap - bCap;
-      return ((a.firstName || '') + (a.lastName || '')).localeCompare((b.firstName || '') + (b.lastName || ''));
+      return ((a.member.firstName || '') + (a.member.lastName || ''))
+        .localeCompare((b.member.firstName || '') + (b.member.lastName || ''));
     });
 
     const title = (sport.emoji || '🏅') + ' ' + (sport.label || sport.id) + ' — ' + teamPublicName(team) + ' roster';
@@ -3810,11 +3818,22 @@
         : '<div style="color:var(--t-muted);font-size:.85rem;margin:8px 0 12px;">You can view this roster but only the team captain (or an admin) can edit it.</div>'
       ))}
       <div class="t-roster-list">
-        ${roster.length === 0
+        ${rosterEntries.length === 0
           ? '<div class="t-empty-note">No members added yet.</div>'
-          : roster.map(function (r, i) {
+          : rosterEntries.map(function (entry) {
+              const r = entry.member;
               const nm = ((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.name || '(unnamed)';
               const isCap = isCaptainPerson(team, r);
+              let rowAction = '';
+              if (isCap && canManageCaptains()) {
+                rowAction = entry.syntheticCaptain
+                  ? '<button class="t-btn danger sm" data-remove-roster-captain>Remove captain</button>'
+                  : '<button class="t-btn danger sm" data-remove-roster-index="' + entry.rawIndex + '">Remove</button>';
+              } else if (!isCap && canEdit) {
+                rowAction = '<button class="t-btn danger sm" data-remove-roster-index="' + entry.rawIndex + '">Remove</button>';
+              } else if (isCap) {
+                rowAction = '<span class="t-badge">Captain</span>';
+              }
               return `
                 <div class="t-roster-row">
                   <div class="who">
@@ -3822,8 +3841,7 @@
                     <div class="meta">Family: ${escapeHtml(r.familyName || '—')} · FID ${escapeHtml(r.familyId || '—')}${r.memberId ? ' · MID ' + escapeHtml(r.memberId) : ''}</div>
                     ${r.addedByName ? '<div class="sub">Added by ' + escapeHtml(r.addedByName) + '</div>' : ''}
                   </div>
-                  ${canEdit && !isCap ? '<button class="t-btn danger sm" data-remove="' + i + '">Remove</button>' : ''}
-                  ${canEdit && isCap ? '<span class="t-badge">Captain</span>' : ''}
+                  ${rowAction}
                 </div>
               `;
             }).join('')}
@@ -3836,19 +3854,19 @@
         openMemberPicker(ctx.tournamentId, ctx.sportId, ctx.teamId);
       });
     }
-    const removeCaptainBtn = body.querySelector('[data-remove-roster-captain]');
-    if (removeCaptainBtn) {
+    body.querySelectorAll('[data-remove-roster-captain]').forEach(function (removeCaptainBtn) {
       removeCaptainBtn.addEventListener('click', async function () {
         if (!confirm('Remove this captain and remove them from the team roster?')) return;
         await setTeamCaptain(ctx.tournamentId, ctx.sportId, ctx.teamId, null);
         rerenderRoster();
       });
-    }
-    body.querySelectorAll('[data-remove]').forEach(function (btn) {
+    });
+    body.querySelectorAll('[data-remove-roster-index]').forEach(function (btn) {
       btn.addEventListener('click', async function () {
-        const i = parseInt(btn.getAttribute('data-remove'), 10);
-        if (!confirm('Remove this member from the roster?')) return;
-        await removeRosterMember(ctx.tournamentId, ctx.sportId, ctx.teamId, roster[i]);
+        const rawIndex = parseInt(btn.getAttribute('data-remove-roster-index'), 10);
+        if (!confirm('Remove exactly this roster entry?')) return;
+        await removeRosterMemberAtIndex(ctx.tournamentId, ctx.sportId, ctx.teamId, rawIndex);
+        rerenderRoster();
       });
     });
     const lockBtn = body.querySelector('[data-toggle-lock]');
@@ -4039,24 +4057,31 @@
     toast('Added ' + (member.firstName + ' ' + member.lastName).trim(), 'success');
   }
 
-  async function removeRosterMember(tournamentId, sportId, teamId, member) {
+  async function removeRosterMemberAtIndex(tournamentId, sportId, teamId, rawIndex) {
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
     const sport = getSportConfig(t, sportId);
     if (!sport) return;
     const team = (sport.teams || []).find(function (x) { return x.id === teamId; });
     if (!team) return;
-    if (!canEditRoster(team)) {
+    const roster = Array.isArray(team.roster) ? team.roster.slice() : [];
+    const member = roster[rawIndex];
+    if (!member) {
+      toast('That roster entry no longer exists.', 'error');
+      return;
+    }
+    const isCaptainRow = isCaptainPerson(team, member);
+    if (isCaptainRow && !canManageCaptains()) {
+      toast('Only admins can remove a captain roster entry.', 'error');
+      return;
+    }
+    if (!isCaptainRow && !canEditRoster(team)) {
       toast(whyCantEdit(team) || 'You can\'t edit this roster.', 'error');
       return;
     }
-    if (isCaptainPerson(team, member)) {
-      toast('The captain is part of the roster. Assign a different captain first if you want to remove them.', 'error');
-      return;
-    }
-    const roster = (team.roster || []).filter(function (r) { return !membersMatch(r, member); });
+    roster.splice(rawIndex, 1);
     await writeTeamPatch(t, sportId, teamId, { roster: roster });
-    toast('Member removed', 'success');
+    toast(isCaptainRow ? 'Captain roster entry removed' : 'Member removed', 'success');
   }
 
   // Because Firestore requires overwriting the whole `sports` array to modify
