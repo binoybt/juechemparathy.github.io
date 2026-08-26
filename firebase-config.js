@@ -1146,7 +1146,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     else           stopAdminBanner();
   });
 
-  async function updateCurrentProfileByFirstNameAndFid(firstName, familyId) {
+  async function updateCurrentProfileByFirstNameAndFid(firstName, familyId, middleName) {
     const user = auth.currentUser;
     if (!user) throw new Error('Please sign in first.');
     const first = normKey(firstName);
@@ -1194,6 +1194,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       uid: user.uid,
       email: (user.email || '').toLowerCase(),
       displayName: user.displayName || '',
+      middleName: String(middleName || '').trim(),
+      middleNameLower: String(middleName || '').trim().toLowerCase(),
       profileUpdatedAt: FV.serverTimestamp(),
       profileUpdatedBy: user.uid
     });
@@ -1204,6 +1206,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
         uid: user.uid,
         email: payload.email,
         firstName: match.firstName || '',
+        middleName: String(middleName || '').trim(),
         lastName: match.lastName || '',
         familyId: String(match.FID || match.familyId || '').trim(),
         memberId: String(match.memberId || '').trim(),

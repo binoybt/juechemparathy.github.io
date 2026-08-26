@@ -254,6 +254,7 @@
                 <thead>
                     <tr>
                         <th>First Name</th>
+                        <th>Middle Name</th>
                         <th>Last Name</th>
                         <th>FID</th>
                         <th>Role</th>
@@ -261,7 +262,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersBody">
-                    <tr><td colspan="5" class="empty-state">Enter at least 3 characters to search members.</td></tr>
+                    <tr><td colspan="6" class="empty-state">Enter at least 3 characters to search members.</td></tr>
                 </tbody>
             </table>
         </div>
@@ -282,6 +283,10 @@
                 <input id="profileFirstName" type="text" required autocomplete="off" />
             </div>
             <div class="form-field">
+                <label for="profileMiddleName">Middle name (optional)</label>
+                <input id="profileMiddleName" type="text" autocomplete="off" />
+            </div>
+            <div class="form-field">
                 <label for="profileLastName">Last name</label>
                 <input id="profileLastName" type="text" required autocomplete="off" />
             </div>
@@ -300,7 +305,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=15"></script>
+<script src="firebase-config.js?v=16"></script>
 <script>
 let allUsers = [];
 let currentFilter = 'all';
@@ -325,6 +330,7 @@ function esc(s) {
 
 function displayNames(u) {
     let first = String(u.firstName || '').trim();
+    let middle = String(u.middleName || '').trim();
     let last  = String(u.lastName  || '').trim();
     if (!first && !last && u.displayName) {
         const parts = String(u.displayName).trim().split(/\s+/).filter(Boolean);
@@ -334,7 +340,7 @@ function displayNames(u) {
             last = parts.slice(1).join(' ');
         }
     }
-    return { first: first, last: last };
+    return { first: first, middle: middle, last: last };
 }
 
 function signIn() {
@@ -420,7 +426,7 @@ async function searchUsers(rawQuery) {
     }
 
     const body = document.getElementById('usersBody');
-    body.innerHTML = '<tr><td colspan="5" class="empty-state">Searching…</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="empty-state">Searching…</td></tr>';
     try {
         const users = db.collection('users');
         const requests = [];
@@ -453,7 +459,7 @@ async function searchUsers(rawQuery) {
     } catch (err) {
         if (token !== searchRequestToken) return;
         console.error('users search failed:', err);
-        body.innerHTML = '<tr><td colspan="5" class="empty-state" style="color:#b91c1c;">Search failed: '
+        body.innerHTML = '<tr><td colspan="6" class="empty-state" style="color:#b91c1c;">Search failed: '
             + esc(err.message || err) + '</td></tr>';
     }
 }
@@ -495,7 +501,7 @@ function renderAll() {
 
     const body = document.getElementById('usersBody');
     if (q.length < 3) {
-        body.innerHTML = '<tr><td colspan="5" class="empty-state">Enter at least 3 characters to search members.</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" class="empty-state">Enter at least 3 characters to search members.</td></tr>';
         return;
     }
 
@@ -506,12 +512,12 @@ function renderAll() {
         if (currentFilter === 'labuser' && (u.labUser !== true || role === 'admin')) return false;
         if (!q) return true;
         const names = displayNames(u);
-        const hay = [names.first, names.last, u.displayName, u.email, u.FID, u.familyId].join(' ').toLowerCase();
+        const hay = [names.first, names.middle, names.last, u.displayName, u.email, u.FID, u.familyId].join(' ').toLowerCase();
         return hay.indexOf(q) !== -1;
     });
 
     if (!filtered.length) {
-        body.innerHTML = '<tr><td colspan="5" class="empty-state">No users match.</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" class="empty-state">No users match.</td></tr>';
         return;
     }
 
@@ -539,6 +545,7 @@ function renderAll() {
             '<td><strong>' + esc(names.first || '—') + '</strong>' +
                 (u.email ? '<span class="name-sub">' + esc(u.email) + '</span>' : '') +
             '</td>' +
+            '<td>' + esc(names.middle || '—') + '</td>' +
             '<td>' + esc(names.last || '—') + '</td>' +
             '<td>' + esc(fid || '—') + '</td>' +
             '<td><span class="role-badge ' + role + '">' + role + '</span>' +
@@ -564,8 +571,9 @@ function openProfileEditor(u) {
     editingProfileUser = u;
     const names = displayNames(u);
     document.getElementById('profileEditorAccount').textContent =
-        u.email || ((names.first + ' ' + names.last).trim()) || u.__id;
+        u.email || ([names.first, names.middle, names.last].filter(Boolean).join(' ')) || u.__id;
     document.getElementById('profileFirstName').value = names.first || '';
+    document.getElementById('profileMiddleName').value = names.middle || '';
     document.getElementById('profileLastName').value = names.last || '';
     document.getElementById('profileFid').value = String(u.FID || u.familyId || '').trim();
     document.getElementById('profileEditorStatus').textContent = '';
@@ -615,8 +623,8 @@ function profileMatchesCaptain(team, user, canonical) {
     if (team.captainEmail && userEmail
         && String(team.captainEmail).trim().toLowerCase() === userEmail) return true;
     const oldNames = displayNames(user);
-    const oldFullName = (oldNames.first + ' ' + oldNames.last).trim().toLowerCase();
-    const newFullName = (canonical.firstName + ' ' + canonical.lastName).trim().toLowerCase();
+    const oldFullName = [oldNames.first, oldNames.middle, oldNames.last].filter(Boolean).join(' ').toLowerCase();
+    const newFullName = [canonical.firstName, canonical.middleName, canonical.lastName].filter(Boolean).join(' ').toLowerCase();
     const captainName = String(team.captainName || '').trim().toLowerCase();
     const captainFid = String(team.captainFamilyId || '').trim();
     const oldFid = String(user.FID || user.familyId || '').trim();
@@ -642,11 +650,12 @@ async function syncProfileToTournamentStore(user, canonical) {
                         uid: user.__id,
                         email: String(user.email || '').toLowerCase(),
                         firstName: canonical.firstName,
+                        middleName: canonical.middleName,
                         lastName: canonical.lastName,
                         familyName: canonical.familyName,
                         familyId: canonical.familyId,
                         memberId: canonical.memberId,
-                        name: (canonical.firstName + ' ' + canonical.lastName).trim()
+                        name: [canonical.firstName, canonical.middleName, canonical.lastName].filter(Boolean).join(' ')
                     });
                 });
 
@@ -656,7 +665,7 @@ async function syncProfileToTournamentStore(user, canonical) {
                     captainPatch = {
                         captainUid: user.__id,
                         captainEmail: String(user.email || '').toLowerCase(),
-                        captainName: (canonical.firstName + ' ' + canonical.lastName).trim(),
+                        captainName: [canonical.firstName, canonical.middleName, canonical.lastName].filter(Boolean).join(' '),
                         captainFamilyId: canonical.familyId
                     };
                 }
@@ -690,6 +699,7 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
     const u = editingProfileUser;
     if (!u) return;
     const firstName = document.getElementById('profileFirstName').value.trim();
+    const middleName = document.getElementById('profileMiddleName').value.trim();
     const lastName = document.getElementById('profileLastName').value.trim();
     const fid = document.getElementById('profileFid').value.trim();
     const status = document.getElementById('profileEditorStatus');
@@ -720,6 +730,7 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
         const member = matches[0];
         const canonical = {
             firstName: String(member.firstName || '').trim(),
+            middleName: middleName,
             lastName: String(member.lastName || '').trim(),
             familyName: String(member.familyName || '').trim(),
             familyId: String(member.familyId || member.FID || fid).trim(),
@@ -752,8 +763,10 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
                 verifiedAt: FV.serverTimestamp(),
                 verifiedBy: (currentUser && currentUser.email) || 'admin',
                 firstName: canonical.firstName,
+                middleName: canonical.middleName,
                 lastName: canonical.lastName,
                 firstNameLower: canonical.firstName.toLowerCase(),
+                middleNameLower: canonical.middleName.toLowerCase(),
                 lastNameLower: canonical.lastName.toLowerCase(),
                 familyId: canonical.familyId,
                 FID: canonical.familyId,
@@ -773,6 +786,7 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
                     email: String(u.email || '').toLowerCase(),
                     FID: canonical.familyId,
                     firstName: canonical.firstName,
+                    middleName: canonical.middleName,
                     lastName: canonical.lastName,
                     memberId: canonical.memberId,
                     claimedAt: FV.serverTimestamp()
@@ -794,8 +808,10 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
 
         Object.assign(u, {
             firstName: canonical.firstName,
+            middleName: canonical.middleName,
             lastName: canonical.lastName,
             firstNameLower: canonical.firstName.toLowerCase(),
+            middleNameLower: canonical.middleName.toLowerCase(),
             lastNameLower: canonical.lastName.toLowerCase(),
             familyId: canonical.familyId,
             FID: canonical.familyId,
@@ -809,7 +825,7 @@ document.getElementById('profileEditorForm').addEventListener('submit', async fu
             return;
         }
         closeProfileEditor();
-        toast('Profile data saved for ' + canonical.firstName + ' ' + canonical.lastName
+        toast('Profile data saved for ' + [canonical.firstName, canonical.middleName, canonical.lastName].filter(Boolean).join(' ')
             + (tournamentUpdates ? ' and synchronized to ' + tournamentUpdates + ' tournament(s).' : '.'));
     } catch (err) {
         console.error('Profile update failed:', err);

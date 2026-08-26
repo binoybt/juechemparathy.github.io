@@ -1,8 +1,8 @@
-const CACHE_NAME = 'smash-signup-v10'; // Increment version on each deployment
+const CACHE_NAME = 'smash-signup-v11'; // Increment version on each deployment
 
 // Install event - activate immediately
 self.addEventListener('install', (event) => {
-  console.log('Service Worker: Installing v10 with network-first strategy');
+  console.log('Service Worker: Installing v11 with network-first strategy');
   self.skipWaiting(); // Activate immediately
 });
 
@@ -63,7 +63,7 @@ self.addEventListener('activate', (event) => {
         })
       );
     }).then(() => {
-      console.log('Service Worker: Activated v10, taking control of all pages');
+      console.log('Service Worker: Activated v11, taking control of all pages');
       return self.clients.claim(); // Take control of all pages immediately
     })
   );
