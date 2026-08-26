@@ -191,8 +191,8 @@
 
     <div id="mainContent" style="display:none;">
         <div class="header-card">
-            <h2>All members</h2>
-            <p>Everyone who has signed in is listed here. Update a member's FID, grant or revoke admin, or grant the lab-user role so they can test in-progress features as regular members. FID updates are matched against the parishioner directory. You can't revoke your own admin access.</p>
+            <h2>Find members</h2>
+            <p>Search for a signed-in member, update their directory-linked first name, last name, and FID, or manage their access. Searches begin after three characters to avoid loading every user profile.</p>
         </div>
 
         <div class="import-card">
@@ -211,7 +211,7 @@
         <div class="toolbar">
             <div class="search-box">
                 <span>🔍</span>
-                <input type="text" id="searchInput" placeholder="Search by name, email, or FID…" />
+                <input type="text" id="searchInput" placeholder="Type at least 3 characters: name, email, or FID…" />
             </div>
             <div class="filter-bar">
                 <button class="filter-btn active" data-filter="all"    onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
@@ -233,7 +233,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersBody">
-                    <tr><td colspan="5" class="empty-state">Loading users…</td></tr>
+                    <tr><td colspan="5" class="empty-state">Enter at least 3 characters to search members.</td></tr>
                 </tbody>
             </table>
         </div>
@@ -246,8 +246,9 @@
 <script>
 let allUsers = [];
 let currentFilter = 'all';
-let unsubUsers = null;
 let currentUser = null;
+let searchTimer = null;
+let searchRequestToken = 0;
 
 function toast(msg, type) {
     const el = document.getElementById('toast');
@@ -300,7 +301,7 @@ SmashAuth.onChange(function (s) {
         loading.style.display = 'none';
         main.style.display = 'none';
         outBtn.style.display = 'none';
-        stopSubscribe();
+        clearMemberSearch();
         return;
     }
 
@@ -317,44 +318,89 @@ SmashAuth.onChange(function (s) {
         gate.style.display = 'none';
         loading.style.display = 'none';
         main.style.display = '';
-        subscribeUsers();
+        prepareMemberSearch();
     } else {
         gate.style.display = '';
         denied.style.display = '';
         loading.style.display = 'none';
         main.style.display = 'none';
-        stopSubscribe();
+        clearMemberSearch();
     }
 });
 
-function stopSubscribe() {
-    if (unsubUsers) { try { unsubUsers(); } catch (_) {} unsubUsers = null; }
+function clearMemberSearch() {
+    if (searchTimer) clearTimeout(searchTimer);
+    searchTimer = null;
+    searchRequestToken += 1;
+    allUsers = [];
 }
 
-function subscribeUsers() {
-    if (unsubUsers) return;
-    unsubUsers = db.collection('users').onSnapshot(function (snap) {
+function prepareMemberSearch() {
+    const query = (document.getElementById('searchInput').value || '').trim();
+    if (query.length >= 3) searchUsers(query);
+    else renderAll();
+}
+
+function addSnapshotUsers(map, snap) {
+    snap.forEach(function (d) {
+        if (map.has(d.id)) return;
+        const value = d.data() || {};
+        value.__id = d.id;
+        map.set(d.id, value);
+    });
+}
+
+async function searchUsers(rawQuery) {
+    const query = String(rawQuery || '').trim().toLowerCase();
+    const token = ++searchRequestToken;
+    if (query.length < 3) {
         allUsers = [];
-        snap.forEach(function (d) {
-            const v = d.data() || {};
-            v.__id = d.id;
-            allUsers.push(v);
-        });
+        renderAll();
+        return;
+    }
+
+    const body = document.getElementById('usersBody');
+    body.innerHTML = '<tr><td colspan="5" class="empty-state">Searching…</td></tr>';
+    try {
+        const users = db.collection('users');
+        const requests = [];
+        const prefixEnd = query + '\uf8ff';
+        if (/^\d+$/.test(query)) {
+            requests.push(users.where('FID', '==', query).get());
+            requests.push(users.where('familyId', '==', query).get());
+            requests.push(users.where('FID', '==', Number(query)).get());
+            requests.push(users.where('familyId', '==', Number(query)).get());
+        } else {
+            requests.push(users.orderBy('firstNameLower').startAt(query).endAt(prefixEnd).limit(100).get());
+            requests.push(users.orderBy('lastNameLower').startAt(query).endAt(prefixEnd).limit(100).get());
+            requests.push(users.orderBy('email').startAt(query).endAt(prefixEnd).limit(100).get());
+        }
+
+        const snapshots = await Promise.all(requests);
+        if (token !== searchRequestToken) return;
+        const unique = new Map();
+        snapshots.forEach(function (snap) { addSnapshotUsers(unique, snap); });
+        allUsers = Array.from(unique.values());
         allUsers.sort(function (a, b) {
-            const la = String(a.lastName  || '').toLowerCase();
-            const lb = String(b.lastName  || '').toLowerCase();
+            const la = String(a.lastName || '').toLowerCase();
+            const lb = String(b.lastName || '').toLowerCase();
             if (la !== lb) return la < lb ? -1 : 1;
             const fa = String(a.firstName || '').toLowerCase();
             const fb = String(b.firstName || '').toLowerCase();
             return fa < fb ? -1 : (fa > fb ? 1 : 0);
         });
         renderAll();
-    }, function (err) {
-        console.error('users subscribe failed:', err);
-        document.getElementById('usersBody').innerHTML =
-            '<tr><td colspan="5" class="empty-state" style="color:#b91c1c;">Failed to load users: ' +
-            esc(err.message || err) + '</td></tr>';
-    });
+    } catch (err) {
+        if (token !== searchRequestToken) return;
+        console.error('users search failed:', err);
+        body.innerHTML = '<tr><td colspan="5" class="empty-state" style="color:#b91c1c;">Search failed: '
+            + esc(err.message || err) + '</td></tr>';
+    }
+}
+
+function refreshCurrentSearch() {
+    const query = (document.getElementById('searchInput').value || '').trim();
+    return query.length >= 3 ? searchUsers(query) : Promise.resolve();
 }
 
 function setFilter(f) {
@@ -365,7 +411,17 @@ function setFilter(f) {
     renderAll();
 }
 
-document.getElementById('searchInput').addEventListener('input', renderAll);
+document.getElementById('searchInput').addEventListener('input', function () {
+    if (searchTimer) clearTimeout(searchTimer);
+    const query = this.value.trim();
+    if (query.length < 3) {
+        searchRequestToken += 1;
+        allUsers = [];
+        renderAll();
+        return;
+    }
+    searchTimer = setTimeout(function () { searchUsers(query); }, 350);
+});
 
 function renderAll() {
     const q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
@@ -376,6 +432,12 @@ function renderAll() {
     document.getElementById('countAdmin').textContent  = admins;
     document.getElementById('countMember').textContent = members;
     document.getElementById('countLabUser').textContent = labUsers;
+
+    const body = document.getElementById('usersBody');
+    if (q.length < 3) {
+        body.innerHTML = '<tr><td colspan="5" class="empty-state">Enter at least 3 characters to search members.</td></tr>';
+        return;
+    }
 
     const filtered = allUsers.filter(function (u) {
         const role = u.role || 'member';
@@ -388,7 +450,6 @@ function renderAll() {
         return hay.indexOf(q) !== -1;
     });
 
-    const body = document.getElementById('usersBody');
     if (!filtered.length) {
         body.innerHTML = '<tr><td colspan="5" class="empty-state">No users match.</td></tr>';
         return;
@@ -410,7 +471,7 @@ function renderAll() {
             : (isLab
                 ? '<button class="btn danger" data-action="revoke-lab">Revoke lab access</button>'
                 : '<button class="btn" data-action="grant-lab">Grant lab access</button>');
-        const fidBtn = '<button class="btn" data-action="update-fid">Update FID</button>';
+        const profileBtn = '<button class="btn" data-action="edit-profile">Edit profile</button>';
 
         const fid = String(u.FID || u.familyId || '').trim();
         const tr = document.createElement('tr');
@@ -423,12 +484,12 @@ function renderAll() {
             '<td><span class="role-badge ' + role + '">' + role + '</span>' +
                 (isLab && role !== 'admin' ? '<span class="role-badge labuser">lab user</span>' : '') +
             '</td>' +
-            '<td><div class="action-cell">' + fidBtn + adminBtn + labBtn + '</div></td>';
+            '<td><div class="action-cell">' + profileBtn + adminBtn + labBtn + '</div></td>';
 
         tr.querySelectorAll('[data-action]').forEach(function (actionBtn) {
             actionBtn.addEventListener('click', function () {
                 const action = actionBtn.getAttribute('data-action');
-                if (action === 'update-fid') updateMemberFid(u, actionBtn);
+                if (action === 'edit-profile') editMemberProfile(u, actionBtn);
                 else if (action === 'promote') promote(u, actionBtn);
                 else if (action === 'demote') demote(u, actionBtn);
                 else if (action === 'grant-lab') grantLabUser(u, actionBtn);
@@ -439,7 +500,7 @@ function renderAll() {
     });
 }
 
-async function updateMemberFid(u, btn) {
+async function editMemberProfile(u, btn) {
     const names = displayNames(u);
     const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
     const enteredFirst = prompt('First name in the parish directory for ' + label + ':', names.first || '');
@@ -447,6 +508,14 @@ async function updateMemberFid(u, btn) {
     const firstName = enteredFirst.trim();
     if (!firstName) {
         toast('First name is required.', 'error');
+        return;
+    }
+
+    const enteredLast = prompt('Last name in the parish directory for ' + label + ':', names.last || '');
+    if (enteredLast === null) return;
+    const lastName = enteredLast.trim();
+    if (!lastName) {
+        toast('Last name is required.', 'error');
         return;
     }
 
@@ -471,7 +540,8 @@ async function updateMemberFid(u, btn) {
         const matches = [];
         familySnap.forEach(function (doc) {
             const member = doc.data() || {};
-            if (String(member.firstName || '').trim().toLowerCase() === firstName.toLowerCase()) {
+            if (String(member.firstName || '').trim().toLowerCase() === firstName.toLowerCase()
+                && String(member.lastName || '').trim().toLowerCase() === lastName.toLowerCase()) {
                 matches.push({
                     firstName: String(member.firstName || '').trim(),
                     lastName: String(member.lastName || '').trim(),
@@ -483,10 +553,10 @@ async function updateMemberFid(u, btn) {
         });
 
         if (!matches.length) {
-            throw new Error('No parish member matches that first name and FID.');
+            throw new Error('No parish member matches that first name, last name, and FID.');
         }
         if (matches.length > 1) {
-            throw new Error('Multiple parish members match that first name and FID. Resolve the duplicate in the directory first.');
+            throw new Error('Multiple parish members match that name and FID. Resolve the duplicate in the directory first.');
         }
 
         const member = matches[0];
@@ -544,12 +614,13 @@ async function updateMemberFid(u, btn) {
             }
         });
 
-        toast('FID updated for ' + label + '.');
+        toast('Profile updated for ' + label + '.');
+        await refreshCurrentSearch();
         btn.disabled = false;
         btn.textContent = originalText;
     } catch (err) {
-        console.error('FID update failed:', err);
-        toast('Could not update FID: ' + (err.message || err), 'error');
+        console.error('Profile update failed:', err);
+        toast('Could not update profile: ' + (err.message || err), 'error');
         btn.disabled = false;
         btn.textContent = originalText;
     }
@@ -563,6 +634,7 @@ async function promote(u, btn) {
     try {
         await SmashAuth.promoteToAdmin(u.__id);
         toast(label + ' is now an admin.');
+        await refreshCurrentSearch();
     } catch (err) {
         console.error('promote failed:', err);
         toast('Promote failed: ' + (err.message || err), 'error');
@@ -578,6 +650,7 @@ async function demote(u, btn) {
     try {
         await SmashAuth.demoteFromAdmin(u.__id);
         toast('Admin access revoked for ' + label + '.');
+        await refreshCurrentSearch();
     } catch (err) {
         console.error('demote failed:', err);
         toast('Revoke failed: ' + (err.message || err), 'error');
@@ -593,6 +666,7 @@ async function grantLabUser(u, btn) {
     try {
         await SmashAuth.grantLabUser(u.__id);
         toast(label + ' is now a lab user.');
+        await refreshCurrentSearch();
     } catch (err) {
         console.error('grant lab user failed:', err);
         toast('Could not grant lab access: ' + (err.message || err), 'error');
@@ -608,6 +682,7 @@ async function revokeLabUser(u, btn) {
     try {
         await SmashAuth.revokeLabUser(u.__id);
         toast('Lab access revoked for ' + label + '.');
+        await refreshCurrentSearch();
     } catch (err) {
         console.error('revoke lab user failed:', err);
         toast('Could not revoke lab access: ' + (err.message || err), 'error');
