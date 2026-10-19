@@ -124,6 +124,18 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //         allow read:  if true;
 //         allow write: if isAdmin();
 //       }
+//
+//       // Public spectator board (watch.html). No sign-in.
+//       // Admins write a sanitized copy. Anyone can read it only while
+//       // the tournament is published, started, and sharing is on.
+//       // Full tournament docs stay private (captains, rosters, emails).
+//       match /tournament_public/{id} {
+//         allow get: if resource.data.publicBoard == true
+//                    && resource.data.published == true
+//                    && resource.data.started == true;
+//         allow list: if false;
+//         allow create, update, delete: if isAdmin();
+//       }
 //     }
 //   }
 (function () {
@@ -1133,6 +1145,12 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     await mirrorUserProfileAndBootstrapRole(user);
     subscribeToUserDoc(user.uid);
 
+    // The spectator board is public. A signed-in visitor who is not in the
+    // parish directory should still be able to watch, without the
+    // verification modal covering the scores.
+    const watchFile = ((location.pathname || '').split('/').pop() || '').toLowerCase();
+    if (watchFile === 'watch.html') return;
+
     // Admin banner + onboarding both need to react to role, so they'll
     // re-run when the snapshot arrives. But we can start onboarding right
     // now (it's tolerant of role being unresolved).
@@ -1141,6 +1159,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
   // Once role resolves, start/stop admin-only features.
   window.SmashAuth.onChange(function (s) {
+    const watchFile = ((location.pathname || '').split('/').pop() || '').toLowerCase();
+    if (watchFile === 'watch.html') { stopAdminBanner(); return; }
     if (!s.user) { stopAdminBanner(); return; }
     if (s.isAdmin) startAdminBanner();
     else           stopAdminBanner();

@@ -738,7 +738,7 @@ body.t-member-preview .t-admin-switch {
   display: grid; gap: 8px;
 }
 .t-team-row {
-  display: grid; grid-template-columns: 80px 1fr minmax(220px, 1.4fr) auto; gap: 8px;
+  display: grid; grid-template-columns: 80px 1fr 1fr minmax(180px, 1.1fr) auto; gap: 8px;
   align-items: center;
   padding: 8px 10px; background: #f8fafc;
   border: 1px solid var(--t-border); border-radius: 8px;
@@ -803,6 +803,19 @@ body.t-member-preview .t-admin-switch {
 .t-badge.nologin { background: #fef3c7; color: #92400e; margin-left: 6px; }
 .t-badge.locked { background: #fee2e2; color: #991b1b; margin-left: 6px; }
 .t-badge.unlocked { background: #e0f2fe; color: #075985; margin-left: 6px; }
+.t-badge.upcoming { background: #dbeafe; color: #1d4ed8; }
+.t-tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.t-tag {
+  display: inline-flex;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #075985;
+  font-size: .68rem;
+  font-weight: 700;
+}
+.t-schedule-flag { white-space: nowrap; }
+.t-schedule-flag .t-check-line { margin: 0; }
 
 .t-roster-card.is-locked { background: #fafafa; }
 .t-roster-hidden {
@@ -824,7 +837,7 @@ body.t-member-preview .t-admin-switch {
 
 /* ── Sport schedule ── */
 .t-schedule-wrap { overflow-x: auto; margin-top: 8px; }
-.t-schedule-table { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 720px; }
+.t-schedule-table { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 860px; }
 .t-schedule-table th, .t-schedule-table td {
   padding: 8px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle;
 }

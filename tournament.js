@@ -8,6 +8,9 @@
  *   /tournament.html?t=<id>&sport=<id>&cat=<id>&bracket=<id>&team=<id>&st=<stageId>
  *                                         → category, bracket, stage, or team detail
  *   /tournament.html?t=<id>&manage=1          → edit tournament config (admin)
+ *   /watch.html?t=<id>                        → public spectator board (no sign-in)
+ *                                             only after the tournament is published,
+ *                                             started, and an admin has shared the link
  *
  * Firestore layout:
  *   tournaments/{docId}
@@ -27,7 +30,8 @@
  *                     'split' registration categories, each with its own teams
  *       divisions[]   registration categories (not racket games-per-match)
  *         id, name, open, maxPlayers
- *         teams[]     { id, name, players[] }  — players length follows maxPlayers
+ *         teams[]     { id, name, players[], tags[] }
+ *                     tags are optional short labels (seed, home side, group)
  *         brackets[]  { id, name, stageId, teamIds[], schedule }
  *           stageId   which stage this bracket belongs to (missing = league)
  *           a team is in at most one bracket per stage
@@ -53,7 +57,7 @@
  *     createdAt / updatedAt / createdBy
  *
  *   Clone copies sports, scoring, table points, stage names, rules, max roster,
- *   and team shells (id / name / wards), plus category teams and bracket
+ *   and team shells (id / name / wards / tags), plus category teams and bracket
  *   membership. It does not copy matches, schedule, rosters, captains, or
  *   lock state. Clones are always unpublished.
  *
@@ -72,7 +76,9 @@
  *     teamA / teamB     — for teams format
  *     playerA / playerB — for individual format
  *     scheduledAt   ISO string
- *     venue         string
+ *     court         string — optional. Blank when there is one court, or none.
+ *     venue         string — kept equal to court so older boards still show it
+ *     showUpcoming  bool — admin marks which scheduled matches appear in Upcoming
  *     status        'scheduled' | 'in_progress' | 'completed'
  *     winner        'A' | 'B' | 'tie' | null
  *     scoringConfig snapshot of the stage's scoring rules at match-creation time
@@ -399,27 +405,43 @@
     return (prefix || 'id') + '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   }
 
+  function courtOf(item) {
+    if (!item) return '';
+    return String(item.court || item.venue || '').trim();
+  }
+
   function emptyScheduleEntry(overrides) {
-    return Object.assign({
+    const base = {
       id: newId('slot'),
       stage: 'league',
       a: '',
       b: '',
       scheduledAt: '',
       venue: '',
+      court: '',
+      showUpcoming: false,
       matchId: ''
-    }, overrides || {});
+    };
+    const merged = Object.assign(base, overrides || {});
+    const court = courtOf(merged);
+    merged.court = court;
+    merged.venue = court;
+    merged.showUpcoming = !!merged.showUpcoming;
+    return merged;
   }
 
   function sanitizeScheduleEntries(entries) {
     return (entries || []).map(function (e) {
+      const court = courtOf(e);
       return {
         id: e.id || newId('slot'),
         stage: e.stage || 'league',
         a: String(e.a || ''),
         b: String(e.b || ''),
         scheduledAt: e.scheduledAt || '',
-        venue: String(e.venue || ''),
+        venue: court,
+        court: court,
+        showUpcoming: !!e.showUpcoming,
         matchId: e.matchId || ''
       };
     });
@@ -533,6 +555,31 @@
     return ((team && team.players) || []).map(function (p) {
       return String(p || '').trim();
     }).filter(Boolean).join(', ');
+  }
+
+  function parseTeamTags(raw) {
+    const list = Array.isArray(raw) ? raw : String(raw || '').split(',');
+    const seen = {};
+    const out = [];
+    list.forEach(function (item) {
+      const tag = String(item || '').replace(/\s+/g, ' ').trim().slice(0, 24);
+      if (!tag) return;
+      const key = tag.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      if (out.length < 6) out.push(tag);
+    });
+    return out;
+  }
+
+  function teamTagsHtml(tags, kind) {
+    const list = parseTeamTags(tags);
+    if (!list.length) return '';
+    const row = kind === 'watch' ? 'w-tags' : 't-tag-row';
+    const chip = kind === 'watch' ? 'w-tag' : 't-tag';
+    return '<span class="' + row + '">' + list.map(function (tag) {
+      return '<span class="' + chip + '">' + escapeHtml(tag) + '</span>';
+    }).join('') + '</span>';
   }
 
   function findEntryTeam(tournament, sportId, id) {
@@ -1378,6 +1425,7 @@
         name: id || '—',
         id: id || '',
         wards: '',
+        tags: [],
         color: id ? TEAM_COLORS[Math.abs(hashCode(String(id))) % TEAM_COLORS.length] : 'var(--t-muted)'
       };
     }
@@ -1390,6 +1438,7 @@
       name: publicName,
       id: t.id || id || '',
       wards: detail || '',
+      tags: parseTeamTags(t.tags),
       color: TEAM_COLORS[found.index % TEAM_COLORS.length]
     };
   }
@@ -1882,6 +1931,7 @@
       row.innerHTML = `
         <input type="text" placeholder="Id" value="${escapeHtml(t.id)}" data-team-key="id" />
         <input type="text" placeholder="Wards / description" value="${escapeHtml(t.wards || '')}" data-team-key="wards" />
+        <input type="text" placeholder="Tags, optional" value="${escapeHtml(parseTeamTags(t.tags).join(', '))}" data-team-key="tags" title="Optional labels, separated by commas" />
         <div class="t-team-captain-cell">
           <span class="cap-lbl">${captainLabel}</span>
           <div class="cap-actions">
@@ -1891,9 +1941,9 @@
         </div>
         <button class="t-btn danger sm" data-team-remove="1">Remove</button>
       `;
-      const inputs = row.querySelectorAll('input');
-      inputs[0].addEventListener('input', function () { t.id = this.value.trim() || t.id; t.name = t.id; });
-      inputs[1].addEventListener('input', function () { t.wards = this.value; });
+      row.querySelector('[data-team-key="id"]').addEventListener('input', function () { t.id = this.value.trim() || t.id; t.name = t.id; });
+      row.querySelector('[data-team-key="wards"]').addEventListener('input', function () { t.wards = this.value; });
+      row.querySelector('[data-team-key="tags"]').addEventListener('input', function () { t.tags = parseTeamTags(this.value); });
       row.querySelector('[data-team-remove]').addEventListener('click', function () {
         sport.teams.splice(i, 1);
         paintTeamsInto(container, sport, draft);
@@ -2564,7 +2614,8 @@
               return {
                 id: tm.id,
                 name: tm.name || '',
-                players: Array.isArray(tm.players) ? tm.players.slice() : []
+                players: Array.isArray(tm.players) ? tm.players.slice() : [],
+                tags: parseTeamTags(tm.tags)
               };
             }),
             brackets: (d.brackets || []).map(function (b) {
@@ -2583,7 +2634,7 @@
         maxRosterSize: parseMaxRosterSize(s.maxRosterSize),
         rules: s.rules ? JSON.parse(JSON.stringify(s.rules)) : null,
         teams: (s.teams || []).map(function (tm) {
-          return { id: tm.id, name: tm.name || tm.id, wards: tm.wards || '' };
+          return { id: tm.id, name: tm.name || tm.id, wards: tm.wards || '', tags: parseTeamTags(tm.tags) };
         })
       };
     });
@@ -2635,19 +2686,25 @@
     const next = !!published;
     const ok = next
       ? confirm('Publish "' + t.name + '"? Signed-in members will be able to see it.')
-      : confirm('Unpublish "' + t.name + '"? Members will no longer see it. Admins and lab users still can.');
+      : confirm('Unpublish "' + t.name + '"? Members will no longer see it. Admins and lab users still can.' + (t.publicBoard ? ' The spectator link will stop working.' : ''));
     if (!ok) return;
     try {
-      await db.collection('tournaments').doc(t.id).update({
+      const patch = {
         published: next,
         publishedAt: next ? new Date().toISOString() : null,
         publishedBy: next ? ((state.user && (state.user.email || state.user.displayName)) || '') : '',
         updatedAt: FieldValue.serverTimestamp()
-      });
+      };
+      if (!next) patch.publicBoard = false;
+      await db.collection('tournaments').doc(t.id).update(patch);
       const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
       if (idx >= 0) {
-        state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { published: next });
+        state.tournaments[idx] = Object.assign({}, state.tournaments[idx], {
+          published: next,
+          publicBoard: next ? state.tournaments[idx].publicBoard : false
+        });
       }
+      if (!next) syncPublicBoardNow(t.id, { forceClose: true });
       toast(next ? 'Tournament published' : 'Tournament unpublished', 'success');
       render();
     } catch (err) {
@@ -3022,6 +3079,9 @@
   window.__tournament.clearSchedule = clearSchedule;
   window.__tournament.setSportMode = setSportMode;
   window.__tournament.setTournamentStarted = setTournamentStarted;
+  window.__tournament.shareLiveBoard = shareLiveBoard;
+  window.__tournament.stopLiveBoard = stopLiveBoard;
+  window.__tournament.copySpectatorLink = copySpectatorLink;
   window.__tournament.openEntryTeam = openEntryTeam;
   window.__tournament.saveTournamentRules = saveTournamentRules;
   window.__tournament.saveSportRules = saveSportRules;
@@ -3095,6 +3155,7 @@
         ${tournamentHasStarted(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', false)">⏸ Mark not started</button>`
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', true)">▶ Start tournament</button>`}
+        <button class="t-btn" type="button" onclick="window.__tournament.shareLiveBoard('${escapeHtml(t.id)}')">${t.publicBoard ? '📺 Spectator link on' : '📺 Spectator link'}</button>
         ${isTournamentPublished(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', false)">🙈 Unpublish</button>`
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', true)">📢 Publish</button>`}
@@ -3171,7 +3232,7 @@
         </section>
 
         <section class="t-section" id="tUpcomingSection" style="display:none;">
-          <div class="t-section-header"><h2 class="t-section-title">Upcoming</h2></div>
+          <div class="t-section-header"><h2 class="t-section-title">${isAdminUi() ? 'Scheduled <small>mark Upcoming so members and the spectator board list that match</small>' : 'Upcoming'}</h2></div>
           <div class="t-match-list" id="tUpcomingList"></div>
         </section>
 
@@ -3275,17 +3336,20 @@
     if (!t) return;
     const next = !!started;
     const ok = next
-      ? confirm('Start "' + t.name + '"? Members will see bracket standings, overall standings, the current match, and upcoming matches.')
-      : confirm('Mark "' + t.name + '" as not started? Members will no longer see the live standings board.');
+      ? confirm('Start "' + t.name + '"? Members will see bracket standings, overall standings, the current match, and upcoming matches. You can then create a spectator link that works without sign-in.')
+      : confirm('Mark "' + t.name + '" as not started? Members will no longer see the live standings board.' + (t.publicBoard ? ' The spectator link will stop working.' : ''));
     if (!ok) return;
     try {
-      await db.collection('tournaments').doc(t.id).update({
+      const patch = {
         started: next,
         startedAt: next ? new Date().toISOString() : null,
         updatedAt: FieldValue.serverTimestamp()
-      });
+      };
+      if (!next) patch.publicBoard = false;
+      await db.collection('tournaments').doc(t.id).update(patch);
       const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
-      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { started: next });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { started: next, publicBoard: next ? state.tournaments[idx].publicBoard : false });
+      if (!next) syncPublicBoardNow(t.id, { forceClose: true });
       toast(next ? 'Tournament started' : 'Tournament marked as not started', 'success');
       render();
     } catch (err) {
@@ -3332,6 +3396,10 @@
         <label>Team name</label>
         <input type="text" class="t-input" id="tEntryTeamName" value="${escapeHtml((existing && existing.name) || '')}" placeholder="Team name" />
       </div>
+      <div class="t-form-field">
+        <label>Tags</label>
+        <input type="text" class="t-input" id="tEntryTeamTags" value="${escapeHtml(parseTeamTags(existing && existing.tags).join(', '))}" placeholder="Optional labels, separated by commas" />
+      </div>
       ${fields}
       <div class="t-modal-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
         <button type="button" class="t-btn" data-cancel>Cancel</button>
@@ -3352,7 +3420,8 @@
       const team = {
         id: (existing && existing.id) || newId('team'),
         name: name,
-        players: playerNames
+        players: playerNames,
+        tags: parseTeamTags(body.querySelector('#tEntryTeamTags').value)
       };
       try {
         await mutateDivision(tournamentId, sportId, divisionId, function (div) {
@@ -3517,6 +3586,7 @@
                     <div>
                       <span class="t-team-name">${escapeHtml(meta.name)}</span>
                       ${meta.wards ? '<span class="t-team-wards">' + escapeHtml(meta.wards) + '</span>' : ''}
+                      ${teamTagsHtml(meta.tags)}
                     </div>
                   </div>
                 </td>
@@ -3592,6 +3662,7 @@
               <button type="button" class="t-btn sm" data-act="close-team">Close</button>
             </div>
             <div class="t-player-list">${players.map(function (p) { return '<span>' + escapeHtml(p) + '</span>'; }).join('') || '<span>No players listed</span>'}</div>
+            ${teamTagsHtml(team.tags)}
             ${results}
           </div>
         </div>
@@ -3656,6 +3727,7 @@
               <div>
                 <div class="t-roster-name">${escapeHtml(team.name || team.id)}</div>
                 <div class="t-roster-sub">${players ? escapeHtml(players) : 'No players yet'}</div>
+                ${teamTagsHtml(team.tags)}
               </div>
             </div>
           </div>
@@ -3794,7 +3866,7 @@
           <div class="t-match-list" id="tLiveList"></div>
         </section>
         <section class="t-section" id="tUpcomingSection" style="display:none;">
-          <div class="t-section-header"><h2 class="t-section-title">Upcoming matches</h2></div>
+          <div class="t-section-header"><h2 class="t-section-title">${isAdminUi() ? 'Scheduled <small>mark Upcoming so members and the spectator board list that match</small>' : 'Upcoming matches'}</h2></div>
           <div class="t-match-list" id="tUpcomingList"></div>
         </section>
         ${bracketTables}
@@ -3825,7 +3897,7 @@
         return categoryMatchVisible(sport, m);
       });
       const live = pool.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches);
-      const upcoming = pool.filter(function (m) { return m.status === 'scheduled'; }).sort(sortMatches);
+      const upcoming = scheduledMatchesForBoard(pool);
       const completed = pool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
       fillMatchList('tLiveList', 'tLiveSection', live, tournament);
       fillMatchList('tUpcomingList', 'tUpcomingSection', upcoming, tournament);
@@ -3967,6 +4039,7 @@
               <div>
                 <div class="t-roster-name">${escapeHtml(teamPublicName(team))}${isMine ? ' <span class="t-badge you">Your team</span>' : ''} ${lockChip}</div>
                 ${team.id && teamPublicName(team) !== team.id ? '<div class="t-roster-sub">' + escapeHtml(team.id) + '</div>' : ''}
+                ${teamTagsHtml(team.tags)}
               </div>
             </div>
             ${canManage ? `<button class="t-btn sm" onclick="window.__tournament.openCaptainPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">${captainAssigned ? 'Change captain' : 'Assign captain'}</button>` : ''}
@@ -4015,6 +4088,7 @@
                         <div>
                           <span class="t-team-name">${escapeHtml(meta.name)}</span>
                           ${meta.wards ? '<span class="t-team-wards">' + escapeHtml(meta.wards) + '</span>' : ''}
+                          ${teamTagsHtml(meta.tags)}
                         </div>
                       </div>
                     </td>
@@ -4047,7 +4121,7 @@
   function renderMatchListsFor(tournament, sportId) {
     const scoped = visibleMatchesFor(tournament, sportId);
     const live = scoped.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches);
-    const upcoming = scoped.filter(function (m) { return m.status === 'scheduled'; }).sort(sortMatches);
+    const upcoming = scheduledMatchesForBoard(scoped);
     const completed = scoped.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
     fillMatchList('tLiveList', 'tLiveSection', live, tournament);
     fillMatchList('tUpcomingList', 'tUpcomingSection', upcoming, tournament);
@@ -4086,6 +4160,14 @@
     }
     const other = scoped.filter(function (m) { return m.stage && !known[m.stage] && m.stage !== 'third_place'; });
     if (other.length) wrap.appendChild(section('Other stages', other));
+  }
+
+  function scheduledMatchesForBoard(list) {
+    return (list || []).filter(function (m) {
+      if (!m || m.status !== 'scheduled') return false;
+      if (isAdminUi()) return true;
+      return !!m.showUpcoming;
+    }).sort(sortMatches);
   }
 
   function sortMatches(a, b) {
@@ -4129,7 +4211,8 @@
           ${match.categoryId ? '<span class="t-badge">' + escapeHtml((function () { const d = findDivision(sport, match.categoryId); return (d && d.name) || 'Category'; })()) + '</span>' : ''}
           ${match.bracketId ? '<span class="t-badge">' + escapeHtml((function () { const d = findDivision(sport, match.categoryId); const b = findBracket(d, match.bracketId); return (b && b.name) || 'Bracket'; })()) + '</span>' : ''}
           <span class="t-badge status-${match.status || 'scheduled'}">${escapeHtml(STATUS_LABEL[match.status] || 'Scheduled')}</span>
-          ${match.venue ? '<span class="t-badge">📍 ' + escapeHtml(match.venue) + '</span>' : ''}
+          ${match.status === 'scheduled' && match.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : ''}
+          ${courtOf(match) ? '<span class="t-badge">🏟 ' + escapeHtml(courtOf(match)) + '</span>' : ''}
           ${match.scheduledAt ? '<span class="t-badge">🕒 ' + escapeHtml(fmtDateTime(match.scheduledAt)) + '</span>' : ''}
         </div>
       </div>
@@ -4139,6 +4222,7 @@
           <div class="info">
             <div class="name">${match.categoryId && p.a ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.a + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(aMeta.name) + '</button>' : escapeHtml(aMeta.name)}</div>
             ${aMeta.wards ? '<div class="wards">' + escapeHtml(aMeta.wards) + '</div>' : ''}
+            ${teamTagsHtml(aMeta.tags)}
           </div>
         </div>
         <div class="t-match-score"><span>${s.a}</span><span class="dash">–</span><span>${s.b}</span></div>
@@ -4146,6 +4230,7 @@
           <div class="info">
             <div class="name">${match.categoryId && p.b ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.b + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(bMeta.name) + '</button>' : escapeHtml(bMeta.name)}</div>
             ${bMeta.wards ? '<div class="wards">' + escapeHtml(bMeta.wards) + '</div>' : ''}
+            ${teamTagsHtml(bMeta.tags)}
           </div>
           <span class="avatar" style="--team-color:${bMeta.color}">${escapeHtml((bMeta.id || bMeta.name || 'B').slice(0, 2).toUpperCase())}</span>
         </div>
@@ -4259,6 +4344,9 @@
       if (match.status === 'scheduled') {
         btns.push('<button class="t-btn success sm" data-act="start">▶ Start match</button>');
         btns.push('<button class="t-btn sm" data-act="schedule">📅 Reschedule</button>');
+        btns.push(match.showUpcoming
+          ? '<button class="t-btn sm" data-act="upcoming">Remove from upcoming</button>'
+          : '<button class="t-btn sm" data-act="upcoming">Show in Upcoming</button>');
       } else if (match.status === 'in_progress') {
         btns.push('<button class="t-btn primary sm" data-act="score">🎯 Enter scores</button>');
         btns.push('<button class="t-btn sm" data-act="complete">✔ Mark complete</button>');
@@ -4267,6 +4355,7 @@
         btns.push('<button class="t-btn primary sm" data-act="score">✏ Edit scores</button>');
         btns.push('<button class="t-btn sm" data-act="reopen">↺ Reopen</button>');
       }
+      btns.push('<button class="t-btn sm" data-act="court">' + (courtOf(match) ? 'Change court' : 'Set court') + '</button>');
       btns.push('<button class="t-btn sm" data-act="draw">Draw</button>');
       btns.push('<button class="t-btn sm" data-act="walkover">Walkover</button>');
       btns.push('<button class="t-btn sm" data-act="noresult">No result</button>');
@@ -4343,6 +4432,18 @@
         if (val === null) return;
         await ref.update({ scheduledAt: fromDatetimeLocal(val), updatedAt: FieldValue.serverTimestamp() });
         toast('Schedule updated');
+      } else if (act === 'upcoming') {
+        const next = !match.showUpcoming;
+        await ref.update({ showUpcoming: next, updatedAt: FieldValue.serverTimestamp() });
+        await mirrorMatchPlan(tournament, match, { showUpcoming: next });
+        toast(next ? 'Marked as upcoming' : 'Removed from upcoming');
+      } else if (act === 'court') {
+        const val = prompt('Court for this match. Leave blank when there is one court, or none.', courtOf(match));
+        if (val === null) return;
+        const court = String(val).trim();
+        await ref.update({ court: court, venue: court, updatedAt: FieldValue.serverTimestamp() });
+        await mirrorMatchPlan(tournament, match, { court: court, venue: court });
+        toast(court ? 'Court set to ' + court : 'Court cleared');
       } else if (act === 'score') {
         openScorer(match, tournament);
       }
@@ -4414,15 +4515,19 @@
       const aEl = row.querySelector('[data-f="a"]');
       const bEl = row.querySelector('[data-f="b"]');
       const whenEl = row.querySelector('[data-f="when"]');
-      const venueEl = row.querySelector('[data-f="venue"]');
+      const courtEl = row.querySelector('[data-f="court"]') || row.querySelector('[data-f="venue"]');
+      const upcomingEl = row.querySelector('[data-f="upcoming"]');
       const whenVal = whenEl ? whenEl.value : '';
+      const court = courtEl ? courtEl.value.trim() : '';
       out.push({
         id: row.getAttribute('data-entry-id'),
         stage: stageEl ? stageEl.value : 'league',
         a: aEl ? aEl.value.trim() : '',
         b: bEl ? bEl.value.trim() : '',
         scheduledAt: whenVal ? fromDatetimeLocal(whenVal) : '',
-        venue: venueEl ? venueEl.value.trim() : '',
+        venue: court,
+        court: court,
+        showUpcoming: !!(upcomingEl && upcomingEl.checked),
         matchId: row.getAttribute('data-match-id') || ''
       });
     });
@@ -4448,7 +4553,9 @@
           a: p.a || '',
           b: p.b || '',
           scheduledAt: m.scheduledAt || '',
-          venue: m.venue || '',
+          venue: courtOf(m),
+          court: courtOf(m),
+          showUpcoming: !!m.showUpcoming,
           matchId: m.id
         });
       });
@@ -4584,7 +4691,8 @@
           <td><span class="t-badge stage-${escapeHtml(e.stage)}">${escapeHtml(stageLabelOf(sport, e.stage))}</span></td>
           <td class="t-schedule-vs"><b>${escapeHtml(aName)}</b> <span>vs</span> <b>${escapeHtml(bName)}</b></td>
           <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
-          <td>${e.venue ? escapeHtml(e.venue) : '—'}</td>
+          <td>${courtOf(e) ? escapeHtml(courtOf(e)) : '—'}</td>
+          <td>${e.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : '—'}</td>
         </tr>
       `;
     }).join('');
@@ -4592,7 +4700,7 @@
       ${whenNote}
       <div class="t-schedule-wrap">
         <table class="t-schedule-table">
-          <thead><tr><th>Stage</th><th>Match</th><th>When</th><th>Venue</th></tr></thead>
+          <thead><tr><th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Upcoming</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -4638,13 +4746,14 @@
           <td class="t-schedule-vs-cell">vs</td>
           <td>${participantSelectHtml(tournament, sport, 'b', e.b, pool)}</td>
           <td><input type="datetime-local" class="t-input" data-f="when" value="${escapeHtml(toDatetimeLocal(e.scheduledAt))}" /></td>
-          <td><input type="text" class="t-input" data-f="venue" value="${escapeHtml(e.venue || '')}" placeholder="Venue" /></td>
+          <td><input type="text" class="t-input" data-f="court" value="${escapeHtml(courtOf(e))}" placeholder="Court (optional)" /></td>
+          <td class="t-schedule-flag"><label class="t-check-line"><input type="checkbox" data-f="upcoming" ${e.showUpcoming ? 'checked' : ''} /> Upcoming</label></td>
           <td><button type="button" class="t-btn danger sm" data-remove-row="${escapeHtml(e.id)}">Remove</button></td>
         </tr>
       `;
     }).join('');
     return `
-      <div class="t-schedule-note">${escapeHtml(savedNote)} Only admins can edit. Everyone else sees this after you publish.</div>
+      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Check Upcoming for the matches that should appear in Upcoming and on the spectator board.</div>
       <div class="t-schedule-wrap">
         <table class="t-schedule-table" id="tScheduleEditor" ${attrs}>
           <thead>
@@ -4654,7 +4763,8 @@
               <th></th>
               <th>Side B</th>
               <th>When</th>
-              <th>Venue</th>
+              <th>Court</th>
+              <th>Upcoming</th>
               <th></th>
             </tr>
           </thead>
@@ -4789,6 +4899,44 @@
     }
   }
 
+  async function mirrorMatchPlan(tournament, match, fields) {
+    if (!match || (!match.scheduleEntryId && !match.fromSchedule)) return;
+    const sport = getSportConfig(tournament, match.sport);
+    if (!sport) return;
+    const categoryId = match.categoryId || '';
+    const bracketId = match.bracketId || '';
+    const key = scheduleKey(tournament.id, match.sport, categoryId, bracketId);
+    const local = scheduleEditByKey[key];
+    if (local && Array.isArray(local.entries)) {
+      local.entries = local.entries.map(function (e) {
+        const hit = (match.scheduleEntryId && e.id === match.scheduleEntryId) || e.matchId === match.id;
+        return hit ? Object.assign({}, e, fields) : e;
+      });
+    }
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    const owner = categoryId ? scope.bracket : sport;
+    if (!owner) return;
+    const sch = getSchedule(owner);
+    let changed = false;
+    function touch(block) {
+      if (!block || !Array.isArray(block.entries)) return block || null;
+      return Object.assign({}, block, {
+        entries: block.entries.map(function (e) {
+          const hit = (match.scheduleEntryId && e.id === match.scheduleEntryId) || e.matchId === match.id;
+          if (!hit) return e;
+          changed = true;
+          return Object.assign({}, e, fields);
+        })
+      });
+    }
+    if (!sch.draft && !sch.published) return;
+    const next = { draft: touch(sch.draft), published: touch(sch.published) };
+    if (!changed) return;
+    try {
+      await writeSchedule(tournament, sport.id, categoryId, bracketId, next);
+    } catch (_) { /* writeSportPatch already toasted */ }
+  }
+
   async function writeSchedule(tournament, sportId, categoryId, bracketId, schedule) {
     if (!categoryId) return writeSportPatch(tournament, sportId, { schedule: schedule });
     const sport = getSportConfig(tournament, sportId);
@@ -4918,7 +5066,9 @@
       sport: sport.id,
       stage: entry.stage || 'league',
       scheduledAt: entry.scheduledAt || '',
-      venue: entry.venue || '',
+      venue: courtOf(entry),
+      court: courtOf(entry),
+      showUpcoming: !!entry.showUpcoming,
       status: 'scheduled',
       winner: null,
       scoringConfig: stageCfg,
@@ -4966,7 +5116,9 @@
         const patch = {
           stage: e.stage || 'league',
           scheduledAt: e.scheduledAt || '',
-          venue: e.venue || '',
+          venue: courtOf(e),
+          court: courtOf(e),
+          showUpcoming: !!e.showUpcoming,
           published: true,
           fromSchedule: true,
           scheduleEntryId: e.id,
@@ -4989,6 +5141,8 @@
           await col.doc(found.id).update({
             scheduledAt: patch.scheduledAt,
             venue: patch.venue,
+            court: patch.court,
+            showUpcoming: patch.showUpcoming,
             scheduleEntryId: e.id,
             published: true,
             fromSchedule: true,
@@ -6136,6 +6290,7 @@
       snap.forEach(function (doc) { state.tournaments.push(Object.assign({ id: doc.id }, doc.data())); });
       state.ready.tournaments = true;
       render();
+      if (state.currentId) schedulePublicBoardSync(state.currentId);
       // Refresh any live modals whose contents depend on the tournament doc.
       if (openLiveModal === 'roster') rerenderRoster();
       if (openLiveModal === 'memberPicker') rerenderMemberPicker();
@@ -6171,6 +6326,7 @@
         snap.forEach(function (doc) { state.matches.push(Object.assign({ id: doc.id }, doc.data())); });
         state.ready.matches = true;
         render();
+        schedulePublicBoardSync(tournamentId);
       }, function (err) {
         console.error('matches error:', err);
         state.ready.matches = true;
@@ -6183,7 +6339,735 @@
   // MAIN RENDER
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function isPublicWatchPage() {
+    const file = ((location.pathname || '').split('/').pop() || '').toLowerCase();
+    return file === 'watch.html';
+  }
+
+  function spectatorUrl(tournamentId) {
+    return new URL('watch.html?t=' + encodeURIComponent(tournamentId), location.href).href;
+  }
+
+  function sanitizePublicTeam(team) {
+    if (!team || !team.id) return null;
+    const out = { id: team.id, name: team.name || team.id };
+    if (team.wards) out.wards = String(team.wards);
+    const tags = parseTeamTags(team.tags);
+    if (tags.length) out.tags = tags;
+    if (Array.isArray(team.players)) {
+      out.players = team.players.map(function (p) { return String(p || '').trim(); }).filter(Boolean);
+    }
+    return out;
+  }
+
+  function sanitizePublicSport(sport) {
+    return {
+      id: sport.id,
+      label: sport.label || sport.id,
+      kind: sport.kind || '',
+      emoji: sport.emoji || '🏅',
+      color: sport.color || '#3b82f6',
+      date: sport.date || '',
+      hasThirdPlace: sport.hasThirdPlace !== false,
+      categoryMode: sport.categoryMode || '',
+      tablePoints: tablePointsFor(sport),
+      stageList: stageListFor(sport),
+      rulesText: rulesText(sport.rules),
+      teams: (sport.teams || []).map(sanitizePublicTeam).filter(Boolean),
+      divisions: (sport.divisions || []).map(function (d) {
+        return {
+          id: d.id,
+          name: d.name || '',
+          open: !!d.open,
+          maxPlayers: clampMaxPlayers(d.maxPlayers),
+          teams: (d.teams || []).map(sanitizePublicTeam).filter(Boolean),
+          brackets: (d.brackets || []).map(function (b) {
+            return {
+              id: b.id,
+              name: b.name || 'Bracket',
+              stageId: bracketStageId(b),
+              teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : []
+            };
+          })
+        };
+      })
+    };
+  }
+
+  function sanitizePublicMatch(match) {
+    const out = {
+      id: match.id,
+      sport: match.sport || '',
+      stage: match.stage || 'league',
+      status: match.status || 'scheduled',
+      scheduledAt: match.scheduledAt || '',
+      venue: courtOf(match),
+      court: courtOf(match),
+      showUpcoming: !!match.showUpcoming,
+      winner: match.winner || null
+    };
+    if (match.resultType) out.resultType = match.resultType;
+    if (match.categoryId) out.categoryId = match.categoryId;
+    if (match.bracketId) out.bracketId = match.bracketId;
+    if (match.teamA) out.teamA = match.teamA;
+    if (match.teamB) out.teamB = match.teamB;
+    if (match.playerA) out.playerA = match.playerA;
+    if (match.playerB) out.playerB = match.playerB;
+    if (Array.isArray(match.sets) && match.sets.length) {
+      out.sets = match.sets.map(function (s) { return { a: s.a || 0, b: s.b || 0 }; });
+    }
+    if (Array.isArray(match.quarters) && match.quarters.length) {
+      out.quarters = match.quarters.map(function (q) { return { a: q.a || 0, b: q.b || 0 }; });
+    }
+    if (Array.isArray(match.games) && match.games.length) {
+      out.games = match.games.map(function (g) {
+        return {
+          category: g.category || '',
+          playersA: g.playersA || '',
+          playersB: g.playersB || '',
+          winner: g.winner || null,
+          sets: (g.sets || []).map(function (s) { return { a: s.a || 0, b: s.b || 0 }; })
+        };
+      });
+    }
+    return out;
+  }
+
+  function publicMatchVisible(tournament, match) {
+    if (!match) return false;
+    const sport = getSportConfig(tournament, match.sport);
+    if (!sport) return false;
+    if (match.fromSchedule || match.scheduleEntryId) {
+      if (match.bracketId) {
+        const division = findDivision(sport, match.categoryId);
+        return scheduleIsPublished(findBracket(division, match.bracketId));
+      }
+      return scheduleIsPublished(sport);
+    }
+    return true;
+  }
+
+  function publicBoardDocument(tournament, matches) {
+    const open = !!(tournament.publicBoard && isTournamentPublished(tournament) && tournamentHasStarted(tournament));
+    if (!open) {
+      return {
+        publicBoard: false,
+        published: isTournamentPublished(tournament),
+        started: tournamentHasStarted(tournament),
+        name: tournament.name || 'Tournament',
+        sports: [],
+        matches: [],
+        updatedAt: FieldValue.serverTimestamp()
+      };
+    }
+    const visible = (matches || []).filter(function (m) { return publicMatchVisible(tournament, m); });
+    return {
+      publicBoard: true,
+      published: true,
+      started: true,
+      name: tournament.name || 'Tournament',
+      format: tournament.format || 'teams',
+      sportMode: sportModeOf(tournament),
+      rulesText: isMultiSportTournament(tournament) ? rulesText(tournament.rules) : '',
+      sports: (tournament.sports || []).map(sanitizePublicSport),
+      matches: visible.map(sanitizePublicMatch),
+      updatedAt: FieldValue.serverTimestamp()
+    };
+  }
+
+  const publicSyncKeys = {};
+  let publicSyncTimer = null;
+
+  function schedulePublicBoardSync(tournamentId) {
+    if (!tournamentId || !isRealAdmin()) return;
+    clearTimeout(publicSyncTimer);
+    publicSyncTimer = setTimeout(function () { syncPublicBoardNow(tournamentId); }, 700);
+  }
+
+  async function syncPublicBoardNow(tournamentId, opts) {
+    if (!isRealAdmin() || !tournamentId) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const open = !!(t.publicBoard && isTournamentPublished(t) && tournamentHasStarted(t));
+    if (!open && !(opts && opts.forceClose)) return;
+    if (open && (state.currentId !== t.id || !state.ready.matches)) return;
+    const matches = state.matches || [];
+    const payload = publicBoardDocument(t, matches);
+    const comparable = Object.assign({}, payload);
+    delete comparable.updatedAt;
+    const key = JSON.stringify(comparable);
+    if (publicSyncKeys[t.id] === key && !(opts && opts.force)) return;
+    await db.collection('tournament_public').doc(t.id).set(payload);
+    publicSyncKeys[t.id] = key;
+  }
+
+  function copySpectatorLink(tournamentId) {
+    const url = spectatorUrl(tournamentId);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(function () {
+        toast('Spectator link copied');
+      }).catch(function () {
+        prompt('Copy this spectator link', url);
+      });
+      return;
+    }
+    prompt('Copy this spectator link', url);
+  }
+
+  async function shareLiveBoard(tournamentId) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const ready = isTournamentPublished(t) && tournamentHasStarted(t);
+    const { modal, body } = getOrCreateModal('tShareBoard', 'Spectator link', { wide: false });
+    if (!ready) {
+      body.innerHTML = `
+        <p class="t-mode-note" style="margin-top:0;">Anyone with the spectator link can follow scores without signing in. Publish this tournament and start it first. The link stays off until both are on.</p>
+        <ul class="t-left-matches">
+          <li>${isTournamentPublished(t) ? 'Published' : 'Not published yet'}</li>
+          <li>${tournamentHasStarted(t) ? 'Started' : 'Not started yet'}</li>
+        </ul>
+        <div class="t-modal-foot" style="display:flex;justify-content:flex-end;margin-top:14px;">
+          <button type="button" class="t-btn" data-close-share>Close</button>
+        </div>
+      `;
+      modal.classList.add('open');
+      body.querySelector('[data-close-share]').addEventListener('click', function () { closeLiveModal('tShareBoard'); });
+      return;
+    }
+    if (!state.ready.matches || state.currentId !== t.id) {
+      body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Matches are still loading. Open the spectator link again in a moment.</p>';
+      modal.classList.add('open');
+      return;
+    }
+    body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Preparing the live board…</p>';
+    modal.classList.add('open');
+    try {
+      await db.collection('tournaments').doc(t.id).update({
+        publicBoard: true,
+        publicBoardAt: new Date().toISOString(),
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { publicBoard: true });
+      await syncPublicBoardNow(t.id, { force: true });
+      const url = spectatorUrl(t.id);
+      body.innerHTML = `
+        <p class="t-mode-note" style="margin-top:0;">Share this link anywhere. Spectators see the matches on court, the matches you mark as upcoming, and standings for each stage and bracket. They do not sign in, and they never see rosters, captains, or admin tools.</p>
+        <div class="t-form-field">
+          <label>Spectator link</label>
+          <input type="text" class="t-input" id="tSpectatorUrl" readonly value="${escapeHtml(url)}" />
+        </div>
+        <div class="t-modal-foot" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:14px;">
+          <button type="button" class="t-btn danger" data-stop-share>Stop sharing</button>
+          <a class="t-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open</a>
+          <button type="button" class="t-btn primary" data-copy-share>Copy link</button>
+        </div>
+      `;
+      const input = body.querySelector('#tSpectatorUrl');
+      if (input) input.addEventListener('focus', function () { input.select(); });
+      body.querySelector('[data-copy-share]').addEventListener('click', function () { copySpectatorLink(t.id); });
+      body.querySelector('[data-stop-share]').addEventListener('click', function () { stopLiveBoard(t.id); });
+      render();
+    } catch (err) {
+      console.error(err);
+      body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Could not turn on the spectator board. ' + escapeHtml(err.message || err.code || 'Try again.') + '</p>';
+    }
+  }
+
+  async function stopLiveBoard(tournamentId) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    if (!confirm('Stop sharing "' + t.name + '"? The spectator link will stop opening the live board.')) return;
+    try {
+      await db.collection('tournaments').doc(t.id).update({
+        publicBoard: false,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { publicBoard: false });
+      await syncPublicBoardNow(t.id, { forceClose: true, force: true });
+      closeLiveModal('tShareBoard');
+      toast('Spectator link turned off');
+      render();
+    } catch (err) {
+      console.error(err);
+      toast('Could not stop sharing: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  const watch = { board: null, ready: false, missing: false, closed: false, error: null, preview: false };
+
+  function sampleWatchBoard() {
+    return {
+      publicBoard: true,
+      published: true,
+      started: true,
+      name: 'Parish Games',
+      format: 'teams',
+      sportMode: 'multi',
+      rulesText: 'Be ready when your match is called. A walkover is awarded if a team does not arrive.',
+      sports: [
+        {
+          id: 'badminton', label: 'Badminton', kind: 'racket', emoji: '🏸', color: '#06b6d4', date: '2026-10-19',
+          hasThirdPlace: false, categoryMode: 'open',
+          tablePoints: { win: 2, draw: 1, walkover: 2, noResult: 0 },
+          stageList: [
+            { id: 'league', name: 'League' },
+            { id: 'stg_r16', name: 'Round of 16' },
+            { id: 'semifinal', name: 'Semifinal' },
+            { id: 'final', name: 'Final' }
+          ],
+          rulesText: 'One game to 21, cap 25. Best of three from the semifinals on.',
+          teams: [],
+          divisions: [{
+            id: 'open', name: 'Open', open: true, maxPlayers: 2,
+            teams: [
+              { id: 'A', name: 'Sunrise', players: ['Ann', 'Ben'], tags: ['Seed 1'] },
+              { id: 'B', name: 'Harbor', players: ['Cia', 'Dev'], tags: ['Seed 2'] },
+              { id: 'C', name: 'North', players: ['Eve', 'Finn'] },
+              { id: 'D', name: 'West', players: ['Gia', 'Hugo'], tags: ['Late start'] }
+            ],
+            brackets: [
+              { id: 'b1', name: 'Group 1', stageId: 'league', teamIds: ['A', 'B', 'C'] },
+              { id: 'b2', name: 'Group 2', stageId: 'league', teamIds: ['D'] },
+              { id: 'b3', name: 'Bracket A', stageId: 'stg_r16', teamIds: ['A', 'C'] }
+            ]
+          }]
+        },
+        {
+          id: 'volleyball', label: 'Volleyball', kind: 'volleyball', emoji: '🏐', color: '#d946ef', date: '2026-10-19',
+          hasThirdPlace: true, categoryMode: '',
+          tablePoints: { win: 2, draw: 1, walkover: 2, noResult: 0 },
+          stageList: [
+            { id: 'league', name: 'League' },
+            { id: 'semifinal', name: 'Semifinal' },
+            { id: 'final', name: 'Final' },
+            { id: 'third_place', name: '3rd Place' }
+          ],
+          rulesText: '',
+          teams: [
+            { id: 'G1', name: 'G1', wards: 'St. Euphrasia', tags: ['Home'] },
+            { id: 'G2', name: 'G2', wards: 'St. Francis' },
+            { id: 'G3', name: 'G3', wards: 'St. Mary' },
+            { id: 'G4', name: 'G4', wards: 'St. Joseph' }
+          ],
+          divisions: []
+        }
+      ],
+      matches: [
+        { id: 'm1', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'in_progress', teamA: 'A', teamB: 'B', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T18:00:00.000Z', games: [{ category: 'OD1', playersA: 'Ann / Ben', playersB: 'Cia / Dev', sets: [{ a: 21, b: 16 }, { a: 18, b: 16 }], winner: 'A' }] },
+        { id: 'm8', sport: 'badminton', categoryId: 'open', bracketId: 'b2', stage: 'league', status: 'in_progress', teamA: 'C', teamB: 'D', court: 'Court 2', venue: 'Court 2', scheduledAt: '2026-10-19T18:05:00.000Z', games: [{ category: 'OD1', playersA: 'Eve / Finn', playersB: 'Gia / Hugo', sets: [{ a: 11, b: 9 }], winner: null }] },
+        { id: 'm2', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'scheduled', showUpcoming: true, teamA: 'A', teamB: 'C', scheduledAt: '2026-10-19T18:40:00.000Z' },
+        { id: 'm9', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'scheduled', showUpcoming: false, teamA: 'B', teamB: 'D', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T19:10:00.000Z' },
+        { id: 'm3', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'completed', teamA: 'B', teamB: 'C', winner: 'B', resultType: 'played', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T17:10:00.000Z', games: [{ category: 'OD1', sets: [{ a: 21, b: 19 }], winner: 'A' }] },
+        { id: 'm4', sport: 'badminton', categoryId: 'open', bracketId: 'b3', stage: 'stg_r16', status: 'scheduled', showUpcoming: true, teamA: 'A', teamB: 'C', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T20:00:00.000Z' },
+        { id: 'm5', sport: 'volleyball', stage: 'league', status: 'completed', teamA: 'G1', teamB: 'G2', winner: 'A', resultType: 'played', venue: 'Hall', scheduledAt: '2026-10-19T16:00:00.000Z', sets: [{ a: 25, b: 20 }, { a: 25, b: 22 }] },
+        { id: 'm6', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: false, teamA: 'G3', teamB: 'G4', venue: 'Hall', scheduledAt: '2026-10-19T19:15:00.000Z' },
+        { id: 'm10', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: true, teamA: 'G1', teamB: 'G4', scheduledAt: '2026-10-19T19:45:00.000Z' },
+        { id: 'm7', sport: 'volleyball', stage: 'semifinal', status: 'completed', teamA: 'G1', teamB: 'G3', winner: 'B', resultType: 'walkover', venue: 'Hall', scheduledAt: '2026-10-19T21:00:00.000Z' }
+      ]
+    };
+  }
+
+  function watchParams() {
+    const params = new URLSearchParams(location.search);
+    return {
+      tournamentId: params.get('t') || '',
+      sportId: params.get('sport') || '',
+      stageId: params.get('st') || '',
+      categoryId: params.get('cat') || '',
+      teamId: params.get('team') || ''
+    };
+  }
+
+  function setWatchParams(next) {
+    const params = new URLSearchParams(location.search);
+    ['sport', 'st', 'cat', 'team'].forEach(function (key) {
+      if (next[key]) params.set(key, next[key]);
+      else params.delete(key);
+    });
+    const qs = params.toString();
+    history.replaceState(null, '', 'watch.html' + (qs ? '?' + qs : ''));
+    renderPublicWatch();
+  }
+
+  function watchUpdatedLabel(board) {
+    const u = board && board.updatedAt;
+    let d = null;
+    if (u && typeof u.toDate === 'function') d = u.toDate();
+    else if (u && u.seconds) d = new Date(u.seconds * 1000);
+    if (!d || isNaN(d.getTime())) return 'Live';
+    return 'Updated ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function watchScoreText(match, tournament) {
+    const kind = resultKind(match);
+    if (match.status !== 'in_progress' && match.status !== 'completed') return { a: '', b: '', note: 'vs' };
+    if (kind === 'no_result') return { a: '–', b: '–', note: 'No result' };
+    if (kind === 'walkover') return { a: match.winner === 'A' ? 'W' : '0', b: match.winner === 'B' ? 'W' : '0', note: 'Walkover' };
+    const s = matchScoreDisplay(match, tournament);
+    return { a: s.a, b: s.b, note: kind === 'draw' ? 'Draw' : '' };
+  }
+
+  function watchDetailLine(match, tournament) {
+    const sport = getSportConfig(tournament, match.sport);
+    if (!sport) return '';
+    if (sport.kind === 'volleyball') {
+      return (match.sets || []).map(function (s) { return (s.a || 0) + '–' + (s.b || 0); }).join('  ·  ');
+    }
+    if (sport.kind === 'basketball') {
+      return (match.quarters || []).map(function (q, i) { return 'Q' + (i + 1) + ' ' + (q.a || 0) + '–' + (q.b || 0); }).join('  ·  ');
+    }
+    if (sport.kind === 'racket') {
+      return (match.games || []).map(function (g) {
+        const sets = (g.sets || []).map(function (s) { return (s.a || 0) + '–' + (s.b || 0); }).join(', ');
+        return (g.category || 'Game') + (sets ? ' ' + sets : '');
+      }).join('  ·  ');
+    }
+    return '';
+  }
+
+  function watchSideHtml(tournament, sportId, teamId, winner) {
+    const meta = teamMeta(tournament, sportId, teamId);
+    return `
+      <div class="w-side ${winner ? 'is-winner' : ''}">
+        <span class="w-swatch" style="background:${meta.color}"></span>
+        <div>
+          <div class="w-side-name">${escapeHtml(meta.name)}</div>
+          ${meta.wards ? '<div class="w-side-sub">' + escapeHtml(meta.wards) + '</div>' : ''}
+          ${teamTagsHtml(meta.tags, 'watch')}
+        </div>
+      </div>
+    `;
+  }
+
+  function watchScoreboardHtml(match, tournament, featured) {
+    const sport = getSportConfig(tournament, match.sport);
+    const p = participantsOf(match, tournament);
+    const score = watchScoreText(match, tournament);
+    const detail = watchDetailLine(match, tournament);
+    const live = match.status === 'in_progress';
+    const kind = resultKind(match);
+    const stage = stageLabelOf(sport, match.stage);
+    const when = match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time to be set';
+    const kicker = [
+      live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Next'),
+      sport ? ((sport.emoji || '') + ' ' + (sport.label || '')) : '',
+      stage,
+      courtOf(match)
+    ].filter(Boolean).join(' · ');
+    const center = score.note === 'vs'
+      ? '<div class="w-vs">VS</div>'
+      : '<div class="w-score-num"><b>' + escapeHtml(score.a) + '</b><span>–</span><b>' + escapeHtml(score.b) + '</b></div>';
+    return `
+      <article class="w-scoreboard ${live ? 'is-live' : ''} ${featured ? 'is-featured' : ''} ${match.status === 'completed' ? 'is-done' : ''}">
+        <div class="w-kicker">${live ? '<span class="w-live-dot"></span>' : ''}${escapeHtml(kicker)}</div>
+        <div class="w-score-row">
+          <button type="button" class="w-side-btn" data-act="team" data-team="${escapeHtml(p.a || '')}" data-sport="${escapeHtml(match.sport || '')}">
+            ${watchSideHtml(tournament, match.sport, p.a, match.winner === 'A')}
+          </button>
+          ${center}
+          <button type="button" class="w-side-btn right" data-act="team" data-team="${escapeHtml(p.b || '')}" data-sport="${escapeHtml(match.sport || '')}">
+            ${watchSideHtml(tournament, match.sport, p.b, match.winner === 'B')}
+          </button>
+        </div>
+        ${detail ? '<div class="w-detail">' + escapeHtml(detail) + '</div>' : ''}
+        <div class="w-meta">${escapeHtml(when)}${kind === 'draw' ? ' · Draw' : ''}${kind === 'walkover' ? ' · Walkover' : ''}${kind === 'no_result' ? ' · No result' : ''}</div>
+      </article>
+    `;
+  }
+
+  function watchFixtureHtml(match, tournament) {
+    const sport = getSportConfig(tournament, match.sport);
+    const p = participantsOf(match, tournament);
+    const a = teamMeta(tournament, match.sport, p.a);
+    const b = teamMeta(tournament, match.sport, p.b);
+    const score = watchScoreText(match, tournament);
+    const mid = score.note === 'vs' ? 'vs' : (score.a + '–' + score.b);
+    return `
+      <div class="w-fixture">
+        <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${courtOf(match) ? ' · ' + escapeHtml(courtOf(match)) : ''}</div>
+        <div class="w-fix-row">
+          <span class="w-swatch sm" style="background:${a.color}"></span>
+          <span class="w-fix-name">${escapeHtml(a.name)}</span>
+          <span class="w-fix-mid">${escapeHtml(mid)}</span>
+          <span class="w-fix-name right">${escapeHtml(b.name)}</span>
+          <span class="w-swatch sm" style="background:${b.color}"></span>
+        </div>
+        <div class="w-fix-stage">${escapeHtml(stageLabelOf(sport, match.stage))}${resultKind(match) === 'walkover' ? ' · Walkover' : ''}${resultKind(match) === 'no_result' ? ' · No result' : ''}</div>
+      </div>
+    `;
+  }
+
+  function watchTableHtml(tournament, sportId, rows, emptyLabel) {
+    if (!rows.length) return '<p class="w-empty">' + escapeHtml(emptyLabel || 'No matches completed in this stage yet.') + '</p>';
+    return `
+      <table class="w-table">
+        <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>Pts</th></tr></thead>
+        <tbody>
+          ${rows.map(function (r, i) {
+            const meta = teamMeta(tournament, sportId, r.id);
+            return `
+              <tr class="rank-${i + 1}" data-act="team" data-team="${escapeHtml(r.id)}" data-sport="${escapeHtml(sportId)}">
+                <td><span class="w-rank">${i + 1}</span></td>
+                <td><span class="w-team"><span class="w-swatch sm" style="background:${meta.color}"></span><span><span>${escapeHtml(meta.name)}</span>${teamTagsHtml(meta.tags, 'watch')}</span></span></td>
+                <td>${r.played}</td><td>${r.won}</td><td>${r.drawn || 0}</td><td>${r.lost}</td><td class="pts">${r.points}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function renderPublicWatch() {
+    const top = document.getElementById('wTop');
+    const root = document.getElementById('wContent');
+    if (!top || !root) return;
+    if (!watch.ready && !watch.preview) {
+      document.title = 'Live scores';
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>Live</span></div>';
+      root.innerHTML = '<div class="w-status">Loading the live board…</div>';
+      return;
+    }
+    if (watch.missing || watch.closed || watch.error || !watch.board) {
+      document.title = 'Live scores';
+      const params = watchParams();
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>Live</span></div>';
+      const msg = watch.missing
+        ? 'This link is missing a tournament. Ask the organizer for the spectator link.'
+        : 'This live board is not open yet. It appears after an admin publishes the tournament, starts it, and turns on the spectator link.';
+      root.innerHTML = `
+        <section class="w-closed">
+          <div class="w-closed-mark">🏆</div>
+          <h1>Scores stay here</h1>
+          <p>${msg}</p>
+          ${params.tournamentId ? '<a class="w-quiet" href="tournament.html?t=' + encodeURIComponent(params.tournamentId) + '">Organizer sign-in</a>' : ''}
+        </section>
+      `;
+      return;
+    }
+
+    const tournament = watch.board;
+    const matches = tournament.matches || [];
+    const params = watchParams();
+    const sports = tournament.sports || [];
+    let sport = sports.find(function (s) { return s.id === params.sportId; }) || null;
+    if (!sport) {
+      const liveMatch = matches.find(function (m) { return m.status === 'in_progress'; });
+      sport = (liveMatch && sports.find(function (s) { return s.id === liveMatch.sport; })) || sports[0] || null;
+    }
+    if (!sport) {
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + escapeHtml(tournament.name || 'Live') + '</span></div>';
+      root.innerHTML = '<div class="w-status">This tournament has no sports yet.</div>';
+      return;
+    }
+    const divisions = sport.divisions || [];
+    const categorized = usesRegistrationCategories(sport);
+    let division = categorized ? (findDivision(sport, params.categoryId) || divisions[0] || null) : null;
+    const pool = matches.filter(function (m) {
+      if (m.sport !== sport.id) return false;
+      if (division && m.categoryId !== division.id) return false;
+      if (!division && (m.categoryId || m.bracketId)) return false;
+      return true;
+    });
+    const stages = stageListFor(sport);
+    let stageId = params.stageId;
+    if (!stages.some(function (st) { return st.id === stageId; })) {
+      const liveHere = pool.find(function (m) { return m.status === 'in_progress'; });
+      stageId = (liveHere && liveHere.stage) || (stages[0] && stages[0].id) || 'league';
+    }
+    const stageName = stageLabelOf(sport, stageId);
+    const stagePool = pool.filter(function (m) { return (m.stage || 'league') === stageId; });
+    const live = stagePool.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches);
+    const upcoming = stagePool.filter(function (m) { return m.status === 'scheduled' && m.showUpcoming; }).sort(sortMatches);
+    const done = stagePool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
+    const allLive = pool.filter(function (m) { return m.status === 'in_progress'; });
+
+    document.title = (tournament.name || 'Live') + ' — ' + (sport.label || 'Scores');
+    const sportPills = sports.map(function (s) {
+      const on = s.id === sport.id;
+      const n = matches.filter(function (m) { return m.sport === s.id && m.status === 'in_progress'; }).length;
+      return `<button type="button" class="w-pill ${on ? 'is-on' : ''}" style="--accent:${s.color || '#3b82f6'}" data-act="sport" data-sport="${escapeHtml(s.id)}">${escapeHtml((s.emoji || '') + ' ' + (s.label || s.id))}${n ? '<i>' + n + '</i>' : ''}</button>`;
+    }).join('');
+    top.innerHTML = `
+      <div class="w-brand"><img src="icons/smash-logo.png" alt="" /><div><b>${escapeHtml(tournament.name || 'Live')}</b><small>${escapeHtml(watchUpdatedLabel(tournament))}${watch.preview ? ' · Sample' : ''}</small></div></div>
+      <div class="w-pills">${sportPills}</div>
+      <button type="button" class="w-copy" data-act="copy">Copy link</button>
+    `;
+
+    const catPills = categorized && sport.categoryMode === 'split'
+      ? `<div class="w-pills w-sub">${divisions.map(function (d) {
+          return `<button type="button" class="w-pill ${division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
+        }).join('')}</div>`
+      : '';
+    const stagePills = `<div class="w-pills w-sub">${stages.map(function (st) {
+      const count = pool.filter(function (m) { return m.stage === st.id && m.status === 'in_progress'; }).length;
+      return `<button type="button" class="w-pill ${st.id === stageId ? 'is-on' : ''}" data-act="stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${count ? '<i>' + count + '</i>' : ''}</button>`;
+    }).join('')}</div>`;
+
+    const heroMatches = live.length ? live : (upcoming[0] ? [upcoming[0]] : []);
+    const hero = heroMatches.length
+      ? `<div class="w-hero-row">${heroMatches.map(function (m, i) { return watchScoreboardHtml(m, tournament, i === 0); }).join('')}</div>`
+      : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches appear after an admin marks them.</p></section>`;
+
+    const standScope = { stageId: stageId, useTeams: true };
+    if (division) standScope.categoryId = division.id;
+    const overall = computeStandings(tournament, matches, sport.id, standScope);
+    const brackets = division ? bracketsInStage(division, stageId) : [];
+    const bracketBlocks = brackets.map(function (b) {
+      const rows = computeStandings(tournament, matches, sport.id, {
+        stageId: stageId,
+        categoryId: division.id,
+        bracketId: b.id,
+        teamIds: b.teamIds || [],
+        useTeams: true
+      });
+      return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.')}</section>`;
+    }).join('');
+
+    let focus = '';
+    if (params.teamId) {
+      const rowsForTeam = division
+        ? (brackets.length ? null : overall)
+        : overall;
+      const bracket = division ? bracketForTeam(division, params.teamId, stageId) : null;
+      const bracketRows = bracket ? computeStandings(tournament, matches, sport.id, {
+        stageId: stageId, categoryId: division.id, bracketId: bracket.id, teamIds: bracket.teamIds || [], useTeams: true
+      }) : [];
+      const mine = matches.filter(function (m) {
+        if (m.sport !== sport.id) return false;
+        const p = participantsOf(m, tournament);
+        return p.a === params.teamId || p.b === params.teamId;
+      }).sort(sortMatches);
+      const meta = teamMeta(tournament, sport.id, params.teamId);
+      focus = `
+        <section class="w-follow">
+          <div class="w-follow-head">
+            <div><span class="w-swatch" style="background:${meta.color}"></span><div><b>${escapeHtml(meta.name)}</b>${teamTagsHtml(meta.tags, 'watch')}<small>${escapeHtml(stageName)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}</small></div></div>
+            <button type="button" class="w-copy" data-act="clear-team">Close</button>
+          </div>
+          <div class="w-follow-stats">
+            <div><span>Bracket</span><b>${escapeHtml(bracket ? standingLine(rankOf(bracketRows, params.teamId)) : 'Not in a bracket this stage')}</b></div>
+            <div><span>Overall</span><b>${escapeHtml(standingLine(rankOf(bracket ? overall : (rowsForTeam || overall), params.teamId)))}</b></div>
+          </div>
+          <div class="w-follow-matches">${mine.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') || '<p class="w-empty">No matches for this team yet.</p>'}</div>
+        </section>
+      `;
+    }
+
+    const rules = [tournament.rulesText, sport.rulesText].filter(Boolean);
+    root.innerHTML = `
+      ${watch.preview ? '<div class="w-sample">Sample board — this is not a live tournament.</div>' : ''}
+      <div class="w-accent" style="--accent:${sport.color || '#3b82f6'}"></div>
+      ${catPills}
+      ${stagePills}
+      ${focus}
+      ${hero}
+      <div class="w-layout">
+        <div class="w-col">
+          <section class="w-panel">
+            <h3>Upcoming <small>${escapeHtml(stageName)}</small></h3>
+            ${upcoming.length ? '<div class="w-list">' + upcoming.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') + '</div>' : '<p class="w-empty">No upcoming matches in ' + escapeHtml(stageName) + '. An admin chooses which scheduled matches appear here.</p>'}
+          </section>
+          <section class="w-panel">
+            <h3>Results <small>${escapeHtml(stageName)}</small></h3>
+            ${done.length ? '<div class="w-list">' + done.slice(0, 8).map(function (m) { return watchFixtureHtml(m, tournament); }).join('') + '</div>' : '<p class="w-empty">Results land here as matches finish.</p>'}
+          </section>
+        </div>
+        <div class="w-col">
+          ${bracketBlocks}
+          <section class="w-panel">
+            <h3>${brackets.length ? 'Overall' : 'Standing'} <small>${escapeHtml(stageName)}</small></h3>
+            ${watchTableHtml(tournament, sport.id, overall, 'No ' + stageName + ' matches completed yet.')}
+          </section>
+          ${rules.length ? '<details class="w-rules"><summary>Rules</summary>' + rules.map(function (text) { return '<p>' + escapeHtml(text) + '</p>'; }).join('') + '</details>' : ''}
+        </div>
+      </div>
+      ${allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
+    `;
+
+    function goSport(id) { setWatchParams({ sport: id, st: '', cat: '', team: '' }); }
+    function goStage(id) { setWatchParams({ sport: sport.id, st: id, cat: division ? division.id : '', team: '' }); }
+    function goCat(id) { setWatchParams({ sport: sport.id, st: stageId, cat: id, team: '' }); }
+    function goTeam(id) { setWatchParams({ sport: sport.id, st: stageId, cat: division ? division.id : '', team: id }); }
+    const shell = document.body;
+    shell.querySelectorAll('[data-act="sport"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { goSport(btn.getAttribute('data-sport')); });
+    });
+    shell.querySelectorAll('[data-act="stage"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { goStage(btn.getAttribute('data-stage')); });
+    });
+    shell.querySelectorAll('[data-act="cat"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { goCat(btn.getAttribute('data-cat')); });
+    });
+    shell.querySelectorAll('[data-act="team"]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        const id = node.getAttribute('data-team');
+        if (id) goTeam(id);
+      });
+    });
+    shell.querySelectorAll('[data-act="clear-team"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { goStage(stageId); });
+    });
+    shell.querySelectorAll('[data-act="copy"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const url = location.href;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () {
+            btn.textContent = 'Copied';
+            setTimeout(function () { btn.textContent = 'Copy link'; }, 1600);
+          }).catch(function () { prompt('Copy this link', url); });
+        } else prompt('Copy this link', url);
+      });
+    });
+  }
+
+  function initPublicWatch() {
+    const params = new URLSearchParams(location.search);
+    if (params.get('preview') === '1') {
+      watch.preview = true;
+      watch.ready = true;
+      watch.board = sampleWatchBoard();
+      renderPublicWatch();
+      return;
+    }
+    const id = params.get('t');
+    if (!id) {
+      watch.ready = true;
+      watch.missing = true;
+      renderPublicWatch();
+      return;
+    }
+    watch.ready = false;
+    renderPublicWatch();
+    db.collection('tournament_public').doc(id).onSnapshot(function (snap) {
+      watch.ready = true;
+      watch.error = null;
+      if (!snap.exists) {
+        watch.board = null;
+        watch.closed = true;
+      } else {
+        const data = Object.assign({ id: snap.id }, snap.data() || {});
+        const open = data.publicBoard === true && data.published === true && data.started === true;
+        watch.board = open ? data : null;
+        watch.closed = !open;
+      }
+      renderPublicWatch();
+    }, function (err) {
+      console.error('[watch]', err);
+      watch.ready = true;
+      watch.board = null;
+      watch.error = err;
+      watch.closed = !!(err && err.code === 'permission-denied');
+      renderPublicWatch();
+    });
+  }
+
   function render() {
+    if (isPublicWatchPage()) return renderPublicWatch();
     const parsed = parseUrl();
     renderTopbar();
 
@@ -6303,6 +7187,10 @@
   }
 
   function init() {
+    if (isPublicWatchPage()) {
+      initPublicWatch();
+      return;
+    }
     state.adminUi = readAdminUiPref();
     render();
     auth.onAuthStateChanged(function (user) {
