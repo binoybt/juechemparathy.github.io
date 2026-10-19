@@ -50,7 +50,7 @@ body.watch {
   text-overflow: ellipsis;
 }
 .w-brand small { color: var(--w-muted); font-size: .75rem; }
-.w-pills { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; }
+.w-pills { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; min-width: 0; }
 .w-pills::-webkit-scrollbar { display: none; }
 .w-top .w-pills { flex: 1; }
 .w-pill {
@@ -64,6 +64,7 @@ body.watch {
   font-weight: 650;
   white-space: nowrap;
   cursor: pointer;
+  flex: none;
 }
 .w-pill i {
   display: inline-flex;
@@ -186,6 +187,17 @@ body.watch {
   text-overflow: ellipsis;
 }
 .w-side-sub { color: var(--w-muted); font-size: .78rem; margin-top: 3px; }
+.w-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.w-side-btn.right .w-tags { justify-content: flex-end; }
+.w-tag {
+  display: inline-flex;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, .16);
+  color: #bae6fd;
+  font-size: .68rem;
+  font-weight: 700;
+}
 .w-swatch { width: 8px; height: 36px; border-radius: 99px; flex: none; }
 .w-swatch.sm { width: 7px; height: 16px; }
 .w-score-num, .w-vs {
@@ -261,6 +273,7 @@ body.watch {
 .w-table tr.rank-2 .w-rank { background: #cbd5e1; color: #0f172a; }
 .w-table tr.rank-3 .w-rank { background: #d97706; color: #fff; }
 .w-team { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+.w-team > span:last-child { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
 
 .w-follow { margin-bottom: 14px; border-color: rgba(251, 191, 36, .35); }
 .w-follow-head, .w-follow-stats { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
@@ -285,7 +298,7 @@ body.watch {
 
 @media (max-width: 860px) {
   .w-top { flex-wrap: wrap; }
-  .w-top .w-pills { order: 3; width: 100%; }
+  .w-top .w-pills { order: 3; flex: 1 0 100%; width: auto; }
   .w-layout, .w-follow-stats { grid-template-columns: 1fr; }
   .w-score-row { grid-template-columns: 1fr; justify-items: center; text-align: center; }
   .w-side, .w-side-btn, .w-side-btn.right, .w-side-btn.right .w-side { text-align: center; justify-content: center; flex-direction: row; }
