@@ -769,6 +769,8 @@
     const params = new URLSearchParams(location.search);
     const t = params.get('t');
     const sport = params.get('sport');
+    const requestedPanel = params.get('panel');
+    const panel = requestedPanel === 'rules' || requestedPanel === 'matches' ? requestedPanel : 'summary';
     const view = params.get('create') === '1' ? 'create'
                 : params.get('manage') === '1' && t ? 'manage'
                 : t ? 'tournament'
@@ -777,6 +779,7 @@
       view,
       tournamentId: t || null,
       sportId: sport || null,
+      panel,
       categoryId: params.get('cat') || null,
       bracketId: params.get('bracket') || null,
       teamId: params.get('team') || null,
@@ -788,6 +791,7 @@
     const search = new URLSearchParams();
     if (params.tournamentId) search.set('t', params.tournamentId);
     if (params.sportId) search.set('sport', params.sportId);
+    if (params.panel === 'rules' || params.panel === 'matches') search.set('panel', params.panel);
     if (params.categoryId) search.set('cat', params.categoryId);
     if (params.bracketId) search.set('bracket', params.bracketId);
     if (params.teamId) search.set('team', params.teamId);
@@ -3031,12 +3035,12 @@
     }
   }
 
-  async function saveSportRules(tournamentId, sportId) {
+  async function saveSportRules(tournamentId, sportId, editorId) {
     if (!isAdminUi()) return toast('Admin only', 'error');
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
     const rules = {
-      text: readRulesEditor('tSportRules'),
+      text: readRulesEditor(editorId || 'tSportRules'),
       updatedAt: new Date().toISOString(),
       updatedBy: (state.user && (state.user.email || state.user.displayName)) || ''
     };
@@ -3093,6 +3097,102 @@
   // TOURNAMENT VIEW
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function renderTournamentViewTabs(tournament, panel) {
+    const tabs = [
+      { id: 'summary', label: 'Summary', icon: '📋' },
+      { id: 'rules', label: 'Rules', icon: '📖' },
+      { id: 'matches', label: 'All Matches', icon: '🏆' }
+    ];
+    return `<nav class="t-tabs t-view-tabs" aria-label="Tournament views">${tabs.map(function (tab) {
+      return `<button type="button" class="t-tab ${panel === tab.id ? 'active' : ''}" aria-current="${panel === tab.id ? 'page' : 'false'}" onclick="window.__tournament.navigate({view:'tournament',tournamentId:'${escapeHtml(tournament.id)}',panel:'${tab.id}'})">${tab.icon} ${tab.label}</button>`;
+    }).join('')}</nav>`;
+  }
+
+  function renderTournamentRulesPanel(tournament) {
+    const cards = [];
+    if (isMultiSportTournament(tournament)) {
+      cards.push(renderRulesCard({
+        title: 'Tournament rules',
+        subtitle: 'applies to every sport',
+        text: rulesText(tournament.rules),
+        textareaId: 'tTournamentRules',
+        placeholder: 'Eligibility, conduct, scoring notes, prize rules…',
+        saveCall: "saveTournamentRules('" + tournament.id + "')"
+      }));
+    }
+    (tournament.sports || []).forEach(function (sport, index) {
+      const editorId = 'tSportRules-' + (slugify(sport.id) || index);
+      cards.push(renderRulesCard({
+        title: (sport.label || 'Sport') + ' rules',
+        subtitle: 'this sport only',
+        text: rulesText(sport.rules),
+        textareaId: editorId,
+        placeholder: 'Format, scoring, substitutions, court rules for this sport…',
+        saveCall: "saveSportRules('" + tournament.id + "','" + sport.id + "','" + editorId + "')"
+      }));
+    });
+    const visibleCards = cards.filter(Boolean).join('');
+    return visibleCards || `
+      <section class="t-section">
+        <div class="t-empty">No rules have been posted yet.</div>
+      </section>`;
+  }
+
+  function renderAllMatchesPanel(tournament) {
+    const root = document.getElementById('tAllMatchesRoot');
+    if (!root) return;
+    root.innerHTML = '';
+    let total = 0;
+
+    (tournament.sports || []).forEach(function (sport) {
+      const matches = visibleMatchesFor(tournament, sport.id);
+      if (!matches.length) return;
+      total += matches.length;
+
+      const section = el('section', { class: 't-section' });
+      section.innerHTML = `
+        <div class="t-section-header">
+          <h2 class="t-section-title">${sport.emoji || '🏅'} ${escapeHtml(sport.label || 'Sport')} <small>${matches.length} match${matches.length === 1 ? '' : 'es'}</small></h2>
+        </div>
+      `;
+      const groups = [
+        {
+          title: 'Live now',
+          matches: matches.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches)
+        },
+        {
+          title: 'Scheduled',
+          matches: matches.filter(function (m) { return m.status === 'scheduled'; }).sort(sortMatches)
+        },
+        {
+          title: 'Completed',
+          matches: matches.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse(),
+          compact: true
+        }
+      ];
+
+      groups.forEach(function (group) {
+        if (!group.matches.length) return;
+        const heading = el('h3', { class: 't-stage-standing-title' });
+        heading.textContent = group.title;
+        section.appendChild(heading);
+        const list = el('div', { class: 't-match-list' });
+        group.matches.forEach(function (match) {
+          list.appendChild(matchWithActions(match, tournament, {
+            canEdit: isAdminUi(),
+            compact: !!group.compact
+          }));
+        });
+        section.appendChild(list);
+      });
+      root.appendChild(section);
+    });
+
+    if (!total) {
+      root.innerHTML = '<section class="t-section"><div class="t-empty">No matches have been added yet.</div></section>';
+    }
+  }
+
   function renderTournament() {
     harvestScheduleEditor();
     const parsed = parseUrl();
@@ -3112,6 +3212,7 @@
       return;
     }
     document.title = t.name + ' — Church Tournament';
+    const panel = parsed.panel;
 
     // Pick active sport
     let sportId = parsed.sportId;
@@ -3137,7 +3238,9 @@
       ${renderAccessBanner()}
       ${renderTournamentPublishBanner(t)}
 
-      ${isMultiSportTournament(t) ? renderRulesCard({
+      ${renderTournamentViewTabs(t, panel)}
+
+      ${panel === 'summary' && isMultiSportTournament(t) ? renderRulesCard({
         title: 'Tournament rules',
         subtitle: 'applies to every sport',
         text: rulesText(t.rules),
@@ -3177,17 +3280,21 @@
       ` : ''}
       `}
 
-      ${(t.sports || []).length ? `<div class="t-tabs">${tabsHtml}</div>` : `
+      ${panel === 'rules' ? renderTournamentRulesPanel(t) : ''}
+
+      ${panel === 'matches' ? '<div id="tAllMatchesRoot"></div>' : ''}
+
+      ${panel === 'summary' && (t.sports || []).length ? `<div class="t-tabs">${tabsHtml}</div>` : panel === 'summary' ? `
         <section class="t-section">
           <div class="t-empty">
             No sports have been added to this tournament yet.
             ${isAdminUi() ? '<div style="margin-top:12px;"><button class="t-btn primary" onclick="window.__tournament.navigate({view:\'manage\',tournamentId:\'' + t.id + '\'})">⚙️ Manage tournament</button></div>' : ''}
           </div>
         </section>
-      `}
+      ` : ''}
 
-      ${sport && categorized ? '<div id="tCategoryRoot"></div>' : ''}
-      ${sport && !categorized ? `
+      ${panel === 'summary' && sport && categorized ? '<div id="tCategoryRoot"></div>' : ''}
+      ${panel === 'summary' && sport && !categorized ? `
         ${t.format === 'teams' ? `
         <section class="t-section" id="tRostersSection">
           <div class="t-section-header">
@@ -3259,8 +3366,11 @@
       ` : ''}
     `;
 
-    if (sport && categorized) renderCategoryWorkspace(t, sport, parsed);
-    else if (sport) {
+    if (panel === 'matches') {
+      renderAllMatchesPanel(t);
+    } else if (panel === 'summary' && sport && categorized) {
+      renderCategoryWorkspace(t, sport, parsed);
+    } else if (panel === 'summary' && sport) {
       if (t.format === 'teams') renderRostersFor(t, sport);
       renderScheduleFor(t, sport);
       renderStandingsFor(t, sport.id);
