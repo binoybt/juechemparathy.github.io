@@ -1025,6 +1025,35 @@ body.t-member-preview .t-admin-switch {
   text-align: inherit;
 }
 .t-text-btn:hover { color: var(--t-primary-dark); text-decoration: underline; }
+.t-points-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.t-points-grid label {
+  display: grid;
+  gap: 4px;
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--t-muted);
+}
+.t-stage-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 8px 0;
+}
+.t-stage-row .t-input { flex: 1; min-width: 140px; }
+.t-stage-standing-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 1.05rem;
+  letter-spacing: .03em;
+  margin: 14px 0 8px;
+}
+.t-stage-standing-title:first-child { margin-top: 0; }
+.t-stage-focus + .t-stage-focus { margin-top: 12px; }
 
 /* ── Responsive ── */
 @media (max-width: 640px) {
@@ -1036,4 +1065,5 @@ body.t-member-preview .t-admin-switch {
   .t-nav { grid-column: 1 / -1; justify-content: center; }
   .t-schedule-table { min-width: 640px; }
   .t-division-row, .t-focus-grid { grid-template-columns: 1fr; }
+  .t-points-grid { grid-template-columns: 1fr 1fr; }
 }
