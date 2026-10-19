@@ -687,6 +687,13 @@ body.t-member-preview .t-admin-switch {
   font-weight: 700;
 }
 .t-tab:not(.active) .count { background: #e2e8f0; color: var(--t-muted); }
+.t-view-tabs {
+  border-color: var(--t-border-strong);
+}
+.t-view-tabs .t-tab {
+  flex: 1 0 auto;
+  justify-content: center;
+}
 
 /* ── Config sport card ── */
 .t-config-sport {
