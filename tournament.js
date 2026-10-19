@@ -5,21 +5,38 @@
  *   /tournament.html?create=1                 → create a new tournament (admin)
  *   /tournament.html?t=<id>                   → tournament view (sport tabs)
  *   /tournament.html?t=<id>&sport=<sportId>   → tournament view scoped to a sport
+ *   /tournament.html?t=<id>&sport=<id>&cat=<id>&bracket=<id>&team=<id>
+ *                                         → category, bracket, or team detail
  *   /tournament.html?t=<id>&manage=1          → edit tournament config (admin)
  *
  * Firestore layout:
  *   tournaments/{docId}
  *     name          string   — admin-entered
+ *     sportMode     'single' | 'multi'
+ *                   single → one sport, no tournament-wide rules
+ *                   multi  → several sports, tournament rules apply to all
+ *                   missing → multi when more than one sport is saved, else single
  *     format        'teams' | 'individual'
- *     teams[]       { id, name, wards }             — only for teams format
+ *     started       bool — once true, members see standings, the current match,
+ *                   and upcoming matches for category-based sports
+ *     teams[]       { id, name, wards }             — legacy tournament-level roster
  *     sports[]      see SPORT_TEMPLATES below       — configurable per tournament
- *       schedule    { draft, published }            — per-sport fixture list
+ *       categoryMode  '' | 'open' | 'split'
+ *                     ''     parish group teams (captains and roster)
+ *                     'open' one Open category, registration is open to everyone
+ *                     'split' registration categories, each with its own teams
+ *       divisions[]   registration categories (not racket games-per-match)
+ *         id, name, open, maxPlayers
+ *         teams[]     { id, name, players[] }  — players length follows maxPlayers
+ *         brackets[]  { id, name, teamIds[], schedule }
+ *           schedule  { draft, published } — fixtures for this bracket only
+ *       schedule    { draft, published }            — legacy per-sport fixture list
  *                     draft.entries[]     working copy (admin only)
  *                     published.entries[] public copy (visible after Publish)
  *       rules       { text, updatedAt, updatedBy }  — sport-specific, admin-edit
  *       maxRosterSize number  — per-team member cap including the captain
- *                               (0/omitted = no limit)
- *     rules         { text, updatedAt, updatedBy }  — tournament-wide, admin-edit
+ *                               (0/omitted = no limit). Parish group teams only.
+ *     rules         { text, updatedAt, updatedBy }  — multi-sport tournaments only
  *     archived      bool
  *     published     bool  — members see it only when true; missing = unpublished
  *                           (existing docs without the field stay unpublished)
@@ -38,6 +55,8 @@
  *   tournament_matches/{docId}
  *     tournamentId  string
  *     sport         string  (matches sports[].id)
+ *     categoryId    string  — registration category, when the sport uses divisions
+ *     bracketId     string  — bracket the fixture was scheduled in
  *     stage         'league' | 'semifinal' | 'final' | 'third_place'
  *     teamA / teamB     — for teams format
  *     playerA / playerB — for individual format
@@ -296,12 +315,188 @@
     return !!(pub && Array.isArray(pub.entries) && pub.entries.length);
   }
 
+  // Single-sport tournaments have no tournament-wide rules. Multi-sport
+  // tournaments do. Older docs infer the mode from how many sports they have.
+  function sportModeOf(tournament) {
+    if (!tournament) return 'single';
+    if (tournament.sportMode === 'multi' || tournament.sportMode === 'single') return tournament.sportMode;
+    return (tournament.sports || []).length > 1 ? 'multi' : 'single';
+  }
+
+  function isMultiSportTournament(tournament) {
+    return sportModeOf(tournament) === 'multi';
+  }
+
+  function tournamentHasStarted(tournament) {
+    return !!(tournament && tournament.started);
+  }
+
+  function clampMaxPlayers(value) {
+    const n = parseInt(String(value == null ? '' : value).trim(), 10);
+    if (!isFinite(n) || n < 1) return 1;
+    return Math.min(n, 20);
+  }
+
+  function blankDivision(opts) {
+    opts = opts || {};
+    return {
+      id: opts.id || newId('cat'),
+      name: opts.name || 'Category',
+      open: !!opts.open,
+      maxPlayers: clampMaxPlayers(opts.maxPlayers || 2),
+      teams: opts.teams ? JSON.parse(JSON.stringify(opts.teams)) : [],
+      brackets: opts.brackets ? JSON.parse(JSON.stringify(opts.brackets)) : []
+    };
+  }
+
+  function usesRegistrationCategories(sport) {
+    const mode = sport && sport.categoryMode;
+    return mode === 'open' || mode === 'split';
+  }
+
+  function ensureDivisionsForMode(sport, mode) {
+    if (!sport) return;
+    sport.divisions = Array.isArray(sport.divisions) ? sport.divisions : [];
+    if (mode === 'open') {
+      const keep = sport.divisions.find(function (d) { return d && d.open; }) || sport.divisions[0];
+      const division = keep
+        ? Object.assign({}, keep, { open: true, name: (keep.name || 'Open') })
+        : blankDivision({ name: 'Open', open: true, maxPlayers: 2 });
+      division.open = true;
+      if (!division.name) division.name = 'Open';
+      division.teams = Array.isArray(division.teams) ? division.teams : [];
+      division.brackets = Array.isArray(division.brackets) ? division.brackets : [];
+      division.maxPlayers = clampMaxPlayers(division.maxPlayers);
+      sport.divisions = [division];
+      sport.categoryMode = 'open';
+      return;
+    }
+    if (mode === 'split') {
+      sport.categoryMode = 'split';
+      if (!sport.divisions.length) {
+        sport.divisions = [blankDivision({ name: 'Category 1', open: false, maxPlayers: 2 })];
+      }
+      sport.divisions = sport.divisions.map(function (d) {
+        return Object.assign({}, d, {
+          open: false,
+          name: d.name || 'Category',
+          maxPlayers: clampMaxPlayers(d.maxPlayers),
+          teams: Array.isArray(d.teams) ? d.teams : [],
+          brackets: Array.isArray(d.brackets) ? d.brackets : []
+        });
+      });
+      return;
+    }
+    sport.categoryMode = '';
+  }
+
+  function findDivision(sport, divisionId) {
+    const list = (sport && sport.divisions) || [];
+    if (!list.length) return null;
+    if (divisionId) {
+      const found = list.find(function (d) { return d.id === divisionId; });
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function findBracket(division, bracketId) {
+    const list = (division && division.brackets) || [];
+    if (!bracketId) return null;
+    return list.find(function (b) { return b.id === bracketId; }) || null;
+  }
+
+  function teamPlayersLabel(team) {
+    return ((team && team.players) || []).map(function (p) {
+      return String(p || '').trim();
+    }).filter(Boolean).join(', ');
+  }
+
+  function findEntryTeam(tournament, sportId, id) {
+    if (!id) return null;
+    const sport = getSportConfig(tournament, sportId);
+    const divs = (sport && sport.divisions) || [];
+    for (let i = 0; i < divs.length; i++) {
+      const teams = divs[i].teams || [];
+      const idx = teams.findIndex(function (t) { return t.id === id; });
+      if (idx >= 0) return { team: teams[idx], index: idx, division: divs[i] };
+    }
+    const legacy = teamsFor(tournament, sport || sportId);
+    const idx = legacy.findIndex(function (t) { return t.id === id; });
+    if (idx >= 0) return { team: legacy[idx], index: idx, division: null };
+    return null;
+  }
+
+  function bracketForTeam(division, teamId) {
+    const brackets = (division && division.brackets) || [];
+    for (let i = 0; i < brackets.length; i++) {
+      const ids = brackets[i].teamIds || [];
+      if (ids.indexOf(teamId) !== -1) return brackets[i];
+    }
+    return null;
+  }
+
+  function teamsInBracket(sport, categoryId, bracketId) {
+    const division = findDivision(sport, categoryId);
+    const bracket = findBracket(division, bracketId);
+    if (!division || !bracket) return [];
+    const ids = bracket.teamIds || [];
+    return (division.teams || []).filter(function (tm) { return ids.indexOf(tm.id) !== -1; });
+  }
+
+  function matchUsesTeams(tournament, sport) {
+    if (sport && usesRegistrationCategories(sport)) return true;
+    return !!(tournament && tournament.format === 'teams');
+  }
+
+  // Legacy fixtures have no category. Bracket fixtures must match both ids.
+  function entryInScope(match, sportId, categoryId, bracketId) {
+    if (!match || match.sport !== sportId) return false;
+    if (!categoryId && !bracketId) return !match.categoryId && !match.bracketId;
+    return (match.categoryId || '') === (categoryId || '') && (match.bracketId || '') === (bracketId || '');
+  }
+
+  function scopeIds(scope) {
+    scope = scope || {};
+    return {
+      categoryId: scope.categoryId || (scope.division && scope.division.id) || '',
+      bracketId: scope.bracketId || (scope.bracket && scope.bracket.id) || ''
+    };
+  }
+
+  function scheduleOwner(sport, categoryId, bracketId) {
+    if (!categoryId) return sport || null;
+    const division = findDivision(sport, categoryId);
+    if (!division || !bracketId) return null;
+    return findBracket(division, bracketId);
+  }
+
+  function mergeDivisionsForSave(draftSport, liveSport) {
+    const liveDivs = (liveSport && liveSport.divisions) || [];
+    return (draftSport.divisions || []).map(function (d) {
+      const live = liveDivs.find(function (x) { return x.id === d.id; });
+      const open = draftSport.categoryMode === 'open';
+      return {
+        id: d.id,
+        name: String(d.name || '').trim() || (open ? 'Open' : 'Category'),
+        open: open ? true : false,
+        maxPlayers: clampMaxPlayers(d.maxPlayers),
+        teams: ((live && Array.isArray(live.teams)) ? live.teams : (Array.isArray(d.teams) ? d.teams : [])).map(function (tm) {
+          const players = Array.isArray(tm.players) ? tm.players.map(function (p) { return String(p || '').trim(); }).filter(Boolean) : [];
+          return Object.assign({}, tm, { players: players.slice(0, clampMaxPlayers(d.maxPlayers)) });
+        }),
+        brackets: (live && Array.isArray(live.brackets)) ? live.brackets : (Array.isArray(d.brackets) ? d.brackets : [])
+      };
+    });
+  }
+
   // Koinonia seed used when the tournament list is empty and admin clicks "Seed".
   function koinoniaSeed() {
     const teams = JSON.parse(JSON.stringify(DEFAULT_TEAMS));
     return {
       name: 'Koinonia 2026',
       format: 'teams',
+      sportMode: 'multi',
       sports: [
         sportTemplateForConfig('badminton',   { teams: teams }),
         sportTemplateForConfig('pickleball',  { teams: teams }),
@@ -407,13 +602,23 @@
                 : params.get('manage') === '1' && t ? 'manage'
                 : t ? 'tournament'
                 : 'list';
-    return { view, tournamentId: t || null, sportId: sport || null };
+    return {
+      view,
+      tournamentId: t || null,
+      sportId: sport || null,
+      categoryId: params.get('cat') || null,
+      bracketId: params.get('bracket') || null,
+      teamId: params.get('team') || null
+    };
   }
 
   function navigate(params, opts) {
     const search = new URLSearchParams();
     if (params.tournamentId) search.set('t', params.tournamentId);
     if (params.sportId) search.set('sport', params.sportId);
+    if (params.categoryId) search.set('cat', params.categoryId);
+    if (params.bracketId) search.set('bracket', params.bracketId);
+    if (params.teamId) search.set('team', params.teamId);
     if (params.view === 'manage') search.set('manage', '1');
     if (params.view === 'create') search.set('create', '1');
     const qs = search.toString();
@@ -1004,8 +1209,10 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function participantsOf(match, tournament) {
+    if (!match) return { a: '', b: '' };
+    if (match.teamA || match.teamB) return { a: match.teamA || '', b: match.teamB || '' };
     if (!tournament) return { a: '', b: '' };
-    if (tournament.format === 'teams') return { a: match.teamA, b: match.teamB };
+    if (tournament.format === 'teams') return { a: match.teamA || '', b: match.teamB || '' };
     return { a: match.playerA || '', b: match.playerB || '' };
   }
 
@@ -1032,28 +1239,32 @@
   }
 
   function displayName(tournament, sportId, id) {
-    if (!tournament || tournament.format !== 'teams') return id || '—';
-    const teams = teamsFor(tournament, sportId);
-    const t = teams.find(function (x) { return x.id === id; });
-    return t ? teamPublicName(t) : (id || '—');
+    if (!id) return '—';
+    const found = findEntryTeam(tournament, sportId, id);
+    if (found) return teamPublicName(found.team);
+    return id;
   }
 
   function teamMeta(tournament, sportId, id) {
-    if (!tournament) return { name: id || '—', id: id || '', wards: '', color: 'var(--t-muted)' };
-    if (tournament.format !== 'teams') {
-      return { name: id || '—', id: id || '', wards: '', color: TEAM_COLORS[Math.abs(hashCode(id || '')) % TEAM_COLORS.length] };
+    const found = findEntryTeam(tournament, sportId, id);
+    if (!found) {
+      return {
+        name: id || '—',
+        id: id || '',
+        wards: '',
+        color: id ? TEAM_COLORS[Math.abs(hashCode(String(id))) % TEAM_COLORS.length] : 'var(--t-muted)'
+      };
     }
-    const teams = teamsFor(tournament, sportId);
-    const idx = teams.findIndex(function (x) { return x.id === id; });
-    const t = teams[idx];
-    if (!t) return { name: id || '—', id: id || '', wards: '', color: 'var(--t-muted)' };
+    const t = found.team;
     const publicName = teamPublicName(t);
     const wards = String(t.wards || '').trim();
+    const players = teamPlayersLabel(t);
+    const detail = wards && wards !== publicName ? wards : players;
     return {
       name: publicName,
       id: t.id || id || '',
-      wards: wards && wards !== publicName ? wards : '',
-      color: TEAM_COLORS[idx % TEAM_COLORS.length]
+      wards: detail || '',
+      color: TEAM_COLORS[found.index % TEAM_COLORS.length]
     };
   }
 
@@ -1063,16 +1274,36 @@
     return h;
   }
 
-  function computeStandings(tournament, matches, sportId) {
+  function computeStandings(tournament, matches, sportId, scope) {
     if (!tournament) return [];
-    const scoped = matches.filter(function (m) {
-      return (!sportId || m.sport === sportId) && m.stage === 'league' && m.status === 'completed';
+    scope = scope || {};
+    const sport = sportId ? getSportConfig(tournament, sportId) : null;
+    const useTeams = scope.useTeams != null ? scope.useTeams : matchUsesTeams(tournament, sport);
+    const scoped = (matches || []).filter(function (m) {
+      if (sportId && m.sport !== sportId) return false;
+      if (m.stage !== 'league' || m.status !== 'completed') return false;
+      if (scope.categoryId && m.categoryId !== scope.categoryId) return false;
+      if (scope.bracketId && m.bracketId !== scope.bracketId) return false;
+      // Parish-group standings ignore category fixtures.
+      if (!scope.categoryId && !scope.bracketId && (m.categoryId || m.bracketId)) return false;
+      if (scope.teamIds) {
+        const p = participantsOf(m, tournament);
+        if (scope.teamIds.indexOf(p.a) === -1 || scope.teamIds.indexOf(p.b) === -1) return false;
+      }
+      return true;
     });
 
     // Collect participant IDs
     const seen = {};
-    if (tournament.format === 'teams') {
-      teamsFor(tournament, sportId).forEach(function (t) { seen[t.id] = true; });
+    if (useTeams) {
+      if (scope.teamIds && scope.teamIds.length) {
+        scope.teamIds.forEach(function (id) { if (id) seen[id] = true; });
+      } else if (scope.categoryId && sport) {
+        const division = findDivision(sport, scope.categoryId);
+        ((division && division.teams) || []).forEach(function (t) { seen[t.id] = true; });
+      } else {
+        teamsFor(tournament, sportId).forEach(function (t) { seen[t.id] = true; });
+      }
     } else {
       scoped.forEach(function (m) { if (m.playerA) seen[m.playerA] = true; if (m.playerB) seen[m.playerB] = true; });
     }
@@ -1248,12 +1479,18 @@
         return `<span class="t-sport-chip">${s.emoji || '🏅'} ${escapeHtml(s.label || s.id)}</span>`;
       }).join('');
       const extra = (t.sports || []).length > 6 ? `<span class="t-sport-chip">+${t.sports.length - 6}</span>` : '';
-      const formatLabel = t.format === 'individual' ? 'Individual / Doubles' : 'Team-based';
+      const formatLabel = (isMultiSportTournament(t) ? 'Multi sport' : 'Single sport')
+        + ' · ' + (t.format === 'individual' ? 'Individual / Doubles' : 'Team-based');
 
       // Show the max team count across sports (each sport has its own roster now).
       let maxTeams = 0;
       (t.sports || []).forEach(function (s) {
-        const n = (s.teams || []).length;
+        let n = 0;
+        if (usesRegistrationCategories(s)) {
+          (s.divisions || []).forEach(function (d) { n += (d.teams || []).length; });
+        } else {
+          n = (s.teams || []).length;
+        }
         if (n > maxTeams) maxTeams = n;
       });
       if (!maxTeams && Array.isArray(t.teams)) maxTeams = t.teams.length; // legacy fallback
@@ -1265,7 +1502,7 @@
         <div class="t-sports">${sports || '<span class="t-sport-chip">No sports yet</span>'}${extra}</div>
         <div class="t-stats">
           <span><b>${(t.sports || []).length}</b> sports</span>
-          ${t.format === 'teams' ? `<span>up to <b>${maxTeams}</b> teams</span>` : ''}
+          ${maxTeams ? `<span>up to <b>${maxTeams}</b> teams</span>` : ''}
         </div>
         ${isAdminUi() ? `
           <div class="t-card-actions" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px dashed var(--t-border);">
@@ -1347,15 +1584,16 @@
       });
       delete draft.teams;
     } else {
-      draft = { name: '', format: 'teams', sports: [], archived: false, published: false };
+      draft = { name: '', format: 'teams', sportMode: 'single', sports: [], archived: false, published: false };
     }
+    draft.sportMode = sportModeOf(draft);
     editState.draft = draft;
 
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
         <div>
           <h1>${mode === 'manage' ? '⚙️ Manage tournament' : '➕ Create tournament'}</h1>
-          <p>${mode === 'manage' ? 'Change name, format, sports, dates, and scoring rules for this tournament.' : 'Set up a new tournament. All fields except the name are editable later.'}</p>
+          <p>${mode === 'manage' ? 'Change the sport mode, sports, categories, dates, and scoring. Single-sport tournaments can be switched to multi sport later.' : 'Choose single sport or multi sport. Multi-sport tournaments use tournament-wide rules. Categories, teams, and brackets are set up after you save.'}</p>
         </div>
         <div class="t-emoji">${mode === 'manage' ? '⚙️' : '➕'}</div>
       </section>
@@ -1363,19 +1601,27 @@
       <section class="t-section">
         <div class="t-card">
           <div class="t-card-body">
-            <div class="t-form-grid" style="grid-template-columns:2fr 1fr;">
+            <div class="t-form-grid">
               <div class="t-form-field">
                 <label>Tournament name *</label>
                 <input type="text" class="t-input" id="tfName" placeholder="e.g. Koinonia 2026" value="${escapeHtml(draft.name)}" />
               </div>
               <div class="t-form-field">
+                <label>Sports</label>
+                <select class="t-select" id="tfSportMode">
+                  <option value="single" ${draft.sportMode !== 'multi' ? 'selected' : ''}>Single sport</option>
+                  <option value="multi" ${draft.sportMode === 'multi' ? 'selected' : ''}>Multi sport</option>
+                </select>
+              </div>
+              <div class="t-form-field">
                 <label>Format</label>
                 <select class="t-select" id="tfFormat">
                   <option value="teams" ${draft.format === 'teams' ? 'selected' : ''}>Team-based (groups play each other)</option>
-                  <option value="individual" ${draft.format === 'individual' ? 'selected' : ''}>Individual / Doubles (no teams)</option>
+                  <option value="individual" ${draft.format === 'individual' ? 'selected' : ''}>Individual / Doubles</option>
                 </select>
               </div>
             </div>
+            <p class="t-mode-note" id="tfSportModeNote"></p>
             <div id="tfArchivedWrap" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
               <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;">
                 <input type="checkbox" id="tfArchived" ${draft.archived ? 'checked' : ''}/> Archive this tournament (hides from active list)
@@ -1397,13 +1643,14 @@
 
       <section class="t-section">
         <div class="t-section-header">
-          <h2 class="t-section-title">Sports <small>teams, date & scoring per sport</small></h2>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <h2 class="t-section-title">Sports <small>categories, date & scoring per sport</small></h2>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
             <select class="t-select" id="tfAddSport" style="width:auto;">
               <option value="">Add sport…</option>
               ${Object.values(SPORT_TEMPLATES).map(function (s) { return `<option value="${s.id}">${s.emoji} ${s.label}</option>`; }).join('')}
               <option value="__custom__">➕ Custom sport…</option>
             </select>
+            <span class="t-mode-note" id="tfAddSportNote" style="margin:0;"></span>
           </div>
         </div>
         <div id="tfSports"></div>
@@ -1420,6 +1667,19 @@
       draft.format = e.target.value;
       paintSports(draft);
     });
+    document.getElementById('tfSportMode').addEventListener('change', function (e) {
+      const next = e.target.value === 'multi' ? 'multi' : 'single';
+      if (next === 'single' && (draft.sports || []).length > 1) {
+        e.target.value = 'multi';
+        draft.sportMode = 'multi';
+        toast('Remove sports until only one remains before switching to single sport.', 'error');
+        updateSportModeChrome(draft);
+        return;
+      }
+      draft.sportMode = next;
+      updateSportModeChrome(draft);
+    });
+    updateSportModeChrome(draft);
 
     document.getElementById('tfAddSport').addEventListener('change', function (e) {
       const v = e.target.value;
@@ -1494,17 +1754,49 @@
     });
   }
 
+  function updateSportModeChrome(draft) {
+    const note = document.getElementById('tfSportModeNote');
+    const addNote = document.getElementById('tfAddSportNote');
+    const addSel = document.getElementById('tfAddSport');
+    const multi = sportModeOf(draft) === 'multi';
+    const blocked = !multi && (draft.sports || []).length >= 1;
+    if (note) {
+      note.textContent = multi
+        ? 'Multi sport: add every sport here. Tournament rules apply to all of them and can be edited on the tournament page.'
+        : 'Single sport: one sport, and sport rules only. Tournament-wide rules stay hidden. Switch to multi sport here any time to add more sports.';
+    }
+    if (addSel) addSel.disabled = blocked;
+    if (addNote) {
+      addNote.textContent = blocked
+        ? 'Switch to multi sport above to add another sport.'
+        : '';
+    }
+  }
+
+  function configureOpenCategory(sport, maxPlayers) {
+    sport.teams = [];
+    sport.categoryMode = 'open';
+    sport.divisions = [blankDivision({
+      name: 'Open',
+      open: true,
+      maxPlayers: maxPlayers || 2
+    })];
+    return sport;
+  }
+
   function addSport(draft, templateId) {
+    if (sportModeOf(draft) === 'single' && (draft.sports || []).length >= 1) {
+      toast('This is a single-sport tournament. Switch to multi sport to add another.', 'error');
+      return;
+    }
     if ((draft.sports || []).find(function (s) { return s.id === templateId; })) {
       toast(templateId + ' is already in this tournament', 'error');
       return;
     }
     draft.sports = draft.sports || [];
-    // Seed the new sport's teams from any existing sport that already has a
-    // roster (Koinonia will typically want the same G1–G4 across sports).
-    const donor = (draft.sports || []).find(function (s) { return Array.isArray(s.teams) && s.teams.length; });
-    const seed = donor ? { teams: donor.teams } : { teams: DEFAULT_TEAMS };
-    draft.sports.push(sportTemplateForConfig(templateId, seed));
+    const sport = sportTemplateForConfig(templateId, { teams: [] });
+    const maxPlayers = draft.format === 'individual' ? 1 : 2;
+    draft.sports.push(configureOpenCategory(sport, maxPlayers));
   }
 
   function addCustomSport(draft) {
@@ -1514,21 +1806,25 @@
     const pick = prompt('Which scoring template?\n' + kindLabels, '1');
     const idx = Math.max(0, Math.min(CUSTOM_KINDS.length - 1, (parseInt(pick, 10) || 1) - 1));
     const kind = CUSTOM_KINDS[idx].kind;
+    if (sportModeOf(draft) === 'single' && (draft.sports || []).length >= 1) {
+      toast('This is a single-sport tournament. Switch to multi sport to add another.', 'error');
+      return;
+    }
     const id = slugify(name);
     if ((draft.sports || []).find(function (s) { return s.id === id; })) {
       toast('A sport with this id already exists', 'error');
       return;
     }
-    const donor = (draft.sports || []).find(function (s) { return Array.isArray(s.teams) && s.teams.length; });
-    draft.sports.push({
+    const maxPlayers = draft.format === 'individual' ? 1 : 2;
+    draft.sports.push(configureOpenCategory({
       id: id, label: name, kind: kind, emoji: '🏅', color: '#64748b',
       date: '',
       hasThirdPlace: true,
       categories: kind === 'racket' ? [...DEFAULT_CATEGORIES] : [],
-      teams: donor ? JSON.parse(JSON.stringify(donor.teams)) : JSON.parse(JSON.stringify(DEFAULT_TEAMS)),
+      teams: [],
       scoring: defaultScoring(kind),
       maxRosterSize: 0
-    });
+    }, maxPlayers));
   }
 
   function paintSports(draft) {
@@ -1537,13 +1833,18 @@
     wrap.innerHTML = '';
     if (!draft.sports || !draft.sports.length) {
       wrap.innerHTML = '<div class="t-empty">No sports yet. Use the dropdown above to add one.</div>';
+      updateSportModeChrome(draft);
       return;
     }
     draft.sports.forEach(function (s, i) {
       if (s.hasThirdPlace === undefined) s.hasThirdPlace = true;
       s.teams = s.teams || [];
+      if ((s.categoryMode === 'open' || s.categoryMode === 'split') && (!s.divisions || !s.divisions.length)) {
+        ensureDivisionsForMode(s, s.categoryMode);
+      }
       const card = el('div', { class: 't-config-sport' });
-      const teamsSectionHtml = draft.format === 'teams' ? `
+      const categorized = usesRegistrationCategories(s);
+      const teamsSectionHtml = draft.format === 'teams' && !categorized ? `
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
             <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--t-muted);">Teams for this sport</div>
@@ -1575,11 +1876,12 @@
             </div>
             ${s.kind === 'racket' ? `
               <div class="t-form-field">
-                <label>Categories per match (comma-separated)</label>
+                <label>Games per match (comma-separated)</label>
                 <input type="text" class="t-input" data-field="categories" placeholder="OD1, OD2, XD1, XD2, WD" value="${escapeHtml((s.categories || []).join(', '))}" />
               </div>
             ` : ''}
           </div>
+          ${divisionConfigHtml(s)}
           ${teamsSectionHtml}
           <div>
             <label style="display:inline-flex;align-items:center;gap:8px;color:var(--t-fg);font-weight:600;font-size:.9rem;">
@@ -1614,9 +1916,11 @@
         s.hasThirdPlace = this.checked;
         paintSports(draft);
       });
+      bindDivisionEditor(card, s, draft);
 
-      // Per-sport teams editor (only in team format)
-      if (draft.format === 'teams') {
+      // Parish group teams stay on the sport. Category teams are entered
+      // on the tournament page, one registration category at a time.
+      if (draft.format === 'teams' && !categorized) {
         const teamsBox = card.querySelector('[data-teams]');
         paintTeamsInto(teamsBox, s, draft);
         card.querySelector('[data-act="add-team"]').addEventListener('click', function () {
@@ -1653,6 +1957,135 @@
       });
       wrap.appendChild(card);
     });
+    updateSportModeChrome(draft);
+  }
+
+  function divisionConfigHtml(sport) {
+    const mode = sport.categoryMode || '';
+    const divisions = sport.divisions || [];
+    let body = '';
+    if (mode === 'open') {
+      const d = divisions[0] || blankDivision({ name: 'Open', open: true, maxPlayers: 2 });
+      body = `
+        <div class="t-division-row">
+          <div class="t-form-field">
+            <label>Open category label</label>
+            <input type="text" class="t-input" data-div-name value="${escapeHtml(d.name || 'Open')}" />
+          </div>
+          <div class="t-form-field">
+            <label>Max players per team</label>
+            <input type="number" class="t-input" min="1" max="20" data-div-max value="${clampMaxPlayers(d.maxPlayers)}" />
+          </div>
+        </div>
+        <p class="t-mode-note">Open category means this sport is not split by age, skill, or event. Everyone registers here. After you save, add teams and brackets on the tournament page.</p>
+      `;
+    } else if (mode === 'split') {
+      const rows = divisions.map(function (d, i) {
+        return `
+          <div class="t-division-row" data-div-index="${i}">
+            <div class="t-form-field">
+              <label>Category name</label>
+              <input type="text" class="t-input" data-div-name value="${escapeHtml(d.name || '')}" placeholder="e.g. Men's singles" />
+            </div>
+            <div class="t-form-field">
+              <label>Max players</label>
+              <input type="number" class="t-input" min="1" max="20" data-div-max value="${clampMaxPlayers(d.maxPlayers)}" />
+            </div>
+            <button type="button" class="t-btn danger sm" data-div-remove="${i}">Remove</button>
+          </div>
+        `;
+      }).join('');
+      body = `
+        ${rows || '<p class="t-mode-note">Add at least one category.</p>'}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <button type="button" class="t-btn sm" data-div-add>➕ Add category</button>
+          <span class="t-mode-note" style="margin:0;">Registrations, brackets, and schedules belong to each category. Set them up on the tournament page after you save.</span>
+        </div>
+      `;
+    } else {
+      body = '<p class="t-mode-note">Group teams use captains and a parish roster. Choose Open category or Multiple categories to register named teams — including singles and doubles — and then build brackets.</p>';
+    }
+    return `
+      <div class="t-division-editor">
+        <div class="t-form-field">
+          <label>Registration</label>
+          <select class="t-select" data-field="categoryMode">
+            <option value="" ${mode === '' ? 'selected' : ''}>Group teams (captains and roster)</option>
+            <option value="open" ${mode === 'open' ? 'selected' : ''}>Open category — open to everyone</option>
+            <option value="split" ${mode === 'split' ? 'selected' : ''}>Multiple categories</option>
+          </select>
+        </div>
+        ${body}
+      </div>
+    `;
+  }
+
+  function readDivisionFields(card, sport) {
+    const rows = card.querySelectorAll('.t-division-editor .t-division-row');
+    if (!rows.length || !sport.divisions) return;
+    rows.forEach(function (row, i) {
+      const division = sport.divisions[i];
+      if (!division) return;
+      const nameInput = row.querySelector('[data-div-name]');
+      const maxInput = row.querySelector('[data-div-max]');
+      if (nameInput) division.name = nameInput.value;
+      if (maxInput) division.maxPlayers = clampMaxPlayers(maxInput.value);
+    });
+  }
+
+  function bindDivisionEditor(card, sport, draft) {
+    const modeSel = card.querySelector('[data-field="categoryMode"]');
+    if (!modeSel) return;
+    modeSel.addEventListener('change', function () {
+      const next = this.value === 'open' || this.value === 'split' ? this.value : '';
+      readDivisionFields(card, sport);
+      if (next === 'open' && sport.categoryMode === 'split' && (sport.divisions || []).length > 1) {
+        const keep = (sport.divisions[0] && sport.divisions[0].name) || 'the first category';
+        if (!confirm('Open category keeps only ' + keep + '. Other categories are removed from this sport when you save. Continue?')) {
+          this.value = 'split';
+          return;
+        }
+      }
+      ensureDivisionsForMode(sport, next);
+      paintSports(draft);
+    });
+    card.querySelectorAll('[data-div-name]').forEach(function (input, i) {
+      input.addEventListener('input', function () {
+        if (sport.divisions && sport.divisions[i]) sport.divisions[i].name = this.value;
+      });
+    });
+    card.querySelectorAll('[data-div-max]').forEach(function (input, i) {
+      input.addEventListener('input', function () {
+        if (sport.divisions && sport.divisions[i]) sport.divisions[i].maxPlayers = clampMaxPlayers(this.value);
+      });
+    });
+    card.querySelectorAll('[data-div-remove]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        readDivisionFields(card, sport);
+        const idx = parseInt(btn.getAttribute('data-div-remove'), 10);
+        if (!sport.divisions || sport.divisions.length < 2) {
+          toast('A split sport needs at least one category. Switch to Open category if everyone plays together.', 'error');
+          return;
+        }
+        const name = (sport.divisions[idx] && sport.divisions[idx].name) || 'this category';
+        if (!confirm('Remove ' + name + '? Teams in that category are removed when you save.')) return;
+        sport.divisions.splice(idx, 1);
+        paintSports(draft);
+      });
+    });
+    const addBtn = card.querySelector('[data-div-add]');
+    if (addBtn) {
+      addBtn.addEventListener('click', function () {
+        readDivisionFields(card, sport);
+        sport.divisions = sport.divisions || [];
+        sport.divisions.push(blankDivision({
+          name: 'Category ' + (sport.divisions.length + 1),
+          open: false,
+          maxPlayers: draft.format === 'individual' ? 1 : 2
+        }));
+        paintSports(draft);
+      });
+    }
   }
 
   function buildStageConfig(sport, stage) {
@@ -1693,14 +2126,21 @@
     draft.archived = document.getElementById('tfArchived').checked;
     draft.published = !!(document.getElementById('tfPublished') && document.getElementById('tfPublished').checked);
     draft.revealLockedRosters = document.getElementById('tfRevealLocked').checked;
+    const modeSel = document.getElementById('tfSportMode');
+    if (modeSel) draft.sportMode = modeSel.value === 'multi' ? 'multi' : 'single';
     if (!draft.name) return toast('Tournament name is required', 'error');
     if (!draft.sports || !draft.sports.length) return toast('Add at least 1 sport', 'error');
+    if (draft.sportMode === 'single' && draft.sports.length > 1) {
+      return toast('Single sport tournaments can only include one sport. Switch to multi sport, or remove the extra sports.', 'error');
+    }
 
     if (draft.format === 'teams') {
-      // Every sport should have at least 2 teams before you can meaningfully
-      // run a round-robin. Warn but don't block: admins might want to save
-      // the shell first and come back to fill teams later.
-      const missing = draft.sports.filter(function (s) { return !s.teams || s.teams.length < 2; });
+      // Every parish-group sport should have at least 2 teams before you can
+      // meaningfully run a round-robin. Category sports register teams later.
+      // Warn but don't block: admins might want to save the shell first.
+      const missing = draft.sports.filter(function (s) {
+        return !usesRegistrationCategories(s) && (!s.teams || s.teams.length < 2);
+      });
       if (missing.length) {
         const names = missing.map(function (s) { return s.label; }).join(', ');
         if (!confirm(names + ' — this sport has fewer than 2 teams and won\'t allow match creation. Save anyway?')) return;
@@ -1730,8 +2170,19 @@
           roster: Array.isArray(liveTeam.roster) ? liveTeam.roster : (tm.roster || [])
         });
       });
+      let divisions;
+      if (s.categoryMode === 'open' || s.categoryMode === 'split') {
+        ensureDivisionsForMode(s, s.categoryMode);
+        divisions = mergeDivisionsForSave(s, liveSport);
+      } else if (liveSport && Array.isArray(liveSport.divisions)) {
+        divisions = liveSport.divisions;
+      } else {
+        divisions = Array.isArray(s.divisions) ? s.divisions : [];
+      }
       return Object.assign({}, s, {
         teams: teams,
+        categoryMode: s.categoryMode || '',
+        divisions: divisions,
         schedule: (liveSport && liveSport.schedule) ? liveSport.schedule : (s.schedule || null),
         maxRosterSize: parseMaxRosterSize(s.maxRosterSize)
       });
@@ -1740,6 +2191,7 @@
     const payload = {
       name: draft.name,
       format: draft.format,
+      sportMode: draft.sportMode === 'multi' ? 'multi' : 'single',
       // teams field is now per-sport; we explicitly clear the legacy
       // tournament-level field on every save.
       teams: FieldValue.delete(),
@@ -1762,6 +2214,7 @@
         payload.createdAt = FieldValue.serverTimestamp();
         payload.createdBy = (state.user && state.user.email) || '';
         payload.published = false;
+        payload.started = false;
         const ref = await db.collection('tournaments').add(payload);
         // Optimistically add to local state so navigate() doesn't beat the
         // onSnapshot delivery and render "Tournament not found".
@@ -1805,6 +2258,29 @@
         date: s.date || '',
         hasThirdPlace: s.hasThirdPlace !== false,
         categories: Array.isArray(s.categories) ? s.categories.slice() : [],
+        categoryMode: s.categoryMode || '',
+        divisions: (s.divisions || []).map(function (d) {
+          return {
+            id: d.id,
+            name: d.name || (d.open ? 'Open' : 'Category'),
+            open: !!d.open,
+            maxPlayers: clampMaxPlayers(d.maxPlayers),
+            teams: (d.teams || []).map(function (tm) {
+              return {
+                id: tm.id,
+                name: tm.name || '',
+                players: Array.isArray(tm.players) ? tm.players.slice() : []
+              };
+            }),
+            brackets: (d.brackets || []).map(function (b) {
+              return {
+                id: b.id,
+                name: b.name || 'Bracket',
+                teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : []
+              };
+            })
+          };
+        }),
         scoring: s.scoring ? JSON.parse(JSON.stringify(s.scoring)) : defaultScoring(s.kind),
         maxRosterSize: parseMaxRosterSize(s.maxRosterSize),
         rules: s.rules ? JSON.parse(JSON.stringify(s.rules)) : null,
@@ -1816,6 +2292,7 @@
     return {
       name: newName,
       format: src.format || 'teams',
+      sportMode: sportModeOf(src),
       sports: sports,
       rules: src.rules ? JSON.parse(JSON.stringify(src.rules)) : null,
       revealLockedRosters: !!src.revealLockedRosters,
@@ -2245,6 +2722,9 @@
   window.__tournament.saveScheduleDraft = saveScheduleDraft;
   window.__tournament.publishSchedule = publishSchedule;
   window.__tournament.clearSchedule = clearSchedule;
+  window.__tournament.setSportMode = setSportMode;
+  window.__tournament.setTournamentStarted = setTournamentStarted;
+  window.__tournament.openEntryTeam = openEntryTeam;
   window.__tournament.saveTournamentRules = saveTournamentRules;
   window.__tournament.saveSportRules = saveSportRules;
   window.__tournament.saveMaxRosterSize = saveMaxRosterSize;
@@ -2279,6 +2759,7 @@
     let sportId = parsed.sportId;
     if (!sportId || !getSportConfig(t, sportId)) sportId = (t.sports && t.sports[0] && t.sports[0].id) || null;
     const sport = getSportConfig(t, sportId);
+    const categorized = !!(sport && usesRegistrationCategories(sport));
 
     const container = document.getElementById('tContent');
     const tabsHtml = (t.sports || []).map(function (s) {
@@ -2289,7 +2770,7 @@
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:${sport ? sport.color : '#3b82f6'};--hero-b:#1e293b;">
         <div>
-          <h1>${escapeHtml(t.name)} <small style="opacity:.9;font-family:'Outfit',sans-serif;font-weight:500;font-size:.6em;letter-spacing:normal;text-transform:none;">${t.format === 'individual' ? 'Individual / Doubles' : 'Team-based'}${isTournamentPublished(t) ? '' : ' · Unpublished'}</small></h1>
+          <h1>${escapeHtml(t.name)} <small style="opacity:.9;font-family:'Outfit',sans-serif;font-weight:500;font-size:.6em;letter-spacing:normal;text-transform:none;">${isMultiSportTournament(t) ? 'Multi sport' : 'Single sport'} · ${t.format === 'individual' ? 'Individual / Doubles' : 'Team-based'}${tournamentHasStarted(t) ? ' · Started' : ''}${isTournamentPublished(t) ? '' : ' · Unpublished'}</small></h1>
           <p>${sport ? (sport.emoji || '🏅') + ' ' + escapeHtml(sport.label) + (sport.date ? ' · ' + fmtDate(sport.date) : '') : 'Configure sports for this tournament'}</p>
         </div>
         <div class="t-emoji">${sport ? (sport.emoji || '🏆') : '🏆'}</div>
@@ -2298,18 +2779,24 @@
       ${renderAccessBanner()}
       ${renderTournamentPublishBanner(t)}
 
-      ${renderRulesCard({
+      ${isMultiSportTournament(t) ? renderRulesCard({
         title: 'Tournament rules',
         subtitle: 'applies to every sport',
         text: rulesText(t.rules),
         textareaId: 'tTournamentRules',
         placeholder: 'Eligibility, conduct, scoring notes, prize rules…',
         saveCall: "saveTournamentRules('" + t.id + "')"
-      })}
+      }) : ''}
 
       ${isAdminUi() ? `
       <section class="t-section" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="t-btn" type="button" onclick="window.__tournament.cloneTournament('${escapeHtml(t.id)}')">📄 Clone</button>
+        ${isMultiSportTournament(t)
+          ? ''
+          : `<button class="t-btn" type="button" onclick="window.__tournament.setSportMode('${escapeHtml(t.id)}','multi')">⇄ Make multi sport</button>`}
+        ${tournamentHasStarted(t)
+          ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', false)">⏸ Mark not started</button>`
+          : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', true)">▶ Start tournament</button>`}
         ${isTournamentPublished(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', false)">🙈 Unpublish</button>`
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', true)">📢 Publish</button>`}
@@ -2340,7 +2827,8 @@
         </section>
       `}
 
-      ${sport ? `
+      ${sport && categorized ? '<div id="tCategoryRoot"></div>' : ''}
+      ${sport && !categorized ? `
         ${t.format === 'teams' ? `
         <section class="t-section" id="tRostersSection">
           <div class="t-section-header">
@@ -2412,13 +2900,637 @@
       ` : ''}
     `;
 
-    if (sport) {
+    if (sport && categorized) renderCategoryWorkspace(t, sport, parsed);
+    else if (sport) {
       if (t.format === 'teams') renderRostersFor(t, sport);
       renderScheduleFor(t, sport);
       renderStandingsFor(t, sport.id);
       renderMatchListsFor(t, sport.id);
       renderPlayoffsFor(t, sport.id);
     }
+  }
+
+  function categoryMatchVisible(sport, match) {
+    if (isAdminUi()) return true;
+    if (!(match.fromSchedule || match.scheduleEntryId)) return true;
+    if (match.bracketId) {
+      const division = findDivision(sport, match.categoryId);
+      return scheduleIsPublished(findBracket(division, match.bracketId));
+    }
+    return scheduleIsPublished(sport);
+  }
+
+  function rankOf(rows, id) {
+    const index = (rows || []).findIndex(function (r) { return r.id === id; });
+    if (index < 0) return null;
+    return { rank: index + 1, row: rows[index] };
+  }
+
+  function standingLine(rank) {
+    if (!rank) return 'No league results yet';
+    const r = rank.row;
+    return '#' + rank.rank + ' · P ' + r.played + ' · W ' + r.won + ' · L ' + r.lost + ' · Pts ' + r.points;
+  }
+
+  function teamNavigate(tournament, sport, division, teamId, bracketId) {
+    navigate({
+      view: 'tournament',
+      tournamentId: tournament.id,
+      sportId: sport.id,
+      categoryId: division ? division.id : '',
+      bracketId: bracketId || '',
+      teamId: teamId || ''
+    });
+  }
+
+  async function setSportMode(tournamentId, mode) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const next = mode === 'multi' ? 'multi' : 'single';
+    if (next === sportModeOf(t)) return;
+    if (next === 'single' && (t.sports || []).length > 1) {
+      return toast('This tournament has more than one sport. Remove the extra sports before switching to single sport.', 'error');
+    }
+    const ok = next === 'multi'
+      ? confirm('Switch "' + t.name + '" to multi sport? You can add more sports, and tournament rules will apply to every sport.')
+      : confirm('Switch "' + t.name + '" to single sport? Tournament-wide rules will be hidden.');
+    if (!ok) return;
+    try {
+      await db.collection('tournaments').doc(t.id).update({
+        sportMode: next,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { sportMode: next });
+      toast(next === 'multi' ? 'Switched to multi sport. Tournament rules are now available.' : 'Switched to single sport.', 'success');
+      render();
+    } catch (err) {
+      console.error(err);
+      toast('Could not update sport mode: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  async function setTournamentStarted(tournamentId, started) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const next = !!started;
+    const ok = next
+      ? confirm('Start "' + t.name + '"? Members will see bracket standings, overall standings, the current match, and upcoming matches.')
+      : confirm('Mark "' + t.name + '" as not started? Members will no longer see the live standings board.');
+    if (!ok) return;
+    try {
+      await db.collection('tournaments').doc(t.id).update({
+        started: next,
+        startedAt: next ? new Date().toISOString() : null,
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
+      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { started: next });
+      toast(next ? 'Tournament started' : 'Tournament marked as not started', 'success');
+      render();
+    } catch (err) {
+      console.error(err);
+      toast('Could not update tournament: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  async function mutateDivision(tournamentId, sportId, divisionId, mutator) {
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    if (!t || !sport) return;
+    const divisions = (sport.divisions || []).map(function (d) {
+      if (d.id !== divisionId) return d;
+      const copy = JSON.parse(JSON.stringify(d));
+      mutator(copy);
+      return copy;
+    });
+    await writeSportPatch(t, sportId, { divisions: divisions });
+  }
+
+  function openEntryTeam(tournamentId, sportId, divisionId, teamId) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const division = sport ? findDivision(sport, divisionId) : null;
+    if (!t || !division) return;
+    const existing = teamId ? (division.teams || []).find(function (tm) { return tm.id === teamId; }) : null;
+    const max = clampMaxPlayers(division.maxPlayers);
+    const players = ((existing && existing.players) || []).slice(0, max);
+    while (players.length < max) players.push('');
+    const { modal, body } = getOrCreateModal('tEntryTeam', (existing ? 'Edit team' : 'Add team') + ' — ' + (division.name || 'Category'), { wide: false });
+    const fields = players.map(function (name, i) {
+      return `
+        <div class="t-form-field">
+          <label>Player ${i + 1}</label>
+          <input type="text" class="t-input" data-player value="${escapeHtml(name)}" placeholder="Player name" />
+        </div>
+      `;
+    }).join('');
+    body.innerHTML = `
+      <p class="t-mode-note">This category allows ${max} player${max === 1 ? '' : 's'} on a team. Singles and doubles still register as a team.</p>
+      <div class="t-form-field">
+        <label>Team name</label>
+        <input type="text" class="t-input" id="tEntryTeamName" value="${escapeHtml((existing && existing.name) || '')}" placeholder="Team name" />
+      </div>
+      ${fields}
+      <div class="t-modal-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button type="button" class="t-btn" data-cancel>Cancel</button>
+        <button type="button" class="t-btn primary" data-save>${existing ? 'Save team' : 'Add team'}</button>
+      </div>
+    `;
+    modal.classList.add('open');
+    const nameInput = body.querySelector('#tEntryTeamName');
+    if (nameInput) nameInput.focus();
+    body.querySelector('[data-cancel]').addEventListener('click', function () { closeLiveModal('tEntryTeam'); });
+    body.querySelector('[data-save]').addEventListener('click', async function () {
+      const name = nameInput.value.trim();
+      const playerNames = Array.prototype.map.call(body.querySelectorAll('[data-player]'), function (input) {
+        return input.value.trim();
+      });
+      if (!name) return toast('Enter a team name', 'error');
+      if (playerNames.some(function (p) { return !p; })) return toast('Enter all ' + max + ' player name' + (max === 1 ? '' : 's'), 'error');
+      const team = {
+        id: (existing && existing.id) || newId('team'),
+        name: name,
+        players: playerNames
+      };
+      try {
+        await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+          div.teams = Array.isArray(div.teams) ? div.teams : [];
+          const idx = div.teams.findIndex(function (tm) { return tm.id === team.id; });
+          if (idx >= 0) div.teams[idx] = Object.assign({}, div.teams[idx], team);
+          else div.teams.push(team);
+        });
+        closeLiveModal('tEntryTeam');
+        toast(existing ? 'Team updated' : 'Team added', 'success');
+        render();
+      } catch (_) { /* toasted */ }
+    });
+  }
+
+  async function removeEntryTeam(tournamentId, sportId, divisionId, teamId) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const division = t ? findDivision(getSportConfig(t, sportId), divisionId) : null;
+    const team = division && (division.teams || []).find(function (tm) { return tm.id === teamId; });
+    if (!team) return;
+    if (!confirm('Remove ' + (team.name || 'this team') + ' from ' + (division.name || 'this category') + '?')) return;
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        div.teams = (div.teams || []).filter(function (tm) { return tm.id !== teamId; });
+        (div.brackets || []).forEach(function (b) {
+          b.teamIds = (b.teamIds || []).filter(function (id) { return id !== teamId; });
+        });
+      });
+      toast('Team removed', 'success');
+      if (parseUrl().teamId === teamId) {
+        navigate({ view: 'tournament', tournamentId: tournamentId, sportId: sportId, categoryId: divisionId }, { replace: true });
+      } else {
+        render();
+      }
+    } catch (_) { /* toasted */ }
+  }
+
+  async function addBracket(tournamentId, sportId, divisionId) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const division = t ? findDivision(getSportConfig(t, sportId), divisionId) : null;
+    if (!division) return;
+    if ((division.teams || []).length < 2) return toast('Add at least two teams before creating a bracket', 'error');
+    const n = (division.brackets || []).length + 1;
+    const bracket = { id: newId('brk'), name: 'Bracket ' + n, teamIds: [] };
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        div.brackets = div.brackets || [];
+        div.brackets.push(bracket);
+      });
+      toast('Bracket created. Pull teams into it, then build the schedule.', 'success');
+      navigate({
+        view: 'tournament',
+        tournamentId: tournamentId,
+        sportId: sportId,
+        categoryId: divisionId,
+        bracketId: bracket.id
+      });
+    } catch (_) { /* toasted */ }
+  }
+
+  async function renameBracket(tournamentId, sportId, divisionId, bracketId, name) {
+    if (!isAdminUi()) return;
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return toast('Bracket name is required', 'error');
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        const bracket = (div.brackets || []).find(function (b) { return b.id === bracketId; });
+        if (bracket) bracket.name = trimmed;
+      });
+    } catch (_) { /* toasted */ }
+  }
+
+  async function removeBracket(tournamentId, sportId, divisionId, bracketId) {
+    if (!isAdminUi()) return;
+    if (!confirm('Remove this bracket? Published matches that already started are kept. Clear the bracket schedule first if you want scheduled matches removed.')) return;
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        div.brackets = (div.brackets || []).filter(function (b) { return b.id !== bracketId; });
+      });
+      toast('Bracket removed', 'success');
+      navigate({ view: 'tournament', tournamentId: tournamentId, sportId: sportId, categoryId: divisionId });
+    } catch (_) { /* toasted */ }
+  }
+
+  async function toggleBracketTeam(tournamentId, sportId, divisionId, bracketId, teamId, on) {
+    if (!isAdminUi()) return;
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        (div.brackets || []).forEach(function (b) {
+          b.teamIds = (b.teamIds || []).filter(function (id) { return id !== teamId; });
+          if (on && b.id === bracketId) b.teamIds.push(teamId);
+        });
+      });
+    } catch (_) { /* toasted */ }
+  }
+
+  function standingsTableHtml(tournament, sportId, rows, division, bracketId) {
+    if (!rows.length) return '<p class="t-empty">No league matches completed yet.</p>';
+    return `
+      <table class="t-standings-table">
+        <thead>
+          <tr><th>#</th><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">L</th><th class="num">Pts</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map(function (r, i) {
+            const meta = teamMeta(tournament, sportId, r.id);
+            return `
+              <tr class="rank-${i + 1} is-link" data-open-team="${escapeHtml(r.id)}" data-bracket="${escapeHtml(bracketId || '')}">
+                <td><span class="rank-badge">${i + 1}</span></td>
+                <td>
+                  <div class="t-team-cell">
+                    <span class="t-team-swatch" style="--team-color:${meta.color}"></span>
+                    <div>
+                      <span class="t-team-name">${escapeHtml(meta.name)}</span>
+                      ${meta.wards ? '<span class="t-team-wards">' + escapeHtml(meta.wards) + '</span>' : ''}
+                    </div>
+                  </div>
+                </td>
+                <td class="num">${r.played}</td>
+                <td class="num">${r.won}</td>
+                <td class="num">${r.lost}</td>
+                <td class="num">${r.points}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  function teamFocusHtml(tournament, sport, division, team) {
+    const showResults = isAdminUi() || tournamentHasStarted(tournament);
+    const bracket = bracketForTeam(division, team.id);
+    const players = (team.players || []).filter(function (p) { return String(p || '').trim(); });
+    let results = '';
+    if (showResults) {
+      const overall = computeStandings(tournament, state.matches, sport.id, {
+        categoryId: division.id,
+        useTeams: true
+      });
+      const bracketRows = bracket ? computeStandings(tournament, state.matches, sport.id, {
+        categoryId: division.id,
+        bracketId: bracket.id,
+        teamIds: bracket.teamIds || [],
+        useTeams: true
+      }) : [];
+      const remaining = state.matches.filter(function (m) {
+        if (!categoryMatchVisible(sport, m)) return false;
+        if (m.sport !== sport.id || m.categoryId !== division.id) return false;
+        if (m.status === 'completed') return false;
+        const p = participantsOf(m, tournament);
+        return p.a === team.id || p.b === team.id;
+      }).sort(sortMatches);
+      const left = remaining.map(function (m) {
+        const p = participantsOf(m, tournament);
+        const opp = p.a === team.id ? p.b : p.a;
+        return `<li><b>${escapeHtml(displayName(tournament, sport.id, opp))}</b> · ${escapeHtml(STAGE_LABEL[m.stage] || m.stage || '')} · ${escapeHtml(STATUS_LABEL[m.status] || m.status)} · ${m.scheduledAt ? escapeHtml(fmtDateTime(m.scheduledAt)) : 'Time TBD'}</li>`;
+      }).join('');
+      results = `
+        <div class="t-focus-grid">
+          <div><div class="lbl">Bracket standing</div><div class="val">${escapeHtml(bracket ? standingLine(rankOf(bracketRows, team.id)) : 'Not placed in a bracket')}</div></div>
+          <div><div class="lbl">Overall standing</div><div class="val">${escapeHtml(standingLine(rankOf(overall, team.id)))}</div></div>
+        </div>
+        <div class="lbl" style="margin-top:10px;">Matches left</div>
+        ${left ? '<ul class="t-left-matches">' + left + '</ul>' : '<p class="t-empty">No matches left.</p>'}
+      `;
+    } else {
+      results = '<p class="t-mode-note">Standings and remaining matches show here once an admin starts the tournament.</p>';
+    }
+    return `
+      <section class="t-section" id="tTeamFocus">
+        <div class="t-card t-team-focus">
+          <div class="t-card-body">
+            <div class="t-section-header" style="margin-bottom:8px;">
+              <h2 class="t-section-title">${escapeHtml(team.name || 'Team')} <small>${escapeHtml(division.name || '')}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}</small></h2>
+              <button type="button" class="t-btn sm" data-act="close-team">Close</button>
+            </div>
+            <div class="t-player-list">${players.map(function (p) { return '<span>' + escapeHtml(p) + '</span>'; }).join('') || '<span>No players listed</span>'}</div>
+            ${results}
+          </div>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderCategoryWorkspace(tournament, sport, parsed) {
+    const root = document.getElementById('tCategoryRoot');
+    if (!root) return;
+    const divisions = sport.divisions || [];
+    if (!divisions.length) {
+      root.innerHTML = `
+        <section class="t-section"><div class="t-empty">
+          No registration category yet.
+          ${isAdminUi() ? '<div style="margin-top:12px;"><button class="t-btn primary" onclick="window.__tournament.navigate({view:\'manage\',tournamentId:\'' + tournament.id + '\'})">⚙️ Set categories</button></div>' : ''}
+        </div></section>`;
+      return;
+    }
+    let division = findDivision(sport, parsed.categoryId) || divisions[0];
+    if (parsed.teamId) {
+      const located = findEntryTeam(tournament, sport.id, parsed.teamId);
+      if (located && located.division && located.division.id) division = located.division;
+    }
+    const teams = division.teams || [];
+    const brackets = division.brackets || [];
+    const bracket = findBracket(division, parsed.bracketId);
+    const focusTeam = parsed.teamId ? teams.find(function (tm) { return tm.id === parsed.teamId; }) : null;
+    const showBoard = isAdminUi() || tournamentHasStarted(tournament);
+
+    const categoryTabs = sport.categoryMode === 'split'
+      ? `<div class="t-tabs t-subtabs">${divisions.map(function (d) {
+          const active = d.id === division.id;
+          return `<button type="button" class="t-tab ${active ? 'active' : ''}" style="--sport-color:${sport.color || 'var(--t-primary)'}" data-act="select-category" data-category="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}<span class="count">${(d.teams || []).length}</span></button>`;
+        }).join('')}</div>`
+      : `<div class="t-open-banner"><b>Open category.</b> ${escapeHtml(division.name || 'Open')} is open to everyone. This sport is not split into separate categories.</div>`;
+
+    const teamCards = teams.map(function (team) {
+      const meta = teamMeta(tournament, sport.id, team.id);
+      const owned = bracketForTeam(division, team.id);
+      const players = teamPlayersLabel(team);
+      return `
+        <div class="t-roster-card is-link" data-open-team="${escapeHtml(team.id)}" style="--team-color:${meta.color}">
+          <div class="t-roster-card-head">
+            <div class="t-roster-team">
+              <span class="t-roster-dot" style="background:${meta.color};"></span>
+              <div>
+                <div class="t-roster-name">${escapeHtml(team.name || team.id)}</div>
+                <div class="t-roster-sub">${players ? escapeHtml(players) : 'No players yet'}</div>
+              </div>
+            </div>
+          </div>
+          <div class="t-roster-card-body">
+            <div class="t-roster-line"><span class="lbl">Players</span><span class="val">${(team.players || []).filter(Boolean).length} / ${clampMaxPlayers(division.maxPlayers)}</span></div>
+            <div class="t-roster-line"><span class="lbl">Bracket</span><span class="val">${owned ? escapeHtml(owned.name || 'Bracket') : 'Unassigned'}</span></div>
+          </div>
+          <div class="t-roster-card-foot">
+            <button type="button" class="t-btn sm" data-act="open-team" data-team="${escapeHtml(team.id)}">Standing</button>
+            ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="edit-team" data-team="${escapeHtml(team.id)}">Edit</button>` : ''}
+            ${isAdminUi() ? `<button type="button" class="t-btn danger sm" data-act="delete-team" data-team="${escapeHtml(team.id)}">Remove</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    const bracketCards = brackets.map(function (b) {
+      const selected = !!(bracket && bracket.id === b.id);
+      const checks = teams.map(function (tm) {
+        const owner = bracketForTeam(division, tm.id);
+        const checked = !!(owner && owner.id === b.id);
+        const elsewhere = !!(owner && owner.id !== b.id);
+        return `
+          <label class="t-check-line">
+            <input type="checkbox" data-bracket-team data-bracket="${escapeHtml(b.id)}" data-team="${escapeHtml(tm.id)}" ${checked ? 'checked' : ''} ${isAdminUi() ? '' : 'disabled'} />
+            <span>${escapeHtml(tm.name || tm.id)}</span>
+            ${elsewhere ? '<em>In ' + escapeHtml(owner.name || 'another bracket') + ' — check to pull in</em>' : ''}
+          </label>
+        `;
+      }).join('');
+      return `
+        <div class="t-bracket-card ${selected ? 'is-selected' : ''}">
+          <div class="t-bracket-card-head">
+            <input type="text" class="t-input" data-rename-bracket="${escapeHtml(b.id)}" value="${escapeHtml(b.name || '')}" ${isAdminUi() ? '' : 'readonly'} />
+            <button type="button" class="t-btn sm ${selected ? 'primary' : ''}" data-act="select-bracket" data-bracket="${escapeHtml(b.id)}">${selected ? 'Viewing schedule' : 'Schedule'}</button>
+            ${isAdminUi() ? `<button type="button" class="t-btn danger sm" data-act="delete-bracket" data-bracket="${escapeHtml(b.id)}">Remove</button>` : ''}
+          </div>
+          <div class="t-check-list">${checks || '<p class="t-empty">Add teams, then pull them into this bracket.</p>'}</div>
+        </div>
+      `;
+    }).join('');
+
+    let bracketTables = '';
+    if (showBoard) {
+      if (bracket) {
+        const rows = computeStandings(tournament, state.matches, sport.id, {
+          categoryId: division.id,
+          bracketId: bracket.id,
+          teamIds: bracket.teamIds || [],
+          useTeams: true
+        });
+        bracketTables = `
+          <section class="t-section">
+            <div class="t-section-header"><h2 class="t-section-title">Bracket standing <small>${escapeHtml(bracket.name || '')}</small></h2></div>
+            <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rows, division, bracket.id)}</div></div>
+          </section>
+        `;
+      } else {
+        bracketTables = brackets.map(function (b) {
+          const rows = computeStandings(tournament, state.matches, sport.id, {
+            categoryId: division.id,
+            bracketId: b.id,
+            teamIds: b.teamIds || [],
+            useTeams: true
+          });
+          return `
+            <section class="t-section">
+              <div class="t-section-header"><h2 class="t-section-title">Bracket standing <small>${escapeHtml(b.name || '')}</small></h2></div>
+              <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rows, division, b.id)}</div></div>
+            </section>
+          `;
+        }).join('');
+      }
+    }
+    const overallRows = showBoard ? computeStandings(tournament, state.matches, sport.id, {
+      categoryId: division.id,
+      useTeams: true
+    }) : [];
+
+    const scheduleBlock = bracket ? `
+      <section class="t-section" id="tScheduleSection">
+        <div class="t-section-header">
+          <h2 class="t-section-title">Schedule <small>${escapeHtml(bracket.name || 'Bracket')}</small></h2>
+          <div id="tScheduleActions" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+        </div>
+        <div class="t-card"><div class="t-card-body" id="tScheduleBody"><p class="t-empty">Loading…</p></div></div>
+      </section>
+    ` : `
+      <section class="t-section">
+        <div class="t-card"><div class="t-card-body t-mode-note" style="margin:0;">
+          ${brackets.length
+            ? 'Schedules are created inside a bracket. Choose Schedule on a bracket to add matches for the teams you pulled in.'
+            : 'Once the teams are in, create a bracket and pull teams into it. The schedule for those teams lives in that bracket.'}
+        </div></div>
+      </section>
+    `;
+
+    root.innerHTML = `
+      ${categoryTabs}
+      ${focusTeam ? teamFocusHtml(tournament, sport, division, focusTeam) : ''}
+      ${renderRulesCard({
+        title: (sport.label || 'Sport') + ' rules',
+        subtitle: 'this sport only',
+        text: rulesText(sport.rules),
+        textareaId: 'tSportRules',
+        placeholder: 'Format, scoring, substitutions, court rules for this sport…',
+        saveCall: "saveSportRules('" + tournament.id + "','" + sport.id + "')"
+      })}
+      <section class="t-section">
+        <div class="t-section-header">
+          <h2 class="t-section-title">${sport.categoryMode === 'open' ? 'Teams' : escapeHtml(division.name || 'Category')} <small>max ${clampMaxPlayers(division.maxPlayers)} player${clampMaxPlayers(division.maxPlayers) === 1 ? '' : 's'}</small></h2>
+          ${isAdminUi() ? `<button type="button" class="t-btn sm primary" data-act="add-team">➕ Add team</button>` : ''}
+        </div>
+        <div class="t-rosters-grid">${teamCards || '<div class="t-empty">No teams yet. Add a team with its name and player names.</div>'}</div>
+      </section>
+      <section class="t-section">
+        <div class="t-section-header">
+          <h2 class="t-section-title">Brackets <small>pull teams in, then schedule inside the bracket</small></h2>
+          ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket">➕ Create bracket</button>` : ''}
+        </div>
+        <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets yet.</div>'}</div>
+      </section>
+      ${scheduleBlock}
+      ${showBoard ? `
+        ${tournamentHasStarted(tournament) ? '' : '<p class="t-mode-note">Members see this board after you start the tournament. You can score matches before that.</p>'}
+        <section class="t-section" id="tLiveSection" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">Current match</h2></div>
+          <div class="t-match-list" id="tLiveList"></div>
+        </section>
+        <section class="t-section" id="tUpcomingSection" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">Upcoming matches</h2></div>
+          <div class="t-match-list" id="tUpcomingList"></div>
+        </section>
+        ${bracketTables}
+        <section class="t-section">
+          <div class="t-section-header"><h2 class="t-section-title">Overall standing <small>${escapeHtml(division.name || 'category')}</small></h2></div>
+          <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, overallRows, division, '')}</div></div>
+        </section>
+        <section class="t-section" id="tCompletedSection" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">Completed</h2></div>
+          <div class="t-match-list" id="tCompletedList"></div>
+        </section>
+        <section class="t-section" id="tPlayoffsSection" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">Playoffs</h2></div>
+          <div class="t-bracket" id="tPlayoffs"></div>
+        </section>
+      ` : `
+        <section class="t-section"><div class="t-card"><div class="t-card-body t-mode-note" style="margin:0;">Bracket standings, overall standings, the current match, and upcoming matches appear once an admin starts the tournament.</div></div></section>
+      `}
+    `;
+
+    bindCategoryWorkspace(root, tournament, sport, division);
+
+    if (bracket) renderScheduleFor(tournament, sport, { division: division, bracket: bracket });
+    if (showBoard) {
+      const pool = state.matches.filter(function (m) {
+        if (m.sport !== sport.id || m.categoryId !== division.id) return false;
+        return categoryMatchVisible(sport, m);
+      });
+      const live = pool.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches);
+      const upcoming = pool.filter(function (m) { return m.status === 'scheduled'; }).sort(sortMatches);
+      const completed = pool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
+      fillMatchList('tLiveList', 'tLiveSection', live, tournament);
+      fillMatchList('tUpcomingList', 'tUpcomingSection', upcoming, tournament);
+      fillMatchList('tCompletedList', 'tCompletedSection', completed, tournament, { compact: true });
+      renderPlayoffsFor(tournament, sport.id, pool);
+    }
+  }
+
+  function bindCategoryWorkspace(root, tournament, sport, division) {
+    function go(extra) {
+      navigate(Object.assign({
+        view: 'tournament',
+        tournamentId: tournament.id,
+        sportId: sport.id,
+        categoryId: division.id
+      }, extra || {}));
+    }
+    root.querySelectorAll('[data-act="select-category"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        navigate({
+          view: 'tournament',
+          tournamentId: tournament.id,
+          sportId: sport.id,
+          categoryId: btn.getAttribute('data-category')
+        });
+      });
+    });
+    root.querySelectorAll('[data-act="add-team"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { openEntryTeam(tournament.id, sport.id, division.id, ''); });
+    });
+    root.querySelectorAll('[data-act="edit-team"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        openEntryTeam(tournament.id, sport.id, division.id, btn.getAttribute('data-team'));
+      });
+    });
+    root.querySelectorAll('[data-act="delete-team"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        removeEntryTeam(tournament.id, sport.id, division.id, btn.getAttribute('data-team'));
+      });
+    });
+    root.querySelectorAll('[data-act="open-team"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const teamId = btn.getAttribute('data-team');
+        const owned = bracketForTeam(division, teamId);
+        go({ teamId: teamId, bracketId: owned ? owned.id : '' });
+      });
+    });
+    root.querySelectorAll('[data-open-team]').forEach(function (node) {
+      node.addEventListener('click', function (e) {
+        if (e.target.closest('button, a, input, select, label')) return;
+        const teamId = node.getAttribute('data-open-team');
+        const owned = bracketForTeam(division, teamId);
+        const rowBracket = node.getAttribute('data-bracket');
+        go({ teamId: teamId, bracketId: rowBracket || (owned ? owned.id : '') });
+      });
+    });
+    root.querySelectorAll('[data-act="close-team"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { go({}); });
+    });
+    root.querySelectorAll('[data-act="add-bracket"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { addBracket(tournament.id, sport.id, division.id); });
+    });
+    root.querySelectorAll('[data-act="select-bracket"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        go({ bracketId: btn.getAttribute('data-bracket') });
+      });
+    });
+    root.querySelectorAll('[data-act="delete-bracket"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        removeBracket(tournament.id, sport.id, division.id, btn.getAttribute('data-bracket'));
+      });
+    });
+    root.querySelectorAll('[data-rename-bracket]').forEach(function (input) {
+      input.addEventListener('change', function () {
+        renameBracket(tournament.id, sport.id, division.id, input.getAttribute('data-rename-bracket'), input.value);
+      });
+      input.addEventListener('click', function (e) { e.stopPropagation(); });
+    });
+    root.querySelectorAll('[data-bracket-team]').forEach(function (box) {
+      box.addEventListener('change', function () {
+        toggleBracketTeam(tournament.id, sport.id, division.id, box.getAttribute('data-bracket'), box.getAttribute('data-team'), box.checked);
+      });
+    });
   }
 
   function renderRostersFor(tournament, sport) {
@@ -2520,11 +3632,11 @@
 
   function visibleMatchesFor(tournament, sportId) {
     const sport = getSportConfig(tournament, sportId);
-    const published = scheduleIsPublished(sport);
     return state.matches.filter(function (m) {
       if (m.sport !== sportId) return false;
       if (isAdminUi()) return true;
-      if (m.fromSchedule || m.scheduleEntryId) return published;
+      if (m.categoryId || m.bracketId) return categoryMatchVisible(sport, m);
+      if (m.fromSchedule || m.scheduleEntryId) return scheduleIsPublished(sport);
       return true;
     });
   }
@@ -2539,8 +3651,9 @@
     fillMatchList('tCompletedList', 'tCompletedSection', completed, tournament, { compact: true });
   }
 
-  function renderPlayoffsFor(tournament, sportId) {
-    const scoped = visibleMatchesFor(tournament, sportId).filter(function (m) { return m.stage !== 'league'; });
+  function renderPlayoffsFor(tournament, sportId, preset) {
+    const source = Array.isArray(preset) ? preset : visibleMatchesFor(tournament, sportId);
+    const scoped = source.filter(function (m) { return m.stage !== 'league'; });
     const sec = document.getElementById('tPlayoffsSection');
     const wrap = document.getElementById('tPlayoffs');
     if (!sec || !wrap) return;
@@ -2610,6 +3723,8 @@
       <div class="t-match-head">
         <div class="t-match-meta">
           <span class="t-badge stage-${match.stage}">${escapeHtml(STAGE_LABEL[match.stage] || match.stage)}</span>
+          ${match.categoryId ? '<span class="t-badge">' + escapeHtml((function () { const d = findDivision(sport, match.categoryId); return (d && d.name) || 'Category'; })()) + '</span>' : ''}
+          ${match.bracketId ? '<span class="t-badge">' + escapeHtml((function () { const d = findDivision(sport, match.categoryId); const b = findBracket(d, match.bracketId); return (b && b.name) || 'Bracket'; })()) + '</span>' : ''}
           <span class="t-badge status-${match.status || 'scheduled'}">${escapeHtml(STATUS_LABEL[match.status] || 'Scheduled')}</span>
           ${match.venue ? '<span class="t-badge">📍 ' + escapeHtml(match.venue) + '</span>' : ''}
           ${match.scheduledAt ? '<span class="t-badge">🕒 ' + escapeHtml(fmtDateTime(match.scheduledAt)) + '</span>' : ''}
@@ -2619,14 +3734,14 @@
         <div class="t-match-team ${aWin ? 'winner' : ''}">
           <span class="avatar" style="--team-color:${aMeta.color}">${escapeHtml((aMeta.id || aMeta.name || 'A').slice(0, 2).toUpperCase())}</span>
           <div class="info">
-            <div class="name">${escapeHtml(aMeta.name)}</div>
+            <div class="name">${match.categoryId && p.a ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.a + '\'})">' + escapeHtml(aMeta.name) + '</button>' : escapeHtml(aMeta.name)}</div>
             ${aMeta.wards ? '<div class="wards">' + escapeHtml(aMeta.wards) + '</div>' : ''}
           </div>
         </div>
         <div class="t-match-score"><span>${s.a}</span><span class="dash">–</span><span>${s.b}</span></div>
         <div class="t-match-team right ${bWin ? 'winner' : ''}">
           <div class="info">
-            <div class="name">${escapeHtml(bMeta.name)}</div>
+            <div class="name">${match.categoryId && p.b ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.b + '\'})">' + escapeHtml(bMeta.name) + '</button>' : escapeHtml(bMeta.name)}</div>
             ${bMeta.wards ? '<div class="wards">' + escapeHtml(bMeta.wards) + '</div>' : ''}
           </div>
           <span class="avatar" style="--team-color:${bMeta.color}">${escapeHtml((bMeta.id || bMeta.name || 'B').slice(0, 2).toUpperCase())}</span>
@@ -2815,8 +3930,25 @@
   // SPORT SCHEDULE (draft → publish)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function scheduleKey(tournamentId, sportId) {
-    return String(tournamentId || '') + '|' + String(sportId || '');
+  function scheduleKey(tournamentId, sportId, categoryId, bracketId) {
+    return [tournamentId || '', sportId || '', categoryId || '', bracketId || ''].join('|');
+  }
+
+  function scheduleTableAttrs(tournament, sport, scope) {
+    const ids = scopeIds(scope);
+    return 'data-tournament="' + escapeHtml(tournament.id)
+      + '" data-sport="' + escapeHtml(sport.id)
+      + '" data-category="' + escapeHtml(ids.categoryId)
+      + '" data-bracket="' + escapeHtml(ids.bracketId) + '"';
+  }
+
+  function tableMatchesScope(table, tournament, sport, scope) {
+    if (!table || !tournament || !sport) return false;
+    const ids = scopeIds(scope);
+    return table.getAttribute('data-tournament') === tournament.id
+      && table.getAttribute('data-sport') === sport.id
+      && (table.getAttribute('data-category') || '') === ids.categoryId
+      && (table.getAttribute('data-bracket') || '') === ids.bracketId;
   }
 
   function harvestScheduleEditor() {
@@ -2825,7 +3957,9 @@
     const tId = table.getAttribute('data-tournament');
     const sId = table.getAttribute('data-sport');
     if (!tId || !sId) return;
-    const key = scheduleKey(tId, sId);
+    const categoryId = table.getAttribute('data-category') || '';
+    const bracketId = table.getAttribute('data-bracket') || '';
+    const key = scheduleKey(tId, sId, categoryId, bracketId);
     const prev = scheduleEditByKey[key] || { entries: [], dirty: false };
     scheduleEditByKey[key] = {
       entries: readScheduleEntriesFromDom(),
@@ -2833,18 +3967,17 @@
     };
   }
 
-  function readWorkingEntries(tournament, sport) {
+  function readWorkingEntries(tournament, sport, scope) {
     const table = document.getElementById('tScheduleEditor');
-    if (table
-        && table.getAttribute('data-tournament') === tournament.id
-        && table.getAttribute('data-sport') === sport.id) {
+    if (tableMatchesScope(table, tournament, sport, scope)) {
       const entries = readScheduleEntriesFromDom();
-      const key = scheduleKey(tournament.id, sport.id);
+      const ids = scopeIds(scope);
+      const key = scheduleKey(tournament.id, sport.id, ids.categoryId, ids.bracketId);
       const prev = scheduleEditByKey[key] || { dirty: false };
       scheduleEditByKey[key] = { entries: entries, dirty: !!prev.dirty };
       return entries;
     }
-    return workingScheduleEntries(tournament, sport);
+    return workingScheduleEntries(tournament, sport, scope);
   }
 
   function readScheduleEntriesFromDom() {
@@ -2870,16 +4003,16 @@
     return out;
   }
 
-  function markScheduleDirty(tournamentId, sportId) {
-    const key = scheduleKey(tournamentId, sportId);
+  function markScheduleDirty(tournamentId, sportId, categoryId, bracketId) {
+    const key = scheduleKey(tournamentId, sportId, categoryId, bracketId);
     const cur = scheduleEditByKey[key] || { entries: [], dirty: false };
     cur.dirty = true;
     scheduleEditByKey[key] = cur;
   }
 
-  function entriesFromMatches(tournament, sportId) {
+  function entriesFromMatches(tournament, sportId, categoryId, bracketId) {
     return state.matches
-      .filter(function (m) { return m.sport === sportId; })
+      .filter(function (m) { return entryInScope(m, sportId, categoryId || '', bracketId || ''); })
       .sort(sortMatches)
       .map(function (m) {
         const p = participantsOf(m, tournament);
@@ -2895,36 +4028,45 @@
       });
   }
 
-  function workingScheduleEntries(tournament, sport) {
-    const key = scheduleKey(tournament.id, sport.id);
+  function scheduleRecord(sport, scope) {
+    const ids = scopeIds(scope);
+    if (!ids.categoryId) return getSchedule(sport);
+    const owner = scheduleOwner(sport, ids.categoryId, ids.bracketId);
+    return getSchedule(owner);
+  }
+
+  function workingScheduleEntries(tournament, sport, scope) {
+    const ids = scopeIds(scope);
+    const key = scheduleKey(tournament.id, sport.id, ids.categoryId, ids.bracketId);
     const local = scheduleEditByKey[key];
     if (local && local.dirty && Array.isArray(local.entries)) return local.entries;
-    const sch = getSchedule(sport);
+    const sch = scheduleRecord(sport, scope);
     if (sch.draft && Array.isArray(sch.draft.entries) && sch.draft.entries.length) {
       return sanitizeScheduleEntries(sch.draft.entries);
     }
     if (sch.published && Array.isArray(sch.published.entries) && sch.published.entries.length) {
       return sanitizeScheduleEntries(sch.published.entries);
     }
-    const fromMatches = entriesFromMatches(tournament, sport.id);
+    const fromMatches = entriesFromMatches(tournament, sport.id, ids.categoryId, ids.bracketId);
     if (fromMatches.length) return fromMatches;
     return [];
   }
 
-  function scheduleHasUnpublishedChanges(tournament, sport) {
-    const key = scheduleKey(tournament.id, sport.id);
+  function scheduleHasUnpublishedChanges(tournament, sport, scope) {
+    const ids = scopeIds(scope);
+    const key = scheduleKey(tournament.id, sport.id, ids.categoryId, ids.bracketId);
     const local = scheduleEditByKey[key];
     if (local && local.dirty) return true;
-    const sch = getSchedule(sport);
+    const sch = scheduleRecord(sport, scope);
     if (!sch.published) return !!(sch.draft && (sch.draft.entries || []).length);
     const draftEntries = JSON.stringify(sanitizeScheduleEntries((sch.draft && sch.draft.entries) || []));
     const pubEntries = JSON.stringify(sanitizeScheduleEntries(sch.published.entries || []));
     return draftEntries !== pubEntries;
   }
 
-  function participantSelectHtml(tournament, sport, field, selected) {
-    if (tournament.format === 'teams') {
-      const teams = teamsFor(tournament, sport);
+  function participantSelectHtml(tournament, sport, field, selected, teamList) {
+    const teams = teamList || (tournament.format === 'teams' ? teamsFor(tournament, sport) : null);
+    if (teams) {
       const opts = ['<option value="">Select team…</option>'].concat(teams.map(function (tm) {
         const label = teamPublicName(tm);
         const extra = (tm.id && label !== tm.id) ? ' (' + tm.id + ')' : '';
@@ -2937,33 +4079,44 @@
     return '<input type="text" class="t-input" data-f="' + field + '" value="' + escapeHtml(selected || '') + '" placeholder="Player / pair" />';
   }
 
-  function renderScheduleFor(tournament, sport) {
+  function scheduleArgs(tournament, sport, scope) {
+    const ids = scopeIds(scope);
+    return "'" + tournament.id + "','" + sport.id + "','" + ids.categoryId + "','" + ids.bracketId + "'";
+  }
+
+  function renderScheduleFor(tournament, sport, scope) {
     const body = document.getElementById('tScheduleBody');
     const actions = document.getElementById('tScheduleActions');
     if (!body) return;
+    scope = scope || {};
 
-    const sch = getSchedule(sport);
-    const published = scheduleIsPublished(sport);
+    const sch = scheduleRecord(sport, scope);
+    const owner = scopeIds(scope).categoryId ? scheduleOwner(sport, scopeIds(scope).categoryId, scopeIds(scope).bracketId) : sport;
+    const published = scheduleIsPublished(owner);
     const canEdit = canEditSchedule();
     const entries = canEdit
-      ? workingScheduleEntries(tournament, sport)
+      ? workingScheduleEntries(tournament, sport, scope)
       : sanitizeScheduleEntries((sch.published && sch.published.entries) || []);
+    const ids = scopeIds(scope);
+    const pool = ids.categoryId ? teamsInBracket(sport, ids.categoryId, ids.bracketId) : teamsFor(tournament, sport);
+    const canGenerate = pool.length >= 2 && (ids.categoryId || tournament.format === 'teams');
+    const args = scheduleArgs(tournament, sport, scope);
 
     if (actions) {
       if (canEdit) {
-        const dirty = scheduleHasUnpublishedChanges(tournament, sport);
+        const dirty = scheduleHasUnpublishedChanges(tournament, sport, scope);
         actions.innerHTML = `
           ${published
             ? '<span class="t-badge locked">Published</span>'
             : '<span class="t-badge unlocked">Draft</span>'}
           ${dirty && published ? '<span class="t-badge nologin">Unpublished changes</span>' : ''}
-          <button class="t-btn sm" type="button" onclick="window.__tournament.addScheduleRow('${tournament.id}','${sport.id}')">➕ Add match</button>
-          ${tournament.format === 'teams' && teamsFor(tournament, sport).length >= 2
-            ? '<button class="t-btn sm" type="button" onclick="window.__tournament.generateLeagueSchedule(\'' + tournament.id + '\',\'' + sport.id + '\')">↺ Generate league</button>'
+          <button class="t-btn sm" type="button" onclick="window.__tournament.addScheduleRow(${args})">➕ Add match</button>
+          ${canGenerate
+            ? '<button class="t-btn sm" type="button" onclick="window.__tournament.generateLeagueSchedule(' + args + ')">↺ Generate league</button>'
             : ''}
-          <button class="t-btn sm" type="button" onclick="window.__tournament.saveScheduleDraft('${tournament.id}','${sport.id}')">💾 Save draft</button>
-          <button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule('${tournament.id}','${sport.id}')">📢 Publish</button>
-          <button class="t-btn sm danger" type="button" onclick="window.__tournament.clearSchedule('${tournament.id}','${sport.id}')">Clear schedule</button>
+          <button class="t-btn sm" type="button" onclick="window.__tournament.saveScheduleDraft(${args})">💾 Save draft</button>
+          <button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule(${args})">📢 Publish</button>
+          <button class="t-btn sm danger" type="button" onclick="window.__tournament.clearSchedule(${args})">Clear schedule</button>
         `;
       } else if (published) {
         actions.innerHTML = '<span class="t-badge locked">Published</span>';
@@ -2982,7 +4135,7 @@
       return;
     }
 
-    body.innerHTML = renderScheduleEditor(tournament, sport, entries, sch);
+    body.innerHTML = renderScheduleEditor(tournament, sport, entries, sch, scope);
     bindScheduleEditor(tournament, sport);
   }
 
@@ -3020,12 +4173,15 @@
     `;
   }
 
-  function renderScheduleEditor(tournament, sport, entries, sch) {
+  function renderScheduleEditor(tournament, sport, entries, sch, scope) {
     const stages = enabledStagesFor(sport);
+    const ids = scopeIds(scope);
+    const pool = ids.categoryId ? teamsInBracket(sport, ids.categoryId, ids.bracketId) : null;
     const savedNote = sch.draft && sch.draft.savedAt
       ? 'Last draft saved ' + fmtDateTime(sch.draft.savedAt)
         + (sch.draft.savedBy ? ' by ' + sch.draft.savedBy : '')
       : 'Not saved yet — use Save draft to keep your work.';
+    const attrs = scheduleTableAttrs(tournament, sport, scope);
     if (!entries.length) {
       return `
         <div class="t-schedule-empty">
@@ -3033,7 +4189,7 @@
           Publish when the schedule is ready for everyone to see.
         </div>
         <div class="t-schedule-note">${escapeHtml(savedNote)}</div>
-        <table class="t-schedule-table" id="tScheduleEditor" data-tournament="${escapeHtml(tournament.id)}" data-sport="${escapeHtml(sport.id)}" style="display:none;">
+        <table class="t-schedule-table" id="tScheduleEditor" ${attrs} style="display:none;">
           <tbody></tbody>
         </table>
       `;
@@ -3045,9 +4201,9 @@
       return `
         <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}">
           <td><select class="t-select" data-f="stage">${stageOpts}</select></td>
-          <td>${participantSelectHtml(tournament, sport, 'a', e.a)}</td>
+          <td>${participantSelectHtml(tournament, sport, 'a', e.a, pool)}</td>
           <td class="t-schedule-vs-cell">vs</td>
-          <td>${participantSelectHtml(tournament, sport, 'b', e.b)}</td>
+          <td>${participantSelectHtml(tournament, sport, 'b', e.b, pool)}</td>
           <td><input type="datetime-local" class="t-input" data-f="when" value="${escapeHtml(toDatetimeLocal(e.scheduledAt))}" /></td>
           <td><input type="text" class="t-input" data-f="venue" value="${escapeHtml(e.venue || '')}" placeholder="Venue" /></td>
           <td><button type="button" class="t-btn danger sm" data-remove-row="${escapeHtml(e.id)}">Remove</button></td>
@@ -3057,7 +4213,7 @@
     return `
       <div class="t-schedule-note">${escapeHtml(savedNote)} Only admins can edit. Everyone else sees this after you publish.</div>
       <div class="t-schedule-wrap">
-        <table class="t-schedule-table" id="tScheduleEditor" data-tournament="${escapeHtml(tournament.id)}" data-sport="${escapeHtml(sport.id)}">
+        <table class="t-schedule-table" id="tScheduleEditor" ${attrs}>
           <thead>
             <tr>
               <th>Stage</th>
@@ -3078,15 +4234,17 @@
   function bindScheduleEditor(tournament, sport) {
     const table = document.getElementById('tScheduleEditor');
     if (!table) return;
+    const categoryId = table.getAttribute('data-category') || '';
+    const bracketId = table.getAttribute('data-bracket') || '';
     table.addEventListener('input', function () {
-      markScheduleDirty(tournament.id, sport.id);
+      markScheduleDirty(tournament.id, sport.id, categoryId, bracketId);
     });
     table.addEventListener('change', function () {
-      markScheduleDirty(tournament.id, sport.id);
+      markScheduleDirty(tournament.id, sport.id, categoryId, bracketId);
     });
     table.querySelectorAll('[data-remove-row]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        removeScheduleRow(tournament.id, sport.id, btn.getAttribute('data-remove-row'));
+        removeScheduleRow(tournament.id, sport.id, btn.getAttribute('data-remove-row'), categoryId, bracketId);
       });
     });
   }
@@ -3097,49 +4255,67 @@
     return { t: t, sport: sport };
   }
 
-  function persistLocalEntries(tournamentId, sportId, entries, dirty) {
-    scheduleEditByKey[scheduleKey(tournamentId, sportId)] = {
+  function persistLocalEntries(tournamentId, sportId, entries, dirty, categoryId, bracketId) {
+    scheduleEditByKey[scheduleKey(tournamentId, sportId, categoryId, bracketId)] = {
       entries: sanitizeScheduleEntries(entries),
       dirty: dirty !== false
     };
   }
 
-  function addScheduleRow(tournamentId, sportId) {
+  function scheduleScope(categoryId, bracketId, sport) {
+    const scope = { categoryId: categoryId || '', bracketId: bracketId || '' };
+    if (scope.categoryId && sport) {
+      scope.division = findDivision(sport, scope.categoryId);
+      scope.bracket = findBracket(scope.division, scope.bracketId);
+    }
+    return scope;
+  }
+
+  function addScheduleRow(tournamentId, sportId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
     harvestScheduleEditor();
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const entries = readWorkingEntries(t, sport).slice();
-    const teams = teamsFor(t, sport);
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    if (scope.categoryId && !scope.bracket) return toast('Create a bracket and open it before adding matches', 'error');
+    const entries = readWorkingEntries(t, sport, scope).slice();
+    const teams = scope.categoryId ? teamsInBracket(sport, scope.categoryId, scope.bracketId) : teamsFor(t, sport);
+    const useTeams = matchUsesTeams(t, sport);
     const a = teams[0] ? teams[0].id : '';
     const b = teams[1] ? teams[1].id : '';
     entries.push(emptyScheduleEntry({
-      a: t.format === 'teams' ? a : '',
-      b: t.format === 'teams' ? b : '',
+      a: useTeams ? a : '',
+      b: useTeams ? b : '',
       scheduledAt: sport.date ? new Date(sport.date + 'T18:00:00').toISOString() : ''
     }));
-    persistLocalEntries(tournamentId, sportId, entries, true);
-    renderScheduleFor(t, sport);
+    persistLocalEntries(tournamentId, sportId, entries, true, scope.categoryId, scope.bracketId);
+    renderScheduleFor(t, sport, scope);
   }
 
-  function removeScheduleRow(tournamentId, sportId, entryId) {
+  function removeScheduleRow(tournamentId, sportId, entryId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
     harvestScheduleEditor();
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const entries = readWorkingEntries(t, sport).filter(function (e) { return e.id !== entryId; });
-    persistLocalEntries(tournamentId, sportId, entries, true);
-    renderScheduleFor(t, sport);
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    const entries = readWorkingEntries(t, sport, scope).filter(function (e) { return e.id !== entryId; });
+    persistLocalEntries(tournamentId, sportId, entries, true, scope.categoryId, scope.bracketId);
+    renderScheduleFor(t, sport, scope);
   }
 
-  function generateLeagueSchedule(tournamentId, sportId) {
+  function generateLeagueSchedule(tournamentId, sportId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const teams = teamsFor(t, sport);
-    if (teams.length < 2) return toast('Add at least 2 teams before generating a league schedule', 'error');
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    const teams = scope.categoryId ? teamsInBracket(sport, scope.categoryId, scope.bracketId) : teamsFor(t, sport);
+    if (teams.length < 2) {
+      return toast(scope.categoryId
+        ? 'Pull at least 2 teams into this bracket before generating a league schedule'
+        : 'Add at least 2 teams before generating a league schedule', 'error');
+    }
     harvestScheduleEditor();
-    const existing = readWorkingEntries(t, sport);
+    const existing = readWorkingEntries(t, sport, scope);
     const playoffs = existing.filter(function (e) { return e.stage && e.stage !== 'league'; });
     if (existing.length && !confirm('Replace league fixtures with a generated round-robin? Playoff rows will be kept.')) return;
     const league = [];
@@ -3153,8 +4329,8 @@
         }));
       }
     }
-    persistLocalEntries(tournamentId, sportId, league.concat(playoffs), true);
-    renderScheduleFor(t, sport);
+    persistLocalEntries(tournamentId, sportId, league.concat(playoffs), true, scope.categoryId, scope.bracketId);
+    renderScheduleFor(t, sport, scope);
     toast('League round-robin generated — save draft or publish when ready');
   }
 
@@ -3177,38 +4353,58 @@
     }
   }
 
-  async function saveScheduleDraft(tournamentId, sportId) {
+  async function writeSchedule(tournament, sportId, categoryId, bracketId, schedule) {
+    if (!categoryId) return writeSportPatch(tournament, sportId, { schedule: schedule });
+    const sport = getSportConfig(tournament, sportId);
+    if (!sport) throw new Error('Sport not found');
+    const divisions = (sport.divisions || []).map(function (d) {
+      if (d.id !== categoryId) return d;
+      return Object.assign({}, d, {
+        brackets: (d.brackets || []).map(function (b) {
+          if (b.id !== bracketId) return b;
+          return Object.assign({}, b, { schedule: schedule });
+        })
+      });
+    });
+    return writeSportPatch(tournament, sportId, { divisions: divisions });
+  }
+
+  async function saveScheduleDraft(tournamentId, sportId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
     harvestScheduleEditor();
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport));
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    if (scope.categoryId && !scope.bracket) return toast('Open a bracket before saving its schedule', 'error');
+    const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport, scope));
     const nowIso = new Date().toISOString();
     const who = (state.user && (state.user.email || state.user.displayName)) || '';
-    const prev = getSchedule(sport);
+    const prev = scheduleRecord(sport, scope);
     const schedule = {
       draft: { entries: entries, savedAt: nowIso, savedBy: who },
       published: prev.published || null
     };
     try {
-      await writeSportPatch(t, sportId, { schedule: schedule });
-      persistLocalEntries(tournamentId, sportId, entries, false);
+      await writeSchedule(t, sportId, scope.categoryId, scope.bracketId, schedule);
+      persistLocalEntries(tournamentId, sportId, entries, false, scope.categoryId, scope.bracketId);
       toast('Draft saved — not visible to others until you publish', 'success');
       render();
     } catch (_) { /* writeSportPatch already toasted */ }
   }
 
-  async function publishSchedule(tournamentId, sportId) {
+  async function publishSchedule(tournamentId, sportId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can publish the schedule', 'error');
     harvestScheduleEditor();
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport));
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    if (scope.categoryId && !scope.bracket) return toast('Open a bracket before publishing its schedule', 'error');
+    const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport, scope));
     if (!entries.length) return toast('Add at least one match before publishing', 'error');
     for (let i = 0; i < entries.length; i++) {
       const e = entries[i];
       if (!e.a || !e.b) return toast('Every match needs two sides before publishing', 'error');
-      if (e.a === e.b) return toast('A match cannot have the same team on both sides', 'error');
+      if (e.a === e.b) return toast('A match cannot have the same side on both sides', 'error');
     }
     if (!confirm('Publish this schedule? Everyone signed in will be able to view it.')) return;
 
@@ -3220,16 +4416,19 @@
     };
 
     try {
-      await syncPublishedMatches(t, sport, entries);
-      await writeSportPatch(t, sportId, { schedule: schedule });
-      persistLocalEntries(tournamentId, sportId, entries, false);
+      await syncPublishedMatches(t, sport, entries, scope);
+      await writeSchedule(t, sportId, scope.categoryId, scope.bracketId, schedule);
+      persistLocalEntries(tournamentId, sportId, entries, false, scope.categoryId, scope.bracketId);
       toast('Schedule published', 'success');
       render();
     } catch (_) { /* already toasted */ }
   }
 
-  async function deleteScheduleMatches(tournament, sport) {
-    const existing = state.matches.filter(function (m) { return m.sport === sport.id; });
+  async function deleteScheduleMatches(tournament, sport, scope) {
+    const ids = scopeIds(scope);
+    const existing = state.matches.filter(function (m) {
+      return entryInScope(m, sport.id, ids.categoryId, ids.bracketId);
+    });
     const col = db.collection('tournament_matches');
     for (let i = 0; i < existing.length; i++) {
       const m = existing[i];
@@ -3239,30 +4438,34 @@
     }
   }
 
-  async function clearSchedule(tournamentId, sportId) {
+  async function clearSchedule(tournamentId, sportId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can clear the schedule', 'error');
     harvestScheduleEditor();
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
-    const published = scheduleIsPublished(sport);
-    const sch = getSchedule(sport);
-    const local = scheduleEditByKey[scheduleKey(tournamentId, sportId)];
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    const owner = scope.categoryId ? scope.bracket : sport;
+    if (scope.categoryId && !owner) return toast('Open a bracket before clearing its schedule', 'error');
+    const published = scheduleIsPublished(owner);
+    const sch = scheduleRecord(sport, scope);
+    const local = scheduleEditByKey[scheduleKey(tournamentId, sportId, scope.categoryId, scope.bracketId)];
     const hasDraft = !!(sch.draft && Array.isArray(sch.draft.entries) && sch.draft.entries.length);
     const hasLocal = !!(local && Array.isArray(local.entries) && local.entries.length);
     if (!published && !hasDraft && !hasLocal) return toast('Schedule is already empty');
 
+    const where = scope.bracket ? (scope.bracket.name || 'this bracket') : 'this sport';
     if (published) {
       if (!confirm('This schedule is published and everyone can see it. Clear it anyway?')) return;
-      if (!confirm('This cannot be undone. Remove all published fixtures and scheduled match cards for this sport? Live or completed matches will be kept.')) return;
-    } else if (!confirm('Clear this sport\'s schedule draft? This cannot be undone.')) {
+      if (!confirm('This cannot be undone. Remove all published fixtures and scheduled match cards for ' + where + '? Live or completed matches will be kept.')) return;
+    } else if (!confirm('Clear the schedule draft for ' + where + '? This cannot be undone.')) {
       return;
     }
 
     try {
-      await deleteScheduleMatches(t, sport);
-      await writeSportPatch(t, sportId, { schedule: { draft: null, published: null } });
-      persistLocalEntries(tournamentId, sportId, [], false);
-      delete scheduleEditByKey[scheduleKey(tournamentId, sportId)];
+      await deleteScheduleMatches(t, sport, scope);
+      await writeSchedule(t, sportId, scope.categoryId, scope.bracketId, { draft: null, published: null });
+      persistLocalEntries(tournamentId, sportId, [], false, scope.categoryId, scope.bracketId);
+      delete scheduleEditByKey[scheduleKey(tournamentId, sportId, scope.categoryId, scope.bracketId)];
       toast('Schedule cleared', 'success');
       if (published) {
         confirm('The published schedule was cleared. Members will no longer see those fixtures. Click OK to continue.');
@@ -3271,8 +4474,9 @@
     } catch (_) { /* writeSportPatch already toasted */ }
   }
 
-  function buildMatchData(tournament, sport, entry) {
+  function buildMatchData(tournament, sport, entry, scope) {
     const stageCfg = getStageScoring(tournament, sport.id, entry.stage);
+    const ids = scopeIds(scope);
     const data = {
       tournamentId: tournament.id,
       sport: sport.id,
@@ -3288,7 +4492,9 @@
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
     };
-    if (tournament.format === 'teams') {
+    if (ids.categoryId) data.categoryId = ids.categoryId;
+    if (ids.bracketId) data.bracketId = ids.bracketId;
+    if (matchUsesTeams(tournament, sport)) {
       data.teamA = entry.a;
       data.teamB = entry.b;
     } else {
@@ -3301,8 +4507,11 @@
     return data;
   }
 
-  async function syncPublishedMatches(tournament, sport, entries) {
-    const existing = state.matches.filter(function (m) { return m.sport === sport.id; });
+  async function syncPublishedMatches(tournament, sport, entries, scope) {
+    const ids = scopeIds(scope);
+    const existing = state.matches.filter(function (m) {
+      return entryInScope(m, sport.id, ids.categoryId, ids.bracketId);
+    });
     const byEntryId = {};
     const byMatchId = {};
     existing.forEach(function (m) {
@@ -3328,7 +4537,9 @@
           updatedAt: FieldValue.serverTimestamp(),
           updatedBy: (state.user && state.user.email) || ''
         };
-        if (tournament.format === 'teams') {
+        if (ids.categoryId) patch.categoryId = ids.categoryId;
+        if (ids.bracketId) patch.bracketId = ids.bracketId;
+        if (matchUsesTeams(tournament, sport)) {
           patch.teamA = e.a;
           patch.teamB = e.b;
         } else {
@@ -3349,7 +4560,7 @@
           });
         }
       } else {
-        const data = buildMatchData(tournament, sport, e);
+        const data = buildMatchData(tournament, sport, e, scope);
         data.createdAt = FieldValue.serverTimestamp();
         const ref = await col.add(data);
         e.matchId = ref.id;
