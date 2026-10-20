@@ -3900,37 +3900,22 @@
 
     let bracketTables = '';
     if (showBoard) {
-      if (bracket) {
+      bracketTables = brackets.map(function (b) {
         const rows = computeStandings(tournament, state.matches, sport.id, {
           categoryId: division.id,
-          bracketId: bracket.id,
-          teamIds: bracket.teamIds || [],
+          bracketId: b.id,
+          teamIds: b.teamIds || [],
           stageId: stageId,
           useTeams: true
         });
-        bracketTables = `
+        const viewing = bracket && bracket.id === b.id;
+        return `
           <section class="t-section">
-            <div class="t-section-header"><h2 class="t-section-title">Bracket standing <small>${escapeHtml(bracket.name || '')} · ${escapeHtml(stageName)}</small></h2></div>
-            <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rows, division, bracket.id, emptyStage)}</div></div>
+            <div class="t-section-header"><h2 class="t-section-title">Bracket standing <small>${escapeHtml(b.name || 'Bracket')}${viewing ? ' · schedule open' : ''}${bracketIsComplete(b) ? ' · Complete' : ''} · ${escapeHtml(stageName)}</small></h2></div>
+            <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rows, division, b.id, 'No ' + (b.name || 'bracket') + ' matches completed yet.')}</div></div>
           </section>
         `;
-      } else {
-        bracketTables = brackets.map(function (b) {
-          const rows = computeStandings(tournament, state.matches, sport.id, {
-            categoryId: division.id,
-            bracketId: b.id,
-            teamIds: b.teamIds || [],
-            stageId: stageId,
-            useTeams: true
-          });
-          return `
-            <section class="t-section">
-              <div class="t-section-header"><h2 class="t-section-title">Bracket standing <small>${escapeHtml(b.name || '')} · ${escapeHtml(stageName)}</small></h2></div>
-              <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rows, division, b.id, emptyStage)}</div></div>
-            </section>
-          `;
-        }).join('');
-      }
+      }).join('');
     }
     const overallRows = showBoard ? computeStandings(tournament, state.matches, sport.id, {
       categoryId: division.id,
