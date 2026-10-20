@@ -32,10 +32,12 @@
  *         id, name, open, maxPlayers
  *         teams[]     { id, name, players[], tags[] }
  *                     tags are optional short labels (seed, home side, group)
- *         brackets[]  { id, name, stageId, teamIds[], schedule }
+ *         brackets[]  { id, name, stageId, teamIds[], schedule, complete }
  *           stageId   which stage this bracket belongs to (missing = league)
  *           a team is in at most one bracket per stage
  *           schedule  { draft, published } — fixtures for this bracket only
+ *           complete  admin marked the bracket finished. Generate round-robin
+ *                     skips it until the bracket is reopened
  *       tablePoints   { win, draw, walkover, noResult }
  *                     missing on older sports → win 1, draw 0, walkover 1, no result 0
  *                     new sports default to win 2, draw 1, walkover 2, no result 0
@@ -269,6 +271,16 @@
     const id = stageId || 'league';
     return ((division && division.brackets) || []).filter(function (b) {
       return bracketStageId(b) === id;
+    });
+  }
+
+  function bracketIsComplete(bracket) {
+    return !!(bracket && bracket.complete);
+  }
+
+  function openBracketsInStage(division, stageId) {
+    return bracketsInStage(division, stageId).filter(function (b) {
+      return !bracketIsComplete(b);
     });
   }
 
@@ -3078,6 +3090,7 @@
   window.__tournament.addScheduleRow = addScheduleRow;
   window.__tournament.removeScheduleRow = removeScheduleRow;
   window.__tournament.generateLeagueSchedule = generateLeagueSchedule;
+  window.__tournament.promptRoundRobin = promptRoundRobin;
   window.__tournament.saveScheduleDraft = saveScheduleDraft;
   window.__tournament.publishSchedule = publishSchedule;
   window.__tournament.clearSchedule = clearSchedule;
@@ -3869,12 +3882,14 @@
         `;
       }).join('');
       return `
-        <div class="t-bracket-card ${selected ? 'is-selected' : ''}">
+        <div class="t-bracket-card ${selected ? 'is-selected' : ''} ${bracketIsComplete(b) ? 'is-complete' : ''}">
           <div class="t-bracket-card-head">
             <input type="text" class="t-input" data-rename-bracket="${escapeHtml(b.id)}" value="${escapeHtml(b.name || '')}" ${isAdminUi() ? '' : 'readonly'} />
+            ${bracketIsComplete(b) ? '<span class="t-badge complete">Complete</span>' : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="move-bracket" data-bracket="${escapeHtml(b.id)}" data-dir="-1" ${index === 0 ? 'disabled' : ''}>↑</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="move-bracket" data-bracket="${escapeHtml(b.id)}" data-dir="1" ${index === brackets.length - 1 ? 'disabled' : ''}>↓</button>` : ''}
             <button type="button" class="t-btn sm ${selected ? 'primary' : ''}" data-act="select-bracket" data-bracket="${escapeHtml(b.id)}">${selected ? 'Viewing schedule' : 'Schedule'}</button>
+            ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="toggle-complete" data-bracket="${escapeHtml(b.id)}">${bracketIsComplete(b) ? 'Reopen' : 'Mark complete'}</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket-after" data-bracket="${escapeHtml(b.id)}">Add below</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn danger sm" data-act="delete-bracket" data-bracket="${escapeHtml(b.id)}">Remove</button>` : ''}
           </div>
@@ -3963,9 +3978,10 @@
       <section class="t-section">
         <div class="t-section-header">
           <h2 class="t-section-title">Brackets <small>${escapeHtml(stageName)} — pull teams in, then schedule inside the bracket</small></h2>
+          ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>` : ''}
           ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket">➕ Create bracket</button>` : ''}
         </div>
-        <p class="t-mode-note">A team can sit in one bracket of ${escapeHtml(stageName)}. The same team can be pulled into a different bracket in another stage. Add a bracket below an existing one when you need a group in between.</p>
+        <p class="t-mode-note">A team can sit in one bracket of ${escapeHtml(stageName)}. The same team can be pulled into a different bracket in another stage. Generate round-robin asks which bracket to fill and skips any bracket marked complete.</p>
         <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.</div>'}</div>
       </section>
       ${scheduleBlock}
@@ -4079,6 +4095,18 @@
     });
     root.querySelectorAll('[data-act="add-bracket"]').forEach(function (btn) {
       btn.addEventListener('click', function () { addBracket(tournament.id, sport.id, division.id, stageId); });
+    });
+    root.querySelectorAll('[data-act="round-robin"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        promptRoundRobin(tournament.id, sport.id, division.id, stageId, parseUrl().bracketId || '');
+      });
+    });
+    root.querySelectorAll('[data-act="toggle-complete"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const id = btn.getAttribute('data-bracket');
+        const target = findBracket(division, id);
+        setBracketComplete(tournament.id, sport.id, division.id, id, !(target && target.complete));
+      });
     });
     root.querySelectorAll('[data-act="add-bracket-after"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -4755,7 +4783,9 @@
           ${dirty && published ? '<span class="t-badge nologin">Unpublished changes</span>' : ''}
           <button class="t-btn sm" type="button" onclick="window.__tournament.addScheduleRow(${args})">➕ Add match</button>
           ${canGenerate
-            ? '<button class="t-btn sm" type="button" onclick="window.__tournament.generateLeagueSchedule(' + args + ')">↺ Generate round-robin</button>'
+            ? (ids.categoryId
+              ? '<button class="t-btn sm" type="button" onclick="window.__tournament.promptRoundRobin(\'' + tournament.id + '\',\'' + sport.id + '\',\'' + ids.categoryId + '\',\'' + ((scope.bracket && bracketStageId(scope.bracket)) || 'league') + '\',\'' + ids.bracketId + '\')">↺ Generate round-robin</button>'
+              : '<button class="t-btn sm" type="button" onclick="window.__tournament.generateLeagueSchedule(' + args + ')">↺ Generate round-robin</button>')
             : ''}
           <button class="t-btn sm" type="button" onclick="window.__tournament.saveScheduleDraft(${args})">💾 Save draft</button>
           <button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule(${args})">📢 Publish</button>
@@ -4957,23 +4987,106 @@
     renderScheduleFor(t, sport, scope);
   }
 
+  function promptRoundRobin(tournamentId, sportId, categoryId, stageId, preferredBracketId) {
+    if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    if (!categoryId) return generateLeagueSchedule(tournamentId, sportId, '', '');
+    const division = findDivision(sport, categoryId);
+    if (!division) return toast('Open a category before generating a round-robin', 'error');
+    const stage = stageId || 'league';
+    const stageName = stageLabelOf(sport, stage);
+    const all = bracketsInStage(division, stage);
+    const open = openBracketsInStage(division, stage);
+    if (!all.length) return toast('Create a bracket in ' + stageName + ' before generating a round-robin', 'error');
+    if (!open.length) return toast('Every bracket in ' + stageName + ' is marked complete. Reopen one to generate its round-robin.', 'error');
+    const { modal, body } = getOrCreateModal('tRoundRobin', 'Generate round-robin — ' + stageName, { wide: false });
+    let preferredChosen = false;
+    const options = open.map(function (b) {
+      const count = (b.teamIds || []).length;
+      const ready = count >= 2;
+      const prefer = ready && b.id === preferredBracketId && !preferredChosen;
+      if (prefer) preferredChosen = true;
+      return { b: b, count: count, ready: ready, prefer: prefer };
+    });
+    let fallbackUsed = false;
+    const optionHtml = options.map(function (item) {
+      let selected = item.prefer;
+      if (!selected && item.ready && !preferredChosen && !fallbackUsed) {
+        selected = true;
+        fallbackUsed = true;
+      }
+      return '<option value="' + escapeHtml(item.b.id) + '"' + (item.ready ? '' : ' disabled') + (selected ? ' selected' : '') + '>'
+        + escapeHtml(item.b.name || 'Bracket') + ' · ' + item.count + ' team' + (item.count === 1 ? '' : 's')
+        + (item.ready ? '' : ' — pull in at least 2')
+        + '</option>';
+    }).join('');
+    body.innerHTML = `
+      <p class="t-mode-note" style="margin-top:0;">The round-robin is built from the teams pulled into the bracket you choose, and it is saved on that bracket's schedule. Completed brackets are not listed.</p>
+      <div class="t-form-field">
+        <label for="tRoundRobinBracket">Bracket</label>
+        <select class="t-select" id="tRoundRobinBracket">${optionHtml}</select>
+      </div>
+      <div class="t-modal-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button type="button" class="t-btn" data-cancel>Cancel</button>
+        <button type="button" class="t-btn primary" data-go>Generate</button>
+      </div>
+    `;
+    modal.classList.add('open');
+    body.querySelector('[data-cancel]').addEventListener('click', function () { closeLiveModal('tRoundRobin'); });
+    body.querySelector('[data-go]').addEventListener('click', function () {
+      const select = body.querySelector('#tRoundRobinBracket');
+      const bracketId = select ? select.value : '';
+      const chosen = findBracket(division, bracketId);
+      if (!chosen || bracketIsComplete(chosen)) return toast('Choose a bracket that is not complete', 'error');
+      if ((chosen.teamIds || []).length < 2) return toast('Pull at least 2 teams into ' + (chosen.name || 'that bracket'), 'error');
+      const made = generateLeagueSchedule(tournamentId, sportId, categoryId, bracketId);
+      if (made) closeLiveModal('tRoundRobin');
+    });
+  }
+
+  async function setBracketComplete(tournamentId, sportId, divisionId, bracketId, complete) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const division = sport ? findDivision(sport, divisionId) : null;
+    const bracket = findBracket(division, bracketId);
+    if (!bracket) return;
+    const next = !!complete;
+    if (next && !confirm('Mark "' + (bracket.name || 'this bracket') + '" complete? It stays on the page. Generate round-robin will skip it until you reopen it.')) return;
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        const target = (div.brackets || []).find(function (b) { return b.id === bracketId; });
+        if (target) target.complete = next;
+      });
+      toast(next ? 'Bracket marked complete' : 'Bracket reopened', 'success');
+      render();
+    } catch (_) { /* toasted */ }
+  }
+
   function generateLeagueSchedule(tournamentId, sportId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
     const scope = scheduleScope(categoryId, bracketId, sport);
+    if (scope.categoryId && !scope.bracket) return toast('Choose a bracket before generating a round-robin', 'error');
+    if (scope.bracket && bracketIsComplete(scope.bracket)) {
+      return toast((scope.bracket.name || 'This bracket') + ' is marked complete. Reopen it before generating a round-robin.', 'error');
+    }
     const teams = scope.categoryId ? teamsInBracket(sport, scope.categoryId, scope.bracketId) : teamsFor(t, sport);
     if (teams.length < 2) {
-      return toast(scope.categoryId
-        ? 'Pull at least 2 teams into this bracket before generating a league schedule'
+      toast(scope.categoryId
+        ? 'Pull at least 2 teams into ' + ((scope.bracket && scope.bracket.name) || 'this bracket') + ' before generating a round-robin'
         : 'Add at least 2 teams before generating a league schedule', 'error');
+      return false;
     }
     harvestScheduleEditor();
     const existing = readWorkingEntries(t, sport, scope);
     const stageId = (scope.bracket && bracketStageId(scope.bracket)) || 'league';
     const stageName = stageLabelOf(sport, stageId);
+    const where = scope.bracket ? ((scope.bracket.name || 'this bracket') + ' · ' + stageName) : stageName;
     const kept = existing.filter(function (e) { return e.stage && e.stage !== stageId; });
-    if (existing.length && !confirm('Replace ' + stageName + ' fixtures with a generated round-robin? Other stages will be kept.')) return;
+    if (existing.length && !confirm('Replace the fixtures in ' + where + ' with a round-robin of its teams?')) return false;
     const generated = [];
     for (let i = 0; i < teams.length; i++) {
       for (let j = i + 1; j < teams.length; j++) {
@@ -4986,8 +5099,26 @@
       }
     }
     persistLocalEntries(tournamentId, sportId, generated.concat(kept), true, scope.categoryId, scope.bracketId);
-    renderScheduleFor(t, sport, scope);
-    toast(stageName + ' round-robin generated — save draft or publish when ready');
+    const parsed = parseUrl();
+    const viewing = parsed.view === 'tournament'
+      && parsed.tournamentId === tournamentId
+      && parsed.sportId === sportId
+      && (parsed.categoryId || '') === (scope.categoryId || '')
+      && (parsed.bracketId || '') === (scope.bracketId || '');
+    if (viewing) renderScheduleFor(t, sport, scope);
+    else {
+      navigate({
+        view: 'tournament',
+        tournamentId: tournamentId,
+        sportId: sportId,
+        panel: parsed.panel,
+        categoryId: scope.categoryId,
+        bracketId: scope.bracketId,
+        stageId: stageId
+      });
+    }
+    toast(where + ' round-robin generated — save draft or publish when ready');
+    return true;
   }
 
   async function writeSportPatch(tournament, sportId, patch) {
@@ -6496,6 +6627,7 @@
               id: b.id,
               name: b.name || 'Bracket',
               stageId: bracketStageId(b),
+              complete: !!b.complete,
               teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : []
             };
           })
@@ -7035,7 +7167,7 @@
         teamIds: b.teamIds || [],
         useTeams: true
       });
-      return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.')}</section>`;
+      return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}${b.complete ? ' · Complete' : ''}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.')}</section>`;
     }).join('');
 
     let focus = '';

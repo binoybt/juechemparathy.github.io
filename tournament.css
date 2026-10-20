@@ -999,6 +999,8 @@ body.t-member-preview .t-admin-switch {
   gap: 10px;
 }
 .t-bracket-card.is-selected { border-color: var(--t-primary); box-shadow: 0 0 0 2px rgba(59, 130, 246, .18); }
+.t-bracket-card.is-complete { background: #f8fafc; }
+.t-badge.complete { background: #dcfce7; color: #166534; }
 .t-bracket-card-head { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .t-bracket-card-head .t-input { flex: 1; min-width: 120px; }
 .t-check-list { display: grid; gap: 6px; }
