@@ -780,9 +780,9 @@ body.t-member-preview .t-admin-switch {
 .t-roster-name { font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 1.1rem; letter-spacing: .02em; }
 .t-roster-sub { font-size: .8rem; color: var(--t-muted); margin-top: 2px; }
 .t-roster-card-body { display: grid; gap: 6px; }
-.t-roster-line { display: flex; justify-content: space-between; align-items: center; font-size: .88rem; }
+.t-roster-line { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; font-size: .88rem; }
 .t-roster-line .lbl { color: var(--t-muted); text-transform: uppercase; letter-spacing: .04em; font-size: .74rem; font-weight: 600; }
-.t-roster-line .val { color: var(--t-fg); }
+.t-roster-line .val { color: var(--t-fg); text-align: right; overflow-wrap: anywhere; }
 .t-captain-name { font-weight: 700; }
 .t-roster-line .val.is-over { color: var(--t-danger); }
 .t-roster-cap {
