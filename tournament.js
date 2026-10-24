@@ -3854,7 +3854,7 @@
             </div>
           </div>
           <div class="t-roster-card-body">
-            <div class="t-roster-line"><span class="lbl">Players:</span><span class="val">${players ? escapeHtml(players) : 'No players yet'}</span></div>
+            <div class="t-roster-line"><span class="lbl">Players:</span><span class="val t-roster-player-names">${players ? escapeHtml(players) : 'No players yet'}</span></div>
             <div class="t-roster-line"><span class="lbl">Bracket:</span><span class="val">${owned ? escapeHtml(owned.name || 'Bracket') : 'Unassigned'}</span></div>
           </div>
           <div class="t-roster-card-foot">
