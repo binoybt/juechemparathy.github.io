@@ -3849,14 +3849,13 @@
               <span class="t-roster-dot" style="background:${meta.color};"></span>
               <div>
                 <div class="t-roster-name">${escapeHtml(team.name || team.id)}</div>
-                <div class="t-roster-sub">${players ? escapeHtml(players) : 'No players yet'}</div>
                 ${teamTagsHtml(team.tags)}
               </div>
             </div>
           </div>
           <div class="t-roster-card-body">
-            <div class="t-roster-line"><span class="lbl">Players</span><span class="val">${(team.players || []).filter(Boolean).length} / ${clampMaxPlayers(division.maxPlayers)}</span></div>
-            <div class="t-roster-line"><span class="lbl">Bracket</span><span class="val">${owned ? escapeHtml(owned.name || 'Bracket') : 'Unassigned'}</span></div>
+            <div class="t-roster-line"><span class="lbl">Players:</span><span class="val">${players ? escapeHtml(players) : 'No players yet'}</span></div>
+            <div class="t-roster-line"><span class="lbl">Bracket:</span><span class="val">${owned ? escapeHtml(owned.name || 'Bracket') : 'Unassigned'}</span></div>
           </div>
           <div class="t-roster-card-foot">
             <button type="button" class="t-btn sm" data-act="open-team" data-team="${escapeHtml(team.id)}">Standing</button>
