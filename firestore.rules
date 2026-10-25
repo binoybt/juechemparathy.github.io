@@ -223,16 +223,20 @@ service cloud.firestore {
     }
 
     match /tournament_public/{id} {
-      allow get: if resource.data.publicBoard == true
-        && resource.data.published == true
-        && resource.data.started == true;
+      allow get: if resource.data.publicBoard == false
+        || (
+          resource.data.publicBoard == true
+          && resource.data.published == true
+          && resource.data.started == true
+        );
       allow list: if false;
       allow create, update, delete: if isAdmin();
 
       match /matches/{matchId} {
         allow get, list: if publicBoardIsOpen(id);
         allow create, update: if isAdmin() || (
-          assignedMatchScorer(id, matchId)
+          publicBoardIsOpen(id)
+          && assignedMatchScorer(id, matchId)
           && request.resource.data.keys().hasOnly(publicMatchKeys())
         );
         allow delete: if isAdmin();

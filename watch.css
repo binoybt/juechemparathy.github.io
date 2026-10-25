@@ -304,6 +304,7 @@ body.watch {
   margin: 8px 0;
 }
 .w-closed .w-quiet { display: inline-block; margin-top: 16px; }
+.w-closed.is-expired h1 { color: #fecaca; }
 
 @media (max-width: 860px) {
   .w-top { flex-wrap: wrap; }

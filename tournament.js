@@ -3507,6 +3507,7 @@
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', true)">▶ Start tournament</button>`}
         <button class="t-btn ${(t.scorers || []).length ? '' : 'primary'}" type="button" onclick="window.__tournament.openTournamentScorers('${escapeHtml(t.id)}')">🧑‍⚖️ Tournament scorers (${(t.scorers || []).length})</button>
         <button class="t-btn" type="button" onclick="window.__tournament.shareLiveBoard('${escapeHtml(t.id)}')">${t.publicBoard ? '📺 Spectator link on' : '📺 Spectator link'}</button>
+        ${t.publicBoard ? `<button class="t-btn danger" type="button" onclick="window.__tournament.stopLiveBoard('${escapeHtml(t.id)}')">Disable spectator link</button>` : ''}
         ${isTournamentPublished(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', false)">🙈 Unpublish</button>`
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', true)">📢 Publish</button>`}
@@ -7378,6 +7379,7 @@
     if (!open) {
       return {
         publicBoard: false,
+        expired: true,
         published: isTournamentPublished(tournament),
         started: tournamentHasStarted(tournament),
         name: tournament.name || 'Tournament',
@@ -7483,6 +7485,28 @@
     prompt('Copy this spectator link', url);
   }
 
+  function bindSpectatorLinkModal(t) {
+    const { modal, body } = getOrCreateModal('tShareBoard', 'Spectator link', { wide: false });
+    const url = spectatorUrl(t.id);
+    body.innerHTML = `
+      <p class="t-mode-note" style="margin-top:0;">Share this link anywhere. Spectators see the matches on court, the matches you mark as upcoming, and standings for each stage and bracket. They do not sign in, and they never see rosters, captains, or admin tools.</p>
+      <div class="t-form-field">
+        <label>Spectator link</label>
+        <input type="text" class="t-input" id="tSpectatorUrl" readonly value="${escapeHtml(url)}" />
+      </div>
+      <div class="t-modal-foot" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:14px;">
+        <button type="button" class="t-btn danger" data-stop-share>Disable spectator link</button>
+        <a class="t-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open</a>
+        <button type="button" class="t-btn primary" data-copy-share>Copy link</button>
+      </div>
+    `;
+    modal.classList.add('open');
+    const input = body.querySelector('#tSpectatorUrl');
+    if (input) input.addEventListener('focus', function () { input.select(); });
+    body.querySelector('[data-copy-share]').addEventListener('click', function () { copySpectatorLink(t.id); });
+    body.querySelector('[data-stop-share]').addEventListener('click', function () { stopLiveBoard(t.id); });
+  }
+
   async function shareLiveBoard(tournamentId) {
     if (!isAdminUi()) return toast('Admin only', 'error');
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
@@ -7504,6 +7528,10 @@
       body.querySelector('[data-close-share]').addEventListener('click', function () { closeLiveModal('tShareBoard'); });
       return;
     }
+    if (t.publicBoard) {
+      bindSpectatorLinkModal(t);
+      return;
+    }
     if (!state.ready.matches || state.currentId !== t.id) {
       body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Matches are still loading. Open the spectator link again in a moment.</p>';
       modal.classList.add('open');
@@ -7520,23 +7548,7 @@
       const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
       if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { publicBoard: true });
       await syncPublicBoardNow(t.id, { force: true });
-      const url = spectatorUrl(t.id);
-      body.innerHTML = `
-        <p class="t-mode-note" style="margin-top:0;">Share this link anywhere. Spectators see the matches on court, the matches you mark as upcoming, and standings for each stage and bracket. They do not sign in, and they never see rosters, captains, or admin tools.</p>
-        <div class="t-form-field">
-          <label>Spectator link</label>
-          <input type="text" class="t-input" id="tSpectatorUrl" readonly value="${escapeHtml(url)}" />
-        </div>
-        <div class="t-modal-foot" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:14px;">
-          <button type="button" class="t-btn danger" data-stop-share>Stop sharing</button>
-          <a class="t-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open</a>
-          <button type="button" class="t-btn primary" data-copy-share>Copy link</button>
-        </div>
-      `;
-      const input = body.querySelector('#tSpectatorUrl');
-      if (input) input.addEventListener('focus', function () { input.select(); });
-      body.querySelector('[data-copy-share]').addEventListener('click', function () { copySpectatorLink(t.id); });
-      body.querySelector('[data-stop-share]').addEventListener('click', function () { stopLiveBoard(t.id); });
+      bindSpectatorLinkModal(state.tournaments[idx] || t);
       render();
     } catch (err) {
       console.error(err);
@@ -7548,7 +7560,8 @@
     if (!isAdminUi()) return toast('Admin only', 'error');
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
-    if (!confirm('Stop sharing "' + t.name + '"? The spectator link will stop opening the live board.')) return;
+    if (!t.publicBoard) return toast('The spectator link is already disabled');
+    if (!confirm('Disable the spectator link for "' + t.name + '"? Anyone with the link will see that it has expired, and live scores will no longer be readable.')) return;
     try {
       await db.collection('tournaments').doc(t.id).update({
         publicBoard: false,
@@ -7558,11 +7571,11 @@
       if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { publicBoard: false });
       await syncPublicBoardNow(t.id, { forceClose: true, force: true });
       closeLiveModal('tShareBoard');
-      toast('Spectator link turned off');
+      toast('Spectator link disabled. The public link now shows as expired.');
       render();
     } catch (err) {
       console.error(err);
-      toast('Could not stop sharing: ' + (err.message || err.code || 'unknown'), 'error');
+      toast('Could not disable the spectator link: ' + (err.message || err.code || 'unknown'), 'error');
     }
   }
 
@@ -7573,6 +7586,7 @@
     ready: false,
     missing: false,
     closed: false,
+    expired: false,
     error: null,
     preview: false
   };
@@ -7612,18 +7626,24 @@
     }));
   }
 
+  function publicWatchIsOpen(data) {
+    return !!(data && data.publicBoard === true && data.published === true && data.started === true);
+  }
+
   function publishWatchBoard() {
     const data = watch.parentBoard;
     if (!data) {
       watch.board = null;
+      watch.expired = false;
       watch.renderKey = '';
       renderPublicWatch();
       return;
     }
-    const open = data.publicBoard === true && data.published === true && data.started === true;
+    const open = publicWatchIsOpen(data);
     const next = open ? mergeWatchMatches(data, watch.liveMatches) : null;
-    const nextKey = (open ? 'open:' : 'closed:') + watchBoardKey(next);
+    const nextKey = (open ? 'open:' : (data.expired || data.publicBoard === false ? 'expired:' : 'closed:')) + watchBoardKey(next);
     watch.closed = !open;
+    watch.expired = !open && (data.expired === true || data.publicBoard === false);
     if (watch.board && watch.renderKey === nextKey) return;
     watch.renderKey = nextKey;
     watch.board = next;
@@ -7921,17 +7941,22 @@
       root.innerHTML = '<div class="w-status">Loading the live board…</div>';
       return;
     }
-    if (watch.missing || watch.closed || watch.error || !watch.board) {
-      document.title = 'Live scores';
+    if (watch.missing || watch.closed || watch.expired || watch.error || !watch.board) {
+      document.title = watch.expired ? 'Link expired' : 'Live scores';
       const params = watchParams();
-      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>Live</span></div>';
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + (watch.expired ? 'Expired' : 'Live') + '</span></div>';
+      const heading = watch.expired
+        ? 'This spectator link has expired'
+        : 'Scores stay here';
       const msg = watch.missing
         ? 'This link is missing a tournament. Ask the organizer for the spectator link.'
-        : 'This live board is not open yet. It appears after an admin publishes the tournament, starts it, and turns on the spectator link.';
+        : (watch.expired
+          ? 'The organizer disabled this live board. Scores are no longer available on this link.'
+          : 'This live board is not open yet. It appears after an admin publishes the tournament, starts it, and turns on the spectator link.');
       root.innerHTML = `
-        <section class="w-closed">
-          <div class="w-closed-mark">🏆</div>
-          <h1>Scores stay here</h1>
+        <section class="w-closed ${watch.expired ? 'is-expired' : ''}">
+          <div class="w-closed-mark">${watch.expired ? '⛔' : '🏆'}</div>
+          <h1>${heading}</h1>
           <p>${msg}</p>
           ${params.tournamentId ? '<a class="w-quiet" href="tournament.html?t=' + encodeURIComponent(params.tournamentId) + '">Organizer sign-in</a>' : ''}
         </section>
@@ -8173,9 +8198,30 @@
     }
     watch.ready = false;
     renderPublicWatch();
+    let unsubWatchMatches = null;
+    function stopWatchMatches() {
+      if (unsubWatchMatches) {
+        unsubWatchMatches();
+        unsubWatchMatches = null;
+      }
+      watch.liveMatches = [];
+    }
+    function startWatchMatches() {
+      if (unsubWatchMatches) return;
+      unsubWatchMatches = db.collection('tournament_public').doc(id).collection('matches').onSnapshot(function (snap) {
+        watch.liveMatches = liveMatchesFromSnapshot(snap);
+        if (watch.ready) publishWatchBoard();
+      }, function (err) {
+        console.warn('[watch] live matches unavailable:', err);
+        watch.liveMatches = [];
+        if (watch.ready) publishWatchBoard();
+      });
+    }
     db.collection('tournament_public').doc(id).onSnapshot(function (snap) {
       watch.ready = true;
       applyWatchParent(snap);
+      if (publicWatchIsOpen(watch.parentBoard)) startWatchMatches();
+      else stopWatchMatches();
       publishWatchBoard();
     }, function (err) {
       console.error('[watch]', err);
@@ -8184,15 +8230,9 @@
       watch.board = null;
       watch.error = err;
       watch.closed = !!(err && err.code === 'permission-denied');
+      watch.expired = !!(err && err.code === 'permission-denied');
+      stopWatchMatches();
       renderPublicWatch();
-    });
-    db.collection('tournament_public').doc(id).collection('matches').onSnapshot(function (snap) {
-      watch.liveMatches = liveMatchesFromSnapshot(snap);
-      if (watch.ready) publishWatchBoard();
-    }, function (err) {
-      console.warn('[watch] live matches unavailable:', err);
-      watch.liveMatches = [];
-      if (watch.ready) publishWatchBoard();
     });
   }
 
