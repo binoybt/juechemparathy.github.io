@@ -6336,6 +6336,29 @@
       </div>`;
   }
 
+  function createScoreAutosaver(statusNode) {
+    let chain = Promise.resolve();
+    let revision = 0;
+    return function (write) {
+      const current = ++revision;
+      statusNode.textContent = 'Saving…';
+      statusNode.classList.remove('is-error');
+      chain = chain
+        .catch(function () {})
+        .then(write)
+        .then(function () {
+          if (current === revision) statusNode.textContent = 'Saved automatically';
+        })
+        .catch(function (err) {
+          console.error(err);
+          if (current === revision) {
+            statusNode.textContent = 'Save failed — change the score to retry';
+            statusNode.classList.add('is-error');
+          }
+        });
+    };
+  }
+
   function openScorer(match, tournament) {
     const sport = getSportConfig(tournament, match.sport);
     const modal = getScorerModal();
@@ -6362,8 +6385,39 @@
 
     const wrap = el('div');
     const banner = el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
-      `Best of ${cfg.bestOf || 1} sets, target ${cfg.target || 21} (cap ${cfg.cap || 25}). Use +/- or type values directly. Save is per game.`);
+      `Best of ${cfg.bestOf || 1} sets, target ${cfg.target || 21} (cap ${cfg.cap || 25}). Use +/- or type values directly.`);
     wrap.appendChild(banner);
+    const saveStatus = el('div', { class: 't-score-autosave' }, 'Scores save automatically');
+    wrap.appendChild(saveStatus);
+    const autoSave = createScoreAutosaver(saveStatus);
+
+    function queueGamesSave() {
+      games.forEach(function (game) {
+        game.winner = racketGameWinner(game, cfg);
+        game.status = game.winner ? 'completed' : (game.sets.some(function (set) { return set.a || set.b; }) ? 'in_progress' : 'pending');
+      });
+      const fresh = games.map(function (game) {
+        return {
+          category: game.category,
+          playersA: game.playersA || '',
+          playersB: game.playersB || '',
+          sets: game.sets.map(function (set) { return { a: set.a || 0, b: set.b || 0 }; }),
+          status: game.status,
+          winner: game.winner || null
+        };
+      });
+      const overall = racketMatchWinner(Object.assign({}, match, { games: fresh }), tournament);
+      const patch = {
+        games: fresh,
+        winner: overall || null,
+        status: overall ? 'completed' : 'in_progress',
+        resultType: overall ? 'played' : null,
+        updatedAt: FieldValue.serverTimestamp()
+      };
+      autoSave(function () {
+        return db.collection('tournament_matches').doc(match.id).update(patch);
+      });
+    }
 
     games.forEach(function (game) {
       const gameWrap = el('div', { class: 't-card', style: { marginBottom: '12px' } });
@@ -6387,8 +6441,6 @@
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
             <button class="t-btn sm" data-act="add-set">+ Add set</button>
             <button class="t-btn sm danger" data-act="remove-set">− Remove last set</button>
-            <div style="flex:1;"></div>
-            <button class="t-btn primary sm" data-act="save-game">💾 Save game</button>
           </div>
         </div>
       `;
@@ -6426,6 +6478,7 @@
               const key = side === 'A' ? 'a' : 'b';
               game.sets[idx][key] = Math.max(0, (game.sets[idx][key] || 0) + delta);
               repaint();
+              queueGamesSave();
             });
           });
           row.querySelectorAll('input[data-side]').forEach(function (inp) {
@@ -6434,6 +6487,7 @@
               const idx = +inp.getAttribute('data-set');
               const key = side === 'A' ? 'a' : 'b';
               game.sets[idx][key] = Math.max(0, parseInt(inp.value, 10) || 0);
+              queueGamesSave();
             });
           });
           container.appendChild(row);
@@ -6441,29 +6495,24 @@
       }
       repaint();
 
+      gameWrap.querySelectorAll('[data-players]').forEach(function (input) {
+        input.addEventListener('change', function () {
+          if (input.getAttribute('data-players') === 'A') game.playersA = input.value.trim();
+          else game.playersB = input.value.trim();
+          queueGamesSave();
+        });
+      });
       gameWrap.querySelector('[data-act="add-set"]').addEventListener('click', function () {
         if (game.sets.length >= (cfg.bestOf || 1)) return toast('Best of ' + (cfg.bestOf || 1) + ' — cannot add more sets', 'error');
         game.sets.push({ a: 0, b: 0 });
         repaint();
+        queueGamesSave();
       });
       gameWrap.querySelector('[data-act="remove-set"]').addEventListener('click', function () {
         if (game.sets.length <= 1) return;
         game.sets.pop();
         repaint();
-      });
-      gameWrap.querySelector('[data-act="save-game"]').addEventListener('click', async function () {
-        game.playersA = gameWrap.querySelector('[data-players="A"]').value.trim();
-        game.playersB = gameWrap.querySelector('[data-players="B"]').value.trim();
-        game.winner = racketGameWinner(game, cfg);
-        game.status = game.winner ? 'completed' : (game.sets.some(function (s) { return s.a || s.b; }) ? 'in_progress' : 'pending');
-        try {
-          const fresh = games.map(function (g) { return { category: g.category, playersA: g.playersA || '', playersB: g.playersB || '', sets: g.sets, status: g.status, winner: g.winner || null }; });
-          const overall = racketMatchWinner(Object.assign({}, match, { games: fresh }), tournament);
-          const patch = { games: fresh, updatedAt: FieldValue.serverTimestamp() };
-          if (overall) { patch.winner = overall; patch.status = 'completed'; patch.resultType = 'played'; }
-          await db.collection('tournament_matches').doc(match.id).update(patch);
-          toast('Saved ' + game.category + (overall ? ' — match won by ' + (overall === 'A' ? aName : bName) : ''));
-        } catch (err) { console.error(err); toast('Save failed', 'error'); }
+        queueGamesSave();
       });
 
       wrap.appendChild(gameWrap);
@@ -6484,15 +6533,31 @@
     const wrap = el('div');
     wrap.appendChild(el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
       `Best of ${bestOf} sets. Normal set to ${cfg.target || 21} (cap ${cfg.cap || 25}), deciding set to ${cfg.decidingTarget || 15} (cap ${cfg.decidingCap || 20}).`));
+    const saveStatus = el('div', { class: 't-score-autosave' }, 'Scores save automatically');
+    wrap.appendChild(saveStatus);
+    const autoSave = createScoreAutosaver(saveStatus);
     const setsBox = el('div'); wrap.appendChild(setsBox);
     const controls = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
     controls.innerHTML = `
       <button class="t-btn sm" data-act="add-set">+ Add set</button>
       <button class="t-btn sm danger" data-act="remove-set">− Remove last set</button>
-      <div style="flex:1;"></div>
-      <button class="t-btn primary sm" data-act="save">💾 Save</button>
     `;
     wrap.appendChild(controls);
+
+    function queueScoreSave() {
+      const snapshot = sets.map(function (set) { return { a: set.a || 0, b: set.b || 0 }; });
+      const winner = volleyballMatchWinner({ sets: snapshot }, cfg);
+      const patch = {
+        sets: snapshot,
+        winner: winner || null,
+        status: winner ? 'completed' : 'in_progress',
+        resultType: winner ? 'played' : null,
+        updatedAt: FieldValue.serverTimestamp()
+      };
+      autoSave(function () {
+        return db.collection('tournament_matches').doc(match.id).update(patch);
+      });
+    }
 
     function paint() {
       setsBox.innerHTML = '';
@@ -6527,6 +6592,7 @@
             const key = side === 'A' ? 'a' : 'b';
             sets[idx][key] = Math.max(0, (sets[idx][key] || 0) + delta);
             paint();
+            queueScoreSave();
           });
         });
         row.querySelectorAll('input[data-side]').forEach(function (inp) {
@@ -6535,6 +6601,7 @@
             const idx = +inp.getAttribute('data-set');
             const key = side === 'A' ? 'a' : 'b';
             sets[idx][key] = Math.max(0, parseInt(inp.value, 10) || 0);
+            queueScoreSave();
           });
         });
         setsBox.appendChild(row);
@@ -6544,20 +6611,11 @@
 
     controls.querySelector('[data-act="add-set"]').addEventListener('click', function () {
       if (sets.length >= bestOf) return toast('Best of ' + bestOf + ' — max ' + bestOf + ' sets', 'error');
-      sets.push({ a: 0, b: 0 }); paint();
+      sets.push({ a: 0, b: 0 }); paint(); queueScoreSave();
     });
     controls.querySelector('[data-act="remove-set"]').addEventListener('click', function () {
       if (sets.length <= 1) return;
-      sets.pop(); paint();
-    });
-    controls.querySelector('[data-act="save"]').addEventListener('click', async function () {
-      try {
-        const winner = volleyballMatchWinner({ sets: sets }, cfg);
-        const patch = { sets: sets, updatedAt: FieldValue.serverTimestamp() };
-        if (winner) { patch.winner = winner; patch.status = 'completed'; patch.resultType = 'played'; }
-        await db.collection('tournament_matches').doc(match.id).update(patch);
-        toast(winner ? 'Saved — match won by ' + (winner === 'A' ? aName : bName) : 'Saved');
-      } catch (err) { console.error(err); toast('Save failed', 'error'); }
+      sets.pop(); paint(); queueScoreSave();
     });
     return wrap;
   }
@@ -6575,6 +6633,9 @@
     const wrap = el('div');
     wrap.appendChild(el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
       totalQuarters + ' quarters × ' + (cfg.quarterMinutes || 7) + ' min. Use +1 / +2 / +3 buttons or type values directly.'));
+    const saveStatus = el('div', { class: 't-score-autosave' }, 'Scores save automatically');
+    wrap.appendChild(saveStatus);
+    const autoSave = createScoreAutosaver(saveStatus);
     const totalsBox = el('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', margin: '12px 0 18px', fontFamily: 'Barlow Condensed, sans-serif' } });
     wrap.appendChild(totalsBox);
     const quartersBox = el('div'); wrap.appendChild(quartersBox);
@@ -6582,10 +6643,23 @@
     controls.innerHTML = `
       <button class="t-btn sm" data-act="add-q">+ Add quarter</button>
       <button class="t-btn sm danger" data-act="remove-q">− Remove last quarter</button>
-      <div style="flex:1;"></div>
-      <button class="t-btn primary sm" data-act="save">💾 Save</button>
     `;
     wrap.appendChild(controls);
+
+    function queueScoreSave() {
+      const snapshot = quarters.map(function (quarter) { return { a: quarter.a || 0, b: quarter.b || 0 }; });
+      const winner = basketballWinner({ quarters: snapshot }, cfg);
+      const patch = {
+        quarters: snapshot,
+        winner: winner || null,
+        status: winner ? 'completed' : 'in_progress',
+        resultType: winner ? 'played' : null,
+        updatedAt: FieldValue.serverTimestamp()
+      };
+      autoSave(function () {
+        return db.collection('tournament_matches').doc(match.id).update(patch);
+      });
+    }
 
     function paint() {
       const totals = quarters.reduce(function (acc, q) { return { a: acc.a + (q.a || 0), b: acc.b + (q.b || 0) }; }, { a: 0, b: 0 });
@@ -6639,6 +6713,7 @@
             const key = side === 'A' ? 'a' : 'b';
             quarters[idx][key] = Math.max(0, (quarters[idx][key] || 0) + delta);
             paint();
+            queueScoreSave();
           });
         });
         row.querySelectorAll('input[data-side]').forEach(function (inp) {
@@ -6647,6 +6722,7 @@
             const idx = +inp.getAttribute('data-q');
             const key = side === 'A' ? 'a' : 'b';
             quarters[idx][key] = Math.max(0, parseInt(inp.value, 10) || 0);
+            queueScoreSave();
           });
         });
         quartersBox.appendChild(row);
@@ -6656,20 +6732,11 @@
 
     controls.querySelector('[data-act="add-q"]').addEventListener('click', function () {
       if (quarters.length >= totalQuarters) return toast('Only ' + totalQuarters + ' quarters allowed', 'error');
-      quarters.push({ a: 0, b: 0 }); paint();
+      quarters.push({ a: 0, b: 0 }); paint(); queueScoreSave();
     });
     controls.querySelector('[data-act="remove-q"]').addEventListener('click', function () {
       if (quarters.length <= 1) return;
-      quarters.pop(); paint();
-    });
-    controls.querySelector('[data-act="save"]').addEventListener('click', async function () {
-      try {
-        const winner = basketballWinner({ quarters: quarters }, cfg);
-        const patch = { quarters: quarters, updatedAt: FieldValue.serverTimestamp() };
-        if (winner) { patch.winner = winner; patch.status = 'completed'; patch.resultType = 'played'; }
-        await db.collection('tournament_matches').doc(match.id).update(patch);
-        toast(winner ? 'Saved — match won by ' + (winner === 'A' ? aName : bName) : 'Saved');
-      } catch (err) { console.error(err); toast('Save failed', 'error'); }
+      quarters.pop(); paint(); queueScoreSave();
     });
     return wrap;
   }

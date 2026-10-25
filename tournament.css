@@ -540,6 +540,13 @@ body.t-member-preview .t-admin-switch {
 .t-scorer-participants span { color: var(--t-muted); font-size: .72rem; font-weight: 700; text-transform: uppercase; }
 .t-scorer-participants b { color: var(--t-fg); }
 .t-scorer-participants strong { color: var(--t-primary-dark); font-size: .9rem; }
+.t-score-autosave {
+  margin: -2px 0 12px;
+  color: var(--t-success);
+  font-size: .8rem;
+  font-weight: 700;
+}
+.t-score-autosave.is-error { color: var(--t-danger); }
 
 /* ── Modals ── */
 .t-modal {
