@@ -289,6 +289,14 @@
     });
   }
 
+  function bracketTeamIds(bracket) {
+    return ((bracket && bracket.teamIds) || []).filter(Boolean);
+  }
+
+  function bracketHasTeams(bracket) {
+    return bracketTeamIds(bracket).length > 0;
+  }
+
   function bracketIsComplete(bracket) {
     return !!(bracket && bracket.complete);
   }
@@ -1678,7 +1686,9 @@
     // Collect participant IDs
     const seen = {};
     if (useTeams) {
-      if (scope.teamIds && scope.teamIds.length) {
+      if (scope.bracketId) {
+        (scope.teamIds || []).forEach(function (id) { if (id) seen[id] = true; });
+      } else if (scope.teamIds && scope.teamIds.length) {
         scope.teamIds.forEach(function (id) { if (id) seen[id] = true; });
       } else if (scope.categoryId && sport) {
         const division = findDivision(sport, scope.categoryId);
@@ -4317,11 +4327,11 @@
 
     let bracketTables = '';
     if (showBoard) {
-      bracketTables = brackets.map(function (b) {
+      bracketTables = brackets.filter(bracketHasTeams).map(function (b) {
         const rows = computeStandings(tournament, state.matches, sport.id, {
           categoryId: division.id,
           bracketId: b.id,
-          teamIds: b.teamIds || [],
+          teamIds: bracketTeamIds(b),
           stageId: stageId,
           useTeams: true
         });
@@ -8012,14 +8022,15 @@
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
     const brackets = division ? bracketsInStage(division, stageId) : [];
+    const populatedBrackets = brackets.filter(bracketHasTeams);
     const showOverallTable = showsOverallPointsTable(tournament) || !brackets.length;
     const overall = showOverallTable ? computeStandings(tournament, matches, sport.id, standScope) : [];
-    const bracketBlocks = brackets.map(function (b) {
+    const bracketBlocks = populatedBrackets.map(function (b) {
       const rows = computeStandings(tournament, matches, sport.id, {
         stageId: stageId,
         categoryId: division.id,
         bracketId: b.id,
-        teamIds: b.teamIds || [],
+        teamIds: bracketTeamIds(b),
         useTeams: true
       });
       return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}${b.complete ? ' · Complete' : ''}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.', { showPointBreakdown: true })}</section>`;
