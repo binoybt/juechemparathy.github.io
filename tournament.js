@@ -289,6 +289,14 @@
     });
   }
 
+  function bracketTeamIds(bracket) {
+    return ((bracket && bracket.teamIds) || []).filter(Boolean);
+  }
+
+  function bracketHasTeams(bracket) {
+    return bracketTeamIds(bracket).length > 0;
+  }
+
   function bracketIsComplete(bracket) {
     return !!(bracket && bracket.complete);
   }
@@ -645,6 +653,14 @@
   function matchUsesTeams(tournament, sport) {
     if (sport && usesRegistrationCategories(sport)) return true;
     return !!(tournament && tournament.format === 'teams');
+  }
+
+  function isIndividualTournament(tournament) {
+    return !!(tournament && tournament.format === 'individual');
+  }
+
+  function showsOverallPointsTable(tournament) {
+    return !isIndividualTournament(tournament);
   }
 
   // Legacy fixtures have no category. Bracket fixtures must match both ids.
@@ -1670,7 +1686,9 @@
     // Collect participant IDs
     const seen = {};
     if (useTeams) {
-      if (scope.teamIds && scope.teamIds.length) {
+      if (scope.bracketId) {
+        (scope.teamIds || []).forEach(function (id) { if (id) seen[id] = true; });
+      } else if (scope.teamIds && scope.teamIds.length) {
         scope.teamIds.forEach(function (id) { if (id) seen[id] = true; });
       } else if (scope.categoryId && sport) {
         const division = findDivision(sport, scope.categoryId);
@@ -4152,7 +4170,7 @@
             <div class="t-stage-standing-title">${escapeHtml(st.name)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}</div>
             <div class="t-focus-grid">
               <div><div class="lbl">Bracket standing</div><div class="val">${escapeHtml(bracket ? standingLine(rankOf(bracketRows, team.id)) : 'Not placed in a bracket')}</div></div>
-              <div><div class="lbl">Overall standing</div><div class="val">${escapeHtml(standingLine(rankOf(overall, team.id)))}</div></div>
+              ${showsOverallPointsTable(tournament) ? '<div><div class="lbl">Overall standing</div><div class="val">' + escapeHtml(standingLine(rankOf(overall, team.id))) + '</div></div>' : ''}
             </div>
           </div>
         `;
@@ -4309,11 +4327,11 @@
 
     let bracketTables = '';
     if (showBoard) {
-      bracketTables = brackets.map(function (b) {
+      bracketTables = brackets.filter(bracketHasTeams).map(function (b) {
         const rows = computeStandings(tournament, state.matches, sport.id, {
           categoryId: division.id,
           bracketId: b.id,
-          teamIds: b.teamIds || [],
+          teamIds: bracketTeamIds(b),
           stageId: stageId,
           useTeams: true
         });
@@ -4326,7 +4344,8 @@
         `;
       }).join('');
     }
-    const overallRows = showBoard ? computeStandings(tournament, state.matches, sport.id, {
+    const showOverall = showBoard && showsOverallPointsTable(tournament);
+    const overallRows = showOverall ? computeStandings(tournament, state.matches, sport.id, {
       categoryId: division.id,
       stageId: stageId,
       useTeams: true
@@ -4380,10 +4399,12 @@
           <div class="t-match-list" id="tUpcomingList"></div>
         </section>
         ${bracketTables}
+        ${showOverall ? `
         <section class="t-section">
           <div class="t-section-header"><h2 class="t-section-title">Overall points table <small>${escapeHtml(stageName)}</small></h2></div>
           <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, overallRows, division, '', emptyStage)}</div></div>
         </section>
+        ` : ''}
         ${isAdminUi() ? `
         <section class="t-section" id="tCompletedSection" style="display:none;">
           <div class="t-section-header"><h2 class="t-section-title">Completed</h2></div>
@@ -7439,10 +7460,12 @@
     const key = JSON.stringify(comparable);
     if (publicSyncKeys[t.id] === key && !(opts && opts.force)) return;
     await db.collection('tournament_public').doc(t.id).set(payload);
-    try {
-      await syncPublicMatchDocs(t, matches, open);
-    } catch (err) {
-      console.warn('[tournament] public match docs sync failed:', err);
+    if (opts && (opts.force || opts.forceClose)) {
+      try {
+        await syncPublicMatchDocs(t, matches, open);
+      } catch (err) {
+        console.warn('[tournament] public match docs sync failed:', err);
+      }
     }
     publicSyncKeys[t.id] = key;
   }
@@ -7551,8 +7574,7 @@
     missing: false,
     closed: false,
     error: null,
-    preview: false,
-    refreshTimer: null
+    preview: false
   };
 
   function mergeWatchMatches(parent, liveMatches) {
@@ -7624,29 +7646,6 @@
       return;
     }
     watch.parentBoard = Object.assign({ id: snap.id }, snap.data() || {});
-  }
-
-  async function refreshWatchBoard(id) {
-    try {
-      const snap = await db.collection('tournament_public').doc(id).get();
-      applyWatchParent(snap);
-      try {
-        const matchesSnap = await db.collection('tournament_public').doc(id).collection('matches').get();
-        watch.liveMatches = liveMatchesFromSnapshot(matchesSnap);
-      } catch (err) {
-        console.warn('[watch] live match refresh skipped:', err);
-      }
-      watch.ready = true;
-      publishWatchBoard();
-    } catch (err) {
-      console.error('[watch]', err);
-      watch.ready = true;
-      watch.parentBoard = null;
-      watch.board = null;
-      watch.error = err;
-      watch.closed = !!(err && err.code === 'permission-denied');
-      renderPublicWatch();
-    }
   }
 
   function sampleWatchBoard() {
@@ -8022,14 +8021,16 @@
 
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
-    const overall = computeStandings(tournament, matches, sport.id, standScope);
     const brackets = division ? bracketsInStage(division, stageId) : [];
-    const bracketBlocks = brackets.map(function (b) {
+    const populatedBrackets = brackets.filter(bracketHasTeams);
+    const showOverallTable = showsOverallPointsTable(tournament) || !brackets.length;
+    const overall = showOverallTable ? computeStandings(tournament, matches, sport.id, standScope) : [];
+    const bracketBlocks = populatedBrackets.map(function (b) {
       const rows = computeStandings(tournament, matches, sport.id, {
         stageId: stageId,
         categoryId: division.id,
         bracketId: b.id,
-        teamIds: b.teamIds || [],
+        teamIds: bracketTeamIds(b),
         useTeams: true
       });
       return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}${b.complete ? ' · Complete' : ''}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.', { showPointBreakdown: true })}</section>`;
@@ -8058,7 +8059,7 @@
           </div>
           <div class="w-follow-stats">
             <div><span>Bracket</span><b>${escapeHtml(bracket ? standingLine(rankOf(bracketRows, params.teamId)) : 'Not in a bracket this stage')}</b></div>
-            <div><span>Overall</span><b>${escapeHtml(standingLine(rankOf(bracket ? overall : (rowsForTeam || overall), params.teamId)))}</b></div>
+            ${showsOverallPointsTable(tournament) ? '<div><span>Overall</span><b>' + escapeHtml(standingLine(rankOf(bracket ? overall : (rowsForTeam || overall), params.teamId))) + '</b></div>' : ''}
           </div>
           <div class="w-follow-matches">${mine.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') || '<p class="w-empty">No matches for this team yet.</p>'}</div>
         </section>
@@ -8090,10 +8091,12 @@
         </div>
         <div class="w-col">
           ${bracketBlocks}
+          ${showOverallTable ? `
           <section class="w-panel">
             <h3>${categorized ? (brackets.length ? 'Overall points table' : 'Points table') : (brackets.length ? 'Overall' : 'Standing')} <small>${escapeHtml(stageName)}</small></h3>
             ${watchTableHtml(tournament, sport.id, overall, 'No ' + stageName + ' matches completed yet.')}
           </section>
+          ` : ''}
         </div>
       </div>
       ${!categorized && allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
@@ -8191,8 +8194,6 @@
       watch.liveMatches = [];
       if (watch.ready) publishWatchBoard();
     });
-    if (watch.refreshTimer) clearInterval(watch.refreshTimer);
-    watch.refreshTimer = setInterval(function () { refreshWatchBoard(id); }, 10000);
   }
 
   function render() {
