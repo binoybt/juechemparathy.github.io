@@ -547,6 +547,14 @@ body.t-member-preview .t-admin-switch {
   font-weight: 700;
 }
 .t-score-autosave.is-error { color: var(--t-danger); }
+.t-fixed-players {
+  min-height: 40px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  color: var(--t-fg);
+  font-weight: 700;
+}
 
 /* ── Modals ── */
 .t-modal {

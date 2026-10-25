@@ -6430,11 +6430,15 @@
           <div class="t-form-grid" style="margin-bottom:12px;">
             <div class="t-form-field">
               <label>${escapeHtml(aName)} players</label>
-              <input type="text" class="t-input" data-players="A" value="${escapeHtml(game.playersA || '')}" ${finalizedPlayers ? 'readonly' : ''} />
+              ${finalizedPlayers
+                ? `<div class="t-fixed-players">${escapeHtml(game.playersA || 'Players not listed')}</div>`
+                : `<input type="text" class="t-input" data-players="A" value="${escapeHtml(game.playersA || '')}" />`}
             </div>
             <div class="t-form-field">
               <label>${escapeHtml(bName)} players</label>
-              <input type="text" class="t-input" data-players="B" value="${escapeHtml(game.playersB || '')}" ${finalizedPlayers ? 'readonly' : ''} />
+              ${finalizedPlayers
+                ? `<div class="t-fixed-players">${escapeHtml(game.playersB || 'Players not listed')}</div>`
+                : `<input type="text" class="t-input" data-players="B" value="${escapeHtml(game.playersB || '')}" />`}
             </div>
           </div>
           <div data-sets></div>
