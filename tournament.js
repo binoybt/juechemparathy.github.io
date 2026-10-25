@@ -1480,6 +1480,7 @@
   }
 
   function usesRacketSetPoints(match, tournament) {
+    if (!tournament || tournament.format !== 'individual') return false;
     const sport = getSportConfig(tournament, match && match.sport);
     if (!sport || sport.kind !== 'racket') return false;
     if (usesRegistrationCategories(sport) && match && match.categoryId) return true;
