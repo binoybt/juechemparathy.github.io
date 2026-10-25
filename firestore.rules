@@ -59,12 +59,12 @@ service cloud.firestore {
       ];
     }
 
-    function assignedMatchScorer(tournamentId, matchId) {
+    function assignedMatchScorer(publicId, matchId) {
       return isScorer()
         && exists(/databases/$(database)/documents/tournament_matches/$(matchId))
         && get(/databases/$(database)/documents/tournament_matches/$(matchId)).data.scorerUid == request.auth.uid
-        && get(/databases/$(database)/documents/tournament_matches/$(matchId)).data.tournamentId == tournamentId
-        && tournamentAllowsScorer(tournamentId);
+        && tournamentAllowsScorer(get(/databases/$(database)/documents/tournament_matches/$(matchId)).data.tournamentId)
+        && publicBoardIsOpen(publicId);
     }
 
     match /users/{uid} {
@@ -152,7 +152,8 @@ service cloud.firestore {
           'started',
           'startedAt',
           'publicBoard',
-          'publicBoardAt'
+          'publicBoardAt',
+          'spectatorToken'
         ])
       );
     }
