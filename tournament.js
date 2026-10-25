@@ -32,8 +32,9 @@
  *         id, name, open, maxPlayers
  *         teams[]     { id, name, players[], tags[] }
  *                     tags are optional short labels (seed, home side, group)
- *         brackets[]  { id, name, stageId, teamIds[], schedule, complete }
+ *         brackets[]  { id, name, stageId, teamIds[], schedule, complete, walkoverPoints }
  *           stageId   which stage this bracket belongs to (missing = league)
+ *           walkoverPoints optional override for a walkover win in this bracket
  *           a team is in at most one bracket per stage
  *           schedule  { draft, published } — fixtures for this bracket only
  *           complete  admin marked the bracket finished. Generate round-robin
@@ -183,6 +184,17 @@
       walkover: clampTablePoint(src.walkover, fallback.walkover),
       noResult: clampTablePoint(src.noResult, fallback.noResult)
     };
+  }
+
+  function tablePointsForScope(sport, scope) {
+    const points = tablePointsFor(sport);
+    const ids = scopeIds(scope);
+    if (!ids.categoryId || !ids.bracketId) return points;
+    const bracket = findBracket(findDivision(sport, ids.categoryId), ids.bracketId);
+    if (!bracket || bracket.walkoverPoints == null || bracket.walkoverPoints === '') return points;
+    return Object.assign({}, points, {
+      walkover: clampTablePoint(bracket.walkoverPoints, points.walkover)
+    });
   }
 
   function sportTemplateForConfig(templateId, opts) {
@@ -1295,9 +1307,62 @@
     return null;
   }
 
+  function racketCategoriesForMatch(tournament, sport, match) {
+    if (sport && usesRegistrationCategories(sport) && match && match.categoryId) {
+      const division = findDivision(sport, match.categoryId);
+      return [(division && division.name) || match.categoryId || 'Match'];
+    }
+    return (sport && sport.categories && sport.categories.length) ? sport.categories : DEFAULT_CATEGORIES;
+  }
+
+  function gameHasRecordedScore(game) {
+    if (!game) return false;
+    if (game.winner || game.playersA || game.playersB) return true;
+    return (game.sets || []).some(function (set) { return (set.a || 0) > 0 || (set.b || 0) > 0; });
+  }
+
+  function finalizedPlayersForSide(tournament, match, side) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    if (!sport || !usesRegistrationCategories(sport) || !match || !match.categoryId) return '';
+    const participants = participantsOf(match, tournament);
+    const found = findEntryTeam(tournament, match.sport, side === 'B' ? participants.b : participants.a);
+    return found ? teamPlayersLabel(found.team) : '';
+  }
+
+  function racketGamesForMatch(match, tournament, sport) {
+    const categories = racketCategoriesForMatch(tournament, sport, match);
+    const existing = (match.games || []).map(function (game) {
+      return Object.assign({}, game, {
+        sets: (game.sets || []).map(function (set) { return Object.assign({}, set); })
+      });
+    });
+    const categorized = !!(sport && usesRegistrationCategories(sport) && match && match.categoryId);
+    let games = existing;
+    if (categorized) {
+      const label = categories[0];
+      const chosen = existing.find(function (game) {
+        return game.category === label || game.category === match.categoryId;
+      }) || existing.find(gameHasRecordedScore) || existing[0] || {};
+      games = [Object.assign({}, chosen, { category: label })];
+    } else if (!games.length) {
+      games = categories.map(function (category) { return { category: category }; });
+    }
+    const playersA = finalizedPlayersForSide(tournament, match, 'A');
+    const playersB = finalizedPlayersForSide(tournament, match, 'B');
+    return games.map(function (game) {
+      return Object.assign({}, game, {
+        playersA: playersA || game.playersA || '',
+        playersB: playersB || game.playersB || '',
+        sets: game.sets && game.sets.length ? game.sets : [{ a: 0, b: 0 }],
+        status: game.status || 'pending',
+        winner: game.winner || null
+      });
+    });
+  }
+
   function racketMatchWinner(match, tournament) {
     const sportCfg = getSportConfig(tournament, match.sport);
-    const cats = (sportCfg && sportCfg.categories && sportCfg.categories.length) ? sportCfg.categories : DEFAULT_CATEGORIES;
+    const cats = racketCategoriesForMatch(tournament, sportCfg, match);
     const need = Math.ceil(cats.length / 2);
     let a = 0, b = 0;
     (match.games || []).forEach(function (g) {
@@ -1393,6 +1458,31 @@
     return { a: '—', b: '—' };
   }
 
+  function matchPointTotals(match, tournament) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    if (!sport || !match || resultKind(match) === 'walkover' || resultKind(match) === 'no_result') {
+      return { a: 0, b: 0 };
+    }
+    if (sport.kind === 'racket') {
+      return (match.games || []).reduce(function (totals, game) {
+        (game.sets || []).forEach(function (set) {
+          totals.a += Number(set.a) || 0;
+          totals.b += Number(set.b) || 0;
+        });
+        return totals;
+      }, { a: 0, b: 0 });
+    }
+    if (sport.kind === 'volleyball') {
+      return (match.sets || []).reduce(function (totals, set) {
+        totals.a += Number(set.a) || 0;
+        totals.b += Number(set.b) || 0;
+        return totals;
+      }, { a: 0, b: 0 });
+    }
+    if (sport.kind === 'basketball') return basketballTotals(match);
+    return { a: 0, b: 0 };
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // STANDINGS
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1471,7 +1561,7 @@
     const sport = sportId ? getSportConfig(tournament, sportId) : null;
     const useTeams = scope.useTeams != null ? scope.useTeams : matchUsesTeams(tournament, sport);
     const stageId = scope.stageId != null ? scope.stageId : 'league';
-    const points = tablePointsFor(sport);
+    const points = tablePointsForScope(sport, scope);
     const scoped = (matches || []).filter(function (m) {
       if (sportId && m.sport !== sportId) return false;
       if (m.status !== 'completed') return false;
@@ -1522,11 +1612,11 @@
     }
     const table = {};
     Object.keys(seen).forEach(function (id) {
-      table[id] = { id: id, played: 0, won: 0, drawn: 0, lost: 0, points: 0, h2h: {} };
+      table[id] = { id: id, played: 0, won: 0, drawn: 0, lost: 0, points: 0, pointsFor: 0, pointsAgainst: 0, h2h: {} };
     });
 
     function blankRow(id) {
-      return { id: id, played: 0, won: 0, drawn: 0, lost: 0, points: 0, h2h: {} };
+      return { id: id, played: 0, won: 0, drawn: 0, lost: 0, points: 0, pointsFor: 0, pointsAgainst: 0, h2h: {} };
     }
 
     scoped.forEach(function (m) {
@@ -1542,6 +1632,9 @@
         return;
       }
       table[A].played++; table[B].played++;
+      const score = matchPointTotals(m, tournament);
+      table[A].pointsFor += score.a; table[A].pointsAgainst += score.b;
+      table[B].pointsFor += score.b; table[B].pointsAgainst += score.a;
       if (kind === 'draw') {
         table[A].drawn++; table[B].drawn++;
         table[A].points += points.draw;
@@ -1563,6 +1656,11 @@
     const rows = Object.values(table);
     rows.sort(function (x, y) {
       if (y.points !== x.points) return y.points - x.points;
+      if (scope.bracketId) {
+        const xDiff = x.pointsFor - x.pointsAgainst;
+        const yDiff = y.pointsFor - y.pointsAgainst;
+        if (yDiff !== xDiff) return yDiff - xDiff;
+      }
       if (x.h2h[y.id] === 'W' && y.h2h[x.id] !== 'W') return -1;
       if (y.h2h[x.id] === 'W' && x.h2h[y.id] !== 'W') return 1;
       return String(x.id).localeCompare(String(y.id));
@@ -2639,7 +2737,8 @@
                 id: b.id,
                 name: b.name || 'Bracket',
                 stageId: b.stageId || 'league',
-                teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : []
+                teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : [],
+                walkoverPoints: clampTablePoint(b.walkoverPoints, tablePointsFor(s).walkover)
               };
             })
           };
@@ -3592,7 +3691,13 @@
     if ((division.teams || []).length < 2) return toast('Add at least two teams before creating a bracket', 'error');
     const stage = stageId || 'league';
     const n = bracketsInStage(division, stage).length + 1;
-    const bracket = { id: newId('brk'), name: 'Bracket ' + n, stageId: stage, teamIds: [] };
+    const bracket = {
+      id: newId('brk'),
+      name: 'Bracket ' + n,
+      stageId: stage,
+      teamIds: [],
+      walkoverPoints: tablePointsFor(sport).walkover
+    };
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
         div.brackets = div.brackets || [];
@@ -3657,6 +3762,22 @@
     } catch (_) { /* toasted */ }
   }
 
+  async function setBracketWalkoverPoints(tournamentId, sportId, divisionId, bracketId, value) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    if (!sport) return;
+    const fallback = tablePointsFor(sport).walkover;
+    const points = clampTablePoint(value, fallback);
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        const bracket = (div.brackets || []).find(function (b) { return b.id === bracketId; });
+        if (bracket) bracket.walkoverPoints = points;
+      });
+      toast('Walkover points set to ' + points, 'success');
+    } catch (_) { /* toasted */ }
+  }
+
   async function removeBracket(tournamentId, sportId, divisionId, bracketId) {
     if (!isAdminUi()) return;
     if (!confirm('Remove this bracket? Published matches that already started are kept. Clear the bracket schedule first if you want scheduled matches removed.')) return;
@@ -3692,10 +3813,11 @@
 
   function standingsTableHtml(tournament, sportId, rows, division, bracketId, emptyLabel) {
     if (!rows.length) return '<p class="t-empty">' + escapeHtml(emptyLabel || 'No matches completed yet.') + '</p>';
+    const showPointBreakdown = !!bracketId;
     return `
-      <table class="t-standings-table">
+      <div class="t-standings-scroll"><table class="t-standings-table">
         <thead>
-          <tr><th>#</th><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">D</th><th class="num">L</th><th class="num">Pts</th></tr>
+          <tr><th>#</th><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">D</th><th class="num">L</th>${showPointBreakdown ? '<th class="num" title="Points for">PF</th><th class="num" title="Points against">PA</th><th class="num" title="Points difference">PD</th>' : ''}<th class="num">Pts</th></tr>
         </thead>
         <tbody>
           ${rows.map(function (r, i) {
@@ -3717,12 +3839,13 @@
                 <td class="num">${r.won}</td>
                 <td class="num">${r.drawn || 0}</td>
                 <td class="num">${r.lost}</td>
+                ${showPointBreakdown ? '<td class="num">' + (r.pointsFor || 0) + '</td><td class="num">' + (r.pointsAgainst || 0) + '</td><td class="num">' + ((r.pointsFor || 0) - (r.pointsAgainst || 0)) + '</td>' : ''}
                 <td class="num">${r.points}</td>
               </tr>
             `;
           }).join('')}
         </tbody>
-      </table>
+      </table></div>
     `;
   }
 
@@ -3868,6 +3991,7 @@
 
     const bracketCards = brackets.map(function (b, index) {
       const selected = !!(bracket && bracket.id === b.id);
+      const walkoverPoints = clampTablePoint(b.walkoverPoints, tablePointsFor(sport).walkover);
       const checks = teams.map(function (tm) {
         const owner = bracketForTeam(division, tm.id, stageId);
         const checked = !!(owner && owner.id === b.id);
@@ -3891,6 +4015,14 @@
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="toggle-complete" data-bracket="${escapeHtml(b.id)}">${bracketIsComplete(b) ? 'Reopen' : 'Mark complete'}</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket-after" data-bracket="${escapeHtml(b.id)}">Add below</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn danger sm" data-act="delete-bracket" data-bracket="${escapeHtml(b.id)}">Remove</button>` : ''}
+          </div>
+          <div class="t-bracket-points">
+            <label>Walkover points
+              ${isAdminUi()
+                ? `<input type="number" min="0" max="99" class="t-input sm" data-bracket-walkover="${escapeHtml(b.id)}" value="${walkoverPoints}" />`
+                : `<b>${walkoverPoints}</b>`}
+            </label>
+            <span>Awarded to the team that shows up.</span>
           </div>
           <div class="t-check-list">${checks || '<p class="t-empty">Add teams, then pull them into this bracket.</p>'}</div>
         </div>
@@ -4115,6 +4247,18 @@
     root.querySelectorAll('[data-rename-bracket]').forEach(function (input) {
       input.addEventListener('change', function () {
         renameBracket(tournament.id, sport.id, division.id, input.getAttribute('data-rename-bracket'), input.value);
+      });
+      input.addEventListener('click', function (e) { e.stopPropagation(); });
+    });
+    root.querySelectorAll('[data-bracket-walkover]').forEach(function (input) {
+      input.addEventListener('change', function () {
+        setBracketWalkoverPoints(
+          tournament.id,
+          sport.id,
+          division.id,
+          input.getAttribute('data-bracket-walkover'),
+          input.value
+        );
       });
       input.addEventListener('click', function (e) { e.stopPropagation(); });
     });
@@ -4513,8 +4657,7 @@
       } else if (act === 'start') {
         const update = { status: 'in_progress', updatedAt: FieldValue.serverTimestamp() };
         if (sport.kind === 'racket' && (!match.games || !match.games.length)) {
-          const cats = (sport.categories && sport.categories.length) ? sport.categories : DEFAULT_CATEGORIES;
-          update.games = cats.map(function (c) { return { category: c, playersA: '', playersB: '', sets: [{ a: 0, b: 0 }], status: 'pending', winner: null }; });
+          update.games = racketGamesForMatch(match, tournament, sport);
         }
         if (sport.kind === 'volleyball' && (!match.sets || !match.sets.length)) update.sets = [{ a: 0, b: 0 }];
         if (sport.kind === 'basketball' && (!match.quarters || !match.quarters.length)) update.quarters = [{ a: 0, b: 0 }];
@@ -4540,7 +4683,11 @@
         else if (choice === '2' || choice === 'b') side = 'B';
         else return toast('Enter 1 or 2 for the team that showed up', 'error');
         await ref.update({ status: 'completed', winner: side, resultType: 'walkover', updatedAt: FieldValue.serverTimestamp() });
-        toast('Walkover recorded. The other team receives no points.');
+        const award = tablePointsForScope(sport, {
+          categoryId: match.categoryId || '',
+          bracketId: match.bracketId || ''
+        }).walkover;
+        toast('Walkover recorded — ' + award + ' point' + (award === 1 ? '' : 's') + ' awarded. The other team receives none.');
       } else if (act === 'noresult') {
         if (!confirm('Record a no result? Neither team showed up, so neither team receives points.')) return;
         await ref.update({ status: 'completed', winner: null, resultType: 'no_result', updatedAt: FieldValue.serverTimestamp() });
@@ -6166,6 +6313,29 @@
     return modal;
   }
 
+  function scorerParticipantsHtml(match, tournament) {
+    const sport = getSportConfig(tournament, match.sport);
+    if (!sport || !usesRegistrationCategories(sport)) return '';
+    const participants = participantsOf(match, tournament);
+    const sides = [
+      { id: participants.a, label: 'A' },
+      { id: participants.b, label: 'B' }
+    ];
+    return `
+      <div class="t-scorer-participants">
+        ${sides.map(function (side) {
+          const found = findEntryTeam(tournament, match.sport, side.id);
+          const team = found && found.team;
+          return `
+            <div>
+              <span>${side.label}</span>
+              <b>${escapeHtml(teamPublicName(team) || side.id || '—')}</b>
+              <strong>${escapeHtml(teamPlayersLabel(team) || 'Players not listed')}</strong>
+            </div>`;
+        }).join('')}
+      </div>`;
+  }
+
   function openScorer(match, tournament) {
     const sport = getSportConfig(tournament, match.sport);
     const modal = getScorerModal();
@@ -6173,7 +6343,7 @@
     modal.querySelector('#tScorerTitle').textContent =
       (sport.emoji || '🏅') + ' ' + displayName(tournament, match.sport, p.a) + ' vs ' + displayName(tournament, match.sport, p.b) + ' — ' + stageLabelOf(sport, match.stage);
     const body = modal.querySelector('#tScorerBody');
-    body.innerHTML = '';
+    body.innerHTML = scorerParticipantsHtml(match, tournament);
     if (sport.kind === 'racket') body.appendChild(buildRacketScorer(match, tournament, sport));
     else if (sport.kind === 'volleyball') body.appendChild(buildVolleyballScorer(match, tournament, sport));
     else if (sport.kind === 'basketball') body.appendChild(buildBasketballScorer(match, tournament, sport));
@@ -6182,13 +6352,13 @@
 
   function buildRacketScorer(match, tournament, sport) {
     const cfg = getStageScoring(tournament, match.sport, match.stage) || {};
-    const aName = displayName(tournament, match.sport, participantsOf(match, tournament).a);
-    const bName = displayName(tournament, match.sport, participantsOf(match, tournament).b);
-    const aColor = teamMeta(tournament, match.sport, participantsOf(match, tournament).a).color;
-    const bColor = teamMeta(tournament, match.sport, participantsOf(match, tournament).b).color;
-    const cats = (sport.categories && sport.categories.length) ? sport.categories : DEFAULT_CATEGORIES;
-    const games = (match.games && match.games.length) ? match.games.map(function (g) { return Object.assign({}, g, { sets: (g.sets || []).map(function (s) { return Object.assign({}, s); }) }); })
-                : cats.map(function (c) { return { category: c, playersA: '', playersB: '', sets: [{ a: 0, b: 0 }], status: 'pending', winner: null }; });
+    const participants = participantsOf(match, tournament);
+    const aName = displayName(tournament, match.sport, participants.a);
+    const bName = displayName(tournament, match.sport, participants.b);
+    const aColor = teamMeta(tournament, match.sport, participants.a).color;
+    const bColor = teamMeta(tournament, match.sport, participants.b).color;
+    const finalizedPlayers = usesRegistrationCategories(sport) && !!match.categoryId;
+    const games = racketGamesForMatch(match, tournament, sport);
 
     const wrap = el('div');
     const banner = el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
@@ -6199,18 +6369,18 @@
       const gameWrap = el('div', { class: 't-card', style: { marginBottom: '12px' } });
       gameWrap.innerHTML = `
         <div class="t-card-header">
-          <h3>${escapeHtml(game.category)} <small style="font-weight:500;color:var(--t-muted);">${escapeHtml(CATEGORY_LABEL[game.category] || '')}</small></h3>
+          <h3>${escapeHtml(game.category)} ${finalizedPlayers ? '' : '<small style="font-weight:500;color:var(--t-muted);">' + escapeHtml(CATEGORY_LABEL[game.category] || '') + '</small>'}</h3>
           <span class="t-badge status-${game.status || 'pending'}">${STATUS_LABEL[game.status] || 'Pending'}</span>
         </div>
         <div class="t-card-body">
           <div class="t-form-grid" style="margin-bottom:12px;">
             <div class="t-form-field">
               <label>${escapeHtml(aName)} players</label>
-              <input type="text" class="t-input" data-players="A" value="${escapeHtml(game.playersA || '')}" />
+              <input type="text" class="t-input" data-players="A" value="${escapeHtml(game.playersA || '')}" ${finalizedPlayers ? 'readonly' : ''} />
             </div>
             <div class="t-form-field">
               <label>${escapeHtml(bName)} players</label>
-              <input type="text" class="t-input" data-players="B" value="${escapeHtml(game.playersB || '')}" />
+              <input type="text" class="t-input" data-players="B" value="${escapeHtml(game.playersB || '')}" ${finalizedPlayers ? 'readonly' : ''} />
             </div>
           </div>
           <div data-sets></div>
@@ -6288,9 +6458,9 @@
         game.status = game.winner ? 'completed' : (game.sets.some(function (s) { return s.a || s.b; }) ? 'in_progress' : 'pending');
         try {
           const fresh = games.map(function (g) { return { category: g.category, playersA: g.playersA || '', playersB: g.playersB || '', sets: g.sets, status: g.status, winner: g.winner || null }; });
-          const overall = racketMatchWinner({ games: fresh, sport: match.sport }, tournament);
+          const overall = racketMatchWinner(Object.assign({}, match, { games: fresh }), tournament);
           const patch = { games: fresh, updatedAt: FieldValue.serverTimestamp() };
-          if (overall) { patch.winner = overall; patch.status = 'completed'; }
+          if (overall) { patch.winner = overall; patch.status = 'completed'; patch.resultType = 'played'; }
           await db.collection('tournament_matches').doc(match.id).update(patch);
           toast('Saved ' + game.category + (overall ? ' — match won by ' + (overall === 'A' ? aName : bName) : ''));
         } catch (err) { console.error(err); toast('Save failed', 'error'); }
@@ -6384,7 +6554,7 @@
       try {
         const winner = volleyballMatchWinner({ sets: sets }, cfg);
         const patch = { sets: sets, updatedAt: FieldValue.serverTimestamp() };
-        if (winner) { patch.winner = winner; patch.status = 'completed'; }
+        if (winner) { patch.winner = winner; patch.status = 'completed'; patch.resultType = 'played'; }
         await db.collection('tournament_matches').doc(match.id).update(patch);
         toast(winner ? 'Saved — match won by ' + (winner === 'A' ? aName : bName) : 'Saved');
       } catch (err) { console.error(err); toast('Save failed', 'error'); }
@@ -6496,7 +6666,7 @@
       try {
         const winner = basketballWinner({ quarters: quarters }, cfg);
         const patch = { quarters: quarters, updatedAt: FieldValue.serverTimestamp() };
-        if (winner) { patch.winner = winner; patch.status = 'completed'; }
+        if (winner) { patch.winner = winner; patch.status = 'completed'; patch.resultType = 'played'; }
         await db.collection('tournament_matches').doc(match.id).update(patch);
         toast(winner ? 'Saved — match won by ' + (winner === 'A' ? aName : bName) : 'Saved');
       } catch (err) { console.error(err); toast('Save failed', 'error'); }
@@ -6612,7 +6782,8 @@
               name: b.name || 'Bracket',
               stageId: bracketStageId(b),
               complete: !!b.complete,
-              teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : []
+              teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : [],
+              walkoverPoints: clampTablePoint(b.walkoverPoints, tablePointsFor(sport).walkover)
             };
           })
         };
@@ -7027,11 +7198,12 @@
     `;
   }
 
-  function watchTableHtml(tournament, sportId, rows, emptyLabel) {
+  function watchTableHtml(tournament, sportId, rows, emptyLabel, opts) {
     if (!rows.length) return '<p class="w-empty">' + escapeHtml(emptyLabel || 'No matches completed in this stage yet.') + '</p>';
+    const showPointBreakdown = !!(opts && opts.showPointBreakdown);
     return `
-      <table class="w-table">
-        <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>Pts</th></tr></thead>
+      <div class="w-table-scroll"><table class="w-table">
+        <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th>${showPointBreakdown ? '<th title="Points for">PF</th><th title="Points against">PA</th><th title="Points difference">PD</th>' : ''}<th>Pts</th></tr></thead>
         <tbody>
           ${rows.map(function (r, i) {
             const meta = teamMeta(tournament, sportId, r.id);
@@ -7039,12 +7211,12 @@
               <tr class="rank-${i + 1}" data-act="team" data-team="${escapeHtml(r.id)}" data-sport="${escapeHtml(sportId)}">
                 <td><span class="w-rank">${i + 1}</span></td>
                 <td><span class="w-team"><span class="w-swatch sm" style="background:${meta.color}"></span><span><span>${escapeHtml(meta.name)}</span>${teamTagsHtml(meta.tags, 'watch')}</span></span></td>
-                <td>${r.played}</td><td>${r.won}</td><td>${r.drawn || 0}</td><td>${r.lost}</td><td class="pts">${r.points}</td>
+                <td>${r.played}</td><td>${r.won}</td><td>${r.drawn || 0}</td><td>${r.lost}</td>${showPointBreakdown ? '<td>' + (r.pointsFor || 0) + '</td><td>' + (r.pointsAgainst || 0) + '</td><td>' + ((r.pointsFor || 0) - (r.pointsAgainst || 0)) + '</td>' : ''}<td class="pts">${r.points}</td>
               </tr>
             `;
           }).join('')}
         </tbody>
-      </table>
+      </table></div>
     `;
   }
 
@@ -7151,7 +7323,7 @@
         teamIds: b.teamIds || [],
         useTeams: true
       });
-      return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}${b.complete ? ' · Complete' : ''}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.')}</section>`;
+      return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}${b.complete ? ' · Complete' : ''}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.', { showPointBreakdown: true })}</section>`;
     }).join('');
 
     let focus = '';
