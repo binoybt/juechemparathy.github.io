@@ -34,7 +34,9 @@
  *                     tags are optional short labels (seed, home side, group)
  *         brackets[]  { id, name, stageId, teamIds[], schedule, complete, walkoverPoints }
  *           stageId   which stage this bracket belongs to (missing = league)
- *           walkoverPoints optional override for a walkover win in this bracket
+ *           walkoverPoints / walkoverScore
+ *                     Walkover Score for that bracket (match score, e.g. 15 → 15–0).
+ *                     The team that shows up still receives the sport's Win table points.
  *           a team is in at most one bracket per stage
  *           schedule  { draft, published } — fixtures for this bracket only
  *           complete  admin marked the bracket finished. Generate round-robin
@@ -42,6 +44,7 @@
  *       tablePoints   { win, draw, walkover, noResult }
  *                     missing on older sports → win 1, draw 0, walkover 1, no result 0
  *                     new sports default to win 2, draw 1, walkover 2, no result 0
+ *                     a walkover win uses the Win value; walkover is kept for older docs
  *                     no result never awards those points to either side
  *       stageList[]   { id, name } — league, semifinal, final, optional 3rd place,
  *                     plus any stages the admin inserts (Round of 16, …)
@@ -192,14 +195,78 @@
   }
 
   function tablePointsForScope(sport, scope) {
-    const points = tablePointsFor(sport);
-    const ids = scopeIds(scope);
-    if (!ids.categoryId || !ids.bracketId) return points;
-    const bracket = findBracket(findDivision(sport, ids.categoryId), ids.bracketId);
-    if (!bracket || bracket.walkoverPoints == null || bracket.walkoverPoints === '') return points;
-    return Object.assign({}, points, {
-      walkover: clampTablePoint(bracket.walkoverPoints, points.walkover)
-    });
+    return tablePointsFor(sport);
+  }
+
+  function defaultWalkoverScore(sport, stageId) {
+    const kind = sport && sport.kind;
+    if (kind === 'basketball') return 20;
+    const scoring = (sport && sport.scoring && (sport.scoring[stageId] || sport.scoring.league))
+      || (kind ? defaultScoring(kind)[stageId || 'league'] : null)
+      || defaultScoring('racket').league;
+    return clampTablePoint(scoring && scoring.target, 21);
+  }
+
+  function looksLikeLegacyWalkoverPoints(value, sport) {
+    const n = clampTablePoint(value, -1);
+    if (n < 0) return true;
+    const table = tablePointsFor(sport).walkover;
+    return n <= 3 && (n === table || n === 0 || n === 1 || n === 2);
+  }
+
+  function walkoverScoreForBracket(sport, bracket, stageId) {
+    const fallback = defaultWalkoverScore(sport, stageId || (bracket && bracket.stageId) || 'league');
+    if (!bracket) return fallback;
+    if (bracket.walkoverScore != null && bracket.walkoverScore !== '') {
+      return clampTablePoint(bracket.walkoverScore, fallback);
+    }
+    if (bracket.walkoverPoints == null || bracket.walkoverPoints === '') return fallback;
+    if (looksLikeLegacyWalkoverPoints(bracket.walkoverPoints, sport)) return fallback;
+    return clampTablePoint(bracket.walkoverPoints, fallback);
+  }
+
+  function walkoverScoreForMatch(tournament, match) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    const fallback = defaultWalkoverScore(sport, match && match.stage);
+    if (!sport || !match) return fallback;
+    const bracket = findBracket(findDivision(sport, match.categoryId), match.bracketId);
+    return walkoverScoreForBracket(sport, bracket, match.stage);
+  }
+
+  function walkoverScorePair(winnerSide, score) {
+    const n = clampTablePoint(score, 0);
+    if (winnerSide === 'B') return { a: 0, b: n };
+    return { a: n, b: 0 };
+  }
+
+  function walkoverScorePatch(match, tournament, winnerSide) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    const pair = walkoverScorePair(winnerSide, walkoverScoreForMatch(tournament, match));
+    const patch = {
+      status: 'completed',
+      winner: winnerSide,
+      resultType: 'walkover',
+      updatedAt: FieldValue.serverTimestamp()
+    };
+    if (!sport) return patch;
+    if (sport.kind === 'racket') {
+      const games = racketGamesForMatch(match, tournament, sport);
+      patch.games = (games.length ? games : [{ category: '' }]).map(function (game) {
+        return {
+          category: game.category || '',
+          playersA: game.playersA || '',
+          playersB: game.playersB || '',
+          sets: [pair],
+          status: 'completed',
+          winner: winnerSide
+        };
+      });
+    } else if (sport.kind === 'volleyball') {
+      patch.sets = [pair];
+    } else if (sport.kind === 'basketball') {
+      patch.quarters = [pair];
+    }
+    return patch;
   }
 
   function sportTemplateForConfig(templateId, opts) {
@@ -1568,7 +1635,7 @@
 
   function matchPointTotals(match, tournament) {
     const sport = getSportConfig(tournament, match && match.sport);
-    if (!sport || !match || resultKind(match) === 'walkover' || resultKind(match) === 'no_result') {
+    if (!sport || !match || resultKind(match) === 'no_result') {
       return { a: 0, b: 0 };
     }
     if (sport.kind === 'racket') {
@@ -1751,7 +1818,7 @@
         table[B].points += points.draw;
         return;
       }
-      const award = kind === 'walkover' ? points.walkover : points.win;
+      const award = points.win;
       if (m.winner === 'A') {
         table[A].won++; table[A].points += award;
         table[B].lost++;
@@ -2545,10 +2612,9 @@
         <div class="t-points-grid">
           <label>Win <input type="number" min="0" class="t-input" data-pts="win" value="${p.win}" /></label>
           <label>Draw <input type="number" min="0" class="t-input" data-pts="draw" value="${p.draw}" /></label>
-          <label>Walkover <input type="number" min="0" class="t-input" data-pts="walkover" value="${p.walkover}" /></label>
           <label>No result <input type="number" min="0" class="t-input" data-pts="noResult" value="${p.noResult}" /></label>
         </div>
-        <p class="t-mode-note">Win points go to the winner only. Draw points go to both teams. Walkover points go to the team that showed up; the other team gets none. No result is when neither team shows up, so neither team receives points — keep that value at 0.</p>
+        <p class="t-mode-note">Win points go to the winner of a played match and to the team that shows up for a walkover. Draw points go to both teams. No result is when neither team shows up, so neither team receives points — keep that value at 0. Set Walkover Score on each bracket for the recorded match score, for example 15–0.</p>
       </div>
     `;
   }
@@ -2866,7 +2932,8 @@
                 name: b.name || 'Bracket',
                 stageId: b.stageId || 'league',
                 teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : [],
-                walkoverPoints: clampTablePoint(b.walkoverPoints, tablePointsFor(s).walkover)
+                walkoverPoints: walkoverScoreForBracket(s, b, b.stageId),
+                walkoverScore: walkoverScoreForBracket(s, b, b.stageId)
               };
             })
           };
@@ -3995,7 +4062,8 @@
       name: 'Bracket ' + n,
       stageId: stage,
       teamIds: [],
-      walkoverPoints: tablePointsFor(sport).walkover
+      walkoverPoints: defaultWalkoverScore(sport, stage),
+      walkoverScore: defaultWalkoverScore(sport, stage)
     };
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
@@ -4066,14 +4134,17 @@
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     const sport = t ? getSportConfig(t, sportId) : null;
     if (!sport) return;
-    const fallback = tablePointsFor(sport).walkover;
-    const points = clampTablePoint(value, fallback);
+    const fallback = defaultWalkoverScore(sport, 'league');
+    const score = clampTablePoint(value, fallback);
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
         const bracket = (div.brackets || []).find(function (b) { return b.id === bracketId; });
-        if (bracket) bracket.walkoverPoints = points;
+        if (bracket) {
+          bracket.walkoverPoints = score;
+          bracket.walkoverScore = score;
+        }
       });
-      toast('Walkover points set to ' + points, 'success');
+      toast('Walkover Score set to ' + score + '–0', 'success');
     } catch (_) { /* toasted */ }
   }
 
@@ -4290,7 +4361,7 @@
 
     const bracketCards = brackets.map(function (b, index) {
       const selected = !!(bracket && bracket.id === b.id);
-      const walkoverPoints = clampTablePoint(b.walkoverPoints, tablePointsFor(sport).walkover);
+      const walkoverScore = walkoverScoreForBracket(sport, b, stageId);
       const checks = teams.map(function (tm) {
         const owner = bracketForTeam(division, tm.id, stageId);
         const checked = !!(owner && owner.id === b.id);
@@ -4316,12 +4387,12 @@
             ${isAdminUi() ? `<button type="button" class="t-btn danger sm" data-act="delete-bracket" data-bracket="${escapeHtml(b.id)}">Remove</button>` : ''}
           </div>
           <div class="t-bracket-points">
-            <label>Walkover points
+            <label>Walkover Score
               ${isAdminUi()
-                ? `<input type="number" min="0" max="99" class="t-input sm" data-bracket-walkover="${escapeHtml(b.id)}" value="${walkoverPoints}" />`
-                : `<b>${walkoverPoints}</b>`}
+                ? `<input type="number" min="0" max="99" class="t-input sm" data-bracket-walkover="${escapeHtml(b.id)}" value="${walkoverScore}" />`
+                : `<b>${walkoverScore}</b>`}
             </label>
-            <span>Awarded to the team that shows up.</span>
+            <span>Recorded as ${walkoverScore}–0. The team that shows up still receives the win points.</span>
           </div>
           <div class="t-check-list">${checks || '<p class="t-empty">Add teams, then pull them into this bracket.</p>'}</div>
         </div>
@@ -5073,24 +5144,18 @@
         const sides = participantsOf(match, tournament);
         const aName = displayName(tournament, match.sport, sides.a);
         const bName = displayName(tournament, match.sport, sides.b);
-        const who = prompt('Who showed up and receives the walkover points?\nEnter 1 for ' + aName + '\nEnter 2 for ' + bName, '1');
+        const woScore = walkoverScoreForMatch(tournament, match);
+        const who = prompt('Who showed up and receives the win?\nThe score will be recorded as ' + woScore + '–0.\nEnter 1 for ' + aName + '\nEnter 2 for ' + bName, '1');
         if (who === null) return;
         const choice = String(who).trim().toLowerCase();
         let side = null;
         if (choice === '1' || choice === 'a') side = 'A';
         else if (choice === '2' || choice === 'b') side = 'B';
         else return toast('Enter 1 or 2 for the team that showed up', 'error');
-        await updateMatchAndPublicScore(match, tournament, {
-          status: 'completed',
-          winner: side,
-          resultType: 'walkover',
-          updatedAt: FieldValue.serverTimestamp()
-        });
-        const award = tablePointsForScope(sport, {
-          categoryId: match.categoryId || '',
-          bracketId: match.bracketId || ''
-        }).walkover;
-        toast('Walkover recorded — ' + award + ' point' + (award === 1 ? '' : 's') + ' awarded. The other team receives none.');
+        await updateMatchAndPublicScore(match, tournament, walkoverScorePatch(match, tournament, side));
+        const award = tablePointsFor(sport).win;
+        const line = side === 'B' ? ('0–' + woScore) : (woScore + '–0');
+        toast('Walkover recorded as ' + line + '. ' + (side === 'B' ? bName : aName) + ' receives ' + award + ' win point' + (award === 1 ? '' : 's') + '.');
       } else if (act === 'noresult') {
         if (!confirm('Record a no result? Neither team showed up, so neither team receives points.')) return;
         await updateMatchAndPublicScore(match, tournament, {
@@ -7350,7 +7415,8 @@
               stageId: bracketStageId(b),
               complete: !!b.complete,
               teamIds: Array.isArray(b.teamIds) ? b.teamIds.slice() : [],
-              walkoverPoints: clampTablePoint(b.walkoverPoints, tablePointsFor(sport).walkover)
+              walkoverPoints: walkoverScoreForBracket(sport, b, bracketStageId(b)),
+              walkoverScore: walkoverScoreForBracket(sport, b, bracketStageId(b))
             };
           })
         };
@@ -7828,8 +7894,9 @@
         { id: 'm5', sport: 'volleyball', stage: 'league', status: 'completed', teamA: 'G1', teamB: 'G2', winner: 'A', resultType: 'played', venue: 'Hall', scheduledAt: '2026-10-19T16:00:00.000Z', sets: [{ a: 25, b: 20 }, { a: 25, b: 22 }] },
         { id: 'm6', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: false, teamA: 'G3', teamB: 'G4', venue: 'Hall', scheduledAt: '2026-10-19T19:15:00.000Z' },
         { id: 'm10', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: true, teamA: 'G1', teamB: 'G4', scheduledAt: '2026-10-19T19:45:00.000Z' },
-        { id: 'm7', sport: 'volleyball', stage: 'semifinal', status: 'completed', teamA: 'G1', teamB: 'G3', winner: 'B', resultType: 'walkover', venue: 'Hall', scheduledAt: '2026-10-19T21:00:00.000Z' },
-        { id: 'm11', sport: 'badminton', categoryId: 'mixed', bracketId: 'b4', stage: 'league', status: 'completed', teamA: 'E', teamB: 'F', winner: 'B', resultType: 'played', court: 'Court 3', venue: 'Court 3', scheduledAt: '2026-10-19T16:40:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 19, b: 21 }, { a: 16, b: 21 }], winner: 'B' }] }
+        { id: 'm7', sport: 'volleyball', stage: 'semifinal', status: 'completed', teamA: 'G1', teamB: 'G3', winner: 'B', resultType: 'walkover', venue: 'Hall', scheduledAt: '2026-10-19T21:00:00.000Z', sets: [{ a: 0, b: 15 }] },
+        { id: 'm11', sport: 'badminton', categoryId: 'mixed', bracketId: 'b4', stage: 'league', status: 'completed', teamA: 'E', teamB: 'F', winner: 'B', resultType: 'played', court: 'Court 3', venue: 'Court 3', scheduledAt: '2026-10-19T16:40:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 19, b: 21 }, { a: 16, b: 21 }], winner: 'B' }] },
+        { id: 'm12', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'completed', teamA: 'A', teamB: 'D', winner: 'A', resultType: 'walkover', court: 'Court 2', venue: 'Court 2', scheduledAt: '2026-10-19T15:20:00.000Z', games: [{ category: 'OD1', playersA: 'Ann / Ben', playersB: 'Gia / Hugo', sets: [{ a: 15, b: 0 }], winner: 'A' }] }
       ]
     };
     const pairs = [
@@ -7914,7 +7981,19 @@
   function watchScoreText(match, tournament) {
     const kind = resultKind(match);
     if (kind === 'no_result') return { a: '–', b: '–', note: 'No result' };
-    if (kind === 'walkover') return { a: match.winner === 'A' ? 'W' : '0', b: match.winner === 'B' ? 'W' : '0', note: 'Walkover' };
+    if (kind === 'walkover') {
+      const sets = watchSetScores(match, tournament);
+      if (sets.length) {
+        const last = String(sets[sets.length - 1] || '0–0').split('–');
+        return {
+          a: last[0] || '0',
+          b: last[1] || '0',
+          note: 'Walkover',
+          line: sets.join('  ')
+        };
+      }
+      return { a: match.winner === 'A' ? 'W' : '0', b: match.winner === 'B' ? 'W' : '0', note: 'Walkover' };
+    }
     if (usesRacketSetPoints(match, tournament)) {
       const line = racketSetScoreLine(match, tournament);
       const parts = line.split('  ');
@@ -8121,7 +8200,7 @@
 
   function watchSetScores(match, tournament) {
     const kind = resultKind(match);
-    if (kind === 'walkover' || kind === 'no_result') return [];
+    if (kind === 'no_result') return [];
     const sport = getSportConfig(tournament, match && match.sport);
     if (!sport) return [];
     function pairs(list) {
