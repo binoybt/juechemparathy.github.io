@@ -336,6 +336,11 @@ body.t-member-preview .t-admin-switch {
 }
 .t-match-score .vs { color: var(--t-muted); font-size: 1rem; padding: 0 4px; }
 .t-match-score .dash { color: var(--t-muted); font-size: 1.6rem; padding: 0 2px; }
+.t-match-score .sets {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .03em;
+  white-space: nowrap;
+}
 
 .t-match-details {
   margin-top: 12px; padding-top: 12px;

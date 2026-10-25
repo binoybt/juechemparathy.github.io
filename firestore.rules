@@ -27,6 +27,46 @@ service cloud.firestore {
         && request.auth.uid in tournament.data.scorerUids;
     }
 
+    function publicBoardIsOpen(id) {
+      return exists(/databases/$(database)/documents/tournament_public/$(id))
+        && get(/databases/$(database)/documents/tournament_public/$(id)).data.publicBoard == true
+        && get(/databases/$(database)/documents/tournament_public/$(id)).data.published == true
+        && get(/databases/$(database)/documents/tournament_public/$(id)).data.started == true;
+    }
+
+    function publicMatchKeys() {
+      return [
+        'id',
+        'sport',
+        'stage',
+        'status',
+        'scheduledAt',
+        'venue',
+        'court',
+        'showUpcoming',
+        'winner',
+        'resultType',
+        'categoryId',
+        'bracketId',
+        'teamA',
+        'teamB',
+        'playerA',
+        'playerB',
+        'sets',
+        'quarters',
+        'games',
+        'updatedAt'
+      ];
+    }
+
+    function assignedMatchScorer(tournamentId, matchId) {
+      return isScorer()
+        && exists(/databases/$(database)/documents/tournament_matches/$(matchId))
+        && get(/databases/$(database)/documents/tournament_matches/$(matchId)).data.scorerUid == request.auth.uid
+        && get(/databases/$(database)/documents/tournament_matches/$(matchId)).data.tournamentId == tournamentId
+        && tournamentAllowsScorer(tournamentId);
+    }
+
     match /users/{uid} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.auth.uid == uid;
@@ -188,6 +228,15 @@ service cloud.firestore {
         && resource.data.started == true;
       allow list: if false;
       allow create, update, delete: if isAdmin();
+
+      match /matches/{matchId} {
+        allow get, list: if publicBoardIsOpen(id);
+        allow create, update: if isAdmin() || (
+          assignedMatchScorer(id, matchId)
+          && request.resource.data.keys().hasOnly(publicMatchKeys())
+        );
+        allow delete: if isAdmin();
+      }
     }
   }
 }
