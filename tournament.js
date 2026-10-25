@@ -2303,7 +2303,24 @@
       }
       const card = el('div', { class: 't-config-sport' });
       const categorized = usesRegistrationCategories(s);
-      const teamsSectionHtml = draft.format === 'teams' && !categorized ? `
+      const teamFormat = draft.format === 'teams';
+      const teamOnlyFields = teamFormat ? `
+            <div class="t-form-field">
+              <label>Max roster size</label>
+              <input type="number" class="t-input" data-field="maxRosterSize" min="0" placeholder="No limit" value="${maxRosterSize(s) || ''}" />
+              <div style="color:var(--t-muted);font-size:.75rem;margin-top:2px;">Per team for this sport, including the captain. Blank or 0 = no limit.</div>
+            </div>
+            ${s.kind === 'racket' ? `
+              <div class="t-form-field">
+                <label>Games per match (comma-separated)</label>
+                <input type="text" class="t-input" data-field="categories" placeholder="OD1, OD2, XD1, XD2, WD" value="${escapeHtml((s.categories || []).join(', '))}" />
+              </div>
+            ` : ''}
+      ` : '';
+      const sportGridCols = !teamFormat
+        ? '1fr'
+        : (s.kind === 'racket' ? '1fr 1fr 2fr' : '1fr 1fr');
+      const teamsSectionHtml = teamFormat && !categorized ? `
         <div>
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
             <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--t-muted);">Teams for this sport</div>
@@ -2323,22 +2340,12 @@
           <button class="t-btn danger sm" data-act="remove">Remove</button>
         </div>
         <div class="t-config-sport-body">
-          <div class="t-form-grid" style="grid-template-columns:${s.kind === 'racket' ? '1fr 1fr 2fr' : '1fr 1fr'};">
+          <div class="t-form-grid" style="grid-template-columns:${sportGridCols};">
             <div class="t-form-field">
               <label>Match date</label>
               <input type="date" class="t-input" data-field="date" value="${escapeHtml(s.date || '')}" />
             </div>
-            <div class="t-form-field">
-              <label>Max roster size</label>
-              <input type="number" class="t-input" data-field="maxRosterSize" min="0" placeholder="No limit" value="${maxRosterSize(s) || ''}" />
-              <div style="color:var(--t-muted);font-size:.75rem;margin-top:2px;">Per team for this sport, including the captain. Blank or 0 = no limit.</div>
-            </div>
-            ${s.kind === 'racket' ? `
-              <div class="t-form-field">
-                <label>Games per match (comma-separated)</label>
-                <input type="text" class="t-input" data-field="categories" placeholder="OD1, OD2, XD1, XD2, WD" value="${escapeHtml((s.categories || []).join(', '))}" />
-              </div>
-            ` : ''}
+            ${teamOnlyFields}
           </div>
           ${divisionConfigHtml(s)}
           ${teamsSectionHtml}
