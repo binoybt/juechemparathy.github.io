@@ -7439,10 +7439,12 @@
     const key = JSON.stringify(comparable);
     if (publicSyncKeys[t.id] === key && !(opts && opts.force)) return;
     await db.collection('tournament_public').doc(t.id).set(payload);
-    try {
-      await syncPublicMatchDocs(t, matches, open);
-    } catch (err) {
-      console.warn('[tournament] public match docs sync failed:', err);
+    if (opts && (opts.force || opts.forceClose)) {
+      try {
+        await syncPublicMatchDocs(t, matches, open);
+      } catch (err) {
+        console.warn('[tournament] public match docs sync failed:', err);
+      }
     }
     publicSyncKeys[t.id] = key;
   }
@@ -7551,8 +7553,7 @@
     missing: false,
     closed: false,
     error: null,
-    preview: false,
-    refreshTimer: null
+    preview: false
   };
 
   function mergeWatchMatches(parent, liveMatches) {
@@ -7624,29 +7625,6 @@
       return;
     }
     watch.parentBoard = Object.assign({ id: snap.id }, snap.data() || {});
-  }
-
-  async function refreshWatchBoard(id) {
-    try {
-      const snap = await db.collection('tournament_public').doc(id).get();
-      applyWatchParent(snap);
-      try {
-        const matchesSnap = await db.collection('tournament_public').doc(id).collection('matches').get();
-        watch.liveMatches = liveMatchesFromSnapshot(matchesSnap);
-      } catch (err) {
-        console.warn('[watch] live match refresh skipped:', err);
-      }
-      watch.ready = true;
-      publishWatchBoard();
-    } catch (err) {
-      console.error('[watch]', err);
-      watch.ready = true;
-      watch.parentBoard = null;
-      watch.board = null;
-      watch.error = err;
-      watch.closed = !!(err && err.code === 'permission-denied');
-      renderPublicWatch();
-    }
   }
 
   function sampleWatchBoard() {
@@ -8191,8 +8169,6 @@
       watch.liveMatches = [];
       if (watch.ready) publishWatchBoard();
     });
-    if (watch.refreshTimer) clearInterval(watch.refreshTimer);
-    watch.refreshTimer = setInterval(function () { refreshWatchBoard(id); }, 10000);
   }
 
   function render() {
