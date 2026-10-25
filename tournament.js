@@ -897,9 +897,12 @@
     unsubUsers: null,
     unsubRsvp: null,
     ready: { tournaments: false, matches: false, users: false, rsvp: false },
+    scorerDirectory: null,
     // Last error surfaced by each data source, for diagnostics in the UI.
     errors: { users: null, rsvp: null, upsert: null }
   };
+  let scorerDirectoryPromise = null;
+  let scorerDirectoryLoading = false;
 
   // Flipped to true once auth.onAuthStateChanged has fired at least once,
   // so we can distinguish "still restoring session" from "definitely signed out".
@@ -1981,6 +1984,7 @@
       renderAdminGate();
       return;
     }
+    ensureScorerDirectoryThenRender();
     document.title = mode === 'manage' ? 'Manage tournament' : 'New tournament';
     const container = document.getElementById('tContent');
     let draft;
@@ -2057,6 +2061,21 @@
           </div>
         </div>
       </section>
+
+      ${mode === 'manage' && draft.id ? `
+      <section class="t-section">
+        <div class="t-card">
+          <div class="t-card-body">
+            <h2 class="t-section-title" style="margin:0 0 8px;">Tournament scorers</h2>
+            <p class="t-mode-note" style="margin-top:0;">Grant the scorer role on Members &amp; Admins first. Then choose who can be assigned to matches here. Assigned scorers also appear in the match dropdown.</p>
+            <p style="margin:0 0 12px;color:var(--t-fg);">${(draft.scorers || []).length
+              ? escapeHtml((draft.scorers || []).map(function (scorer) { return scorer.name || scorer.email || 'Scorer'; }).join(', '))
+              : 'No scorers assigned to this tournament yet.'}</p>
+            <button type="button" class="t-btn primary" onclick="window.__tournament.openTournamentScorers('${escapeHtml(draft.id)}')">Choose scorers</button>
+          </div>
+        </div>
+      </section>
+      ` : ''}
 
       <section class="t-section">
         <div class="t-section-header">
@@ -3412,6 +3431,7 @@
   }
 
   function renderTournament() {
+    ensureScorerDirectoryThenRender();
     harvestScheduleEditor();
     const parsed = parseUrl();
     const t = currentTournament();
@@ -3467,9 +3487,7 @@
         ${tournamentHasStarted(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', false)">⏸ Mark not started</button>`
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', true)">▶ Start tournament</button>`}
-        ${isActivePublishedTournament(t)
-          ? `<button class="t-btn" type="button" onclick="window.__tournament.openTournamentScorers('${escapeHtml(t.id)}')">🧑‍⚖️ Tournament scorers (${(t.scorers || []).length})</button>`
-          : ''}
+        <button class="t-btn ${(t.scorers || []).length ? '' : 'primary'}" type="button" onclick="window.__tournament.openTournamentScorers('${escapeHtml(t.id)}')">🧑‍⚖️ Tournament scorers (${(t.scorers || []).length})</button>
         <button class="t-btn" type="button" onclick="window.__tournament.shareLiveBoard('${escapeHtml(t.id)}')">${t.publicBoard ? '📺 Spectator link on' : '📺 Spectator link'}</button>
         ${isTournamentPublished(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', false)">🙈 Unpublish</button>`
@@ -3659,35 +3677,98 @@
     return parts.join(' ') || String(profile.displayName || profile.email || '').trim();
   }
 
+  function sortScorers(a, b) {
+    return String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''));
+  }
+
+  async function loadScorerDirectory(force) {
+    if (force) {
+      state.scorerDirectory = null;
+      scorerDirectoryPromise = null;
+    }
+    if (state.scorerDirectory) return state.scorerDirectory;
+    if (scorerDirectoryPromise) return scorerDirectoryPromise;
+    scorerDirectoryPromise = db.collection('users').where('role', '==', 'scorer').get()
+      .then(function (snap) {
+        const list = [];
+        snap.forEach(function (doc) {
+          const data = doc.data() || {};
+          list.push({
+            uid: doc.id,
+            name: scorerProfileName(data),
+            email: String(data.email || '').trim().toLowerCase()
+          });
+        });
+        list.sort(sortScorers);
+        state.scorerDirectory = list;
+        return list;
+      })
+      .catch(function (err) {
+        scorerDirectoryPromise = null;
+        throw err;
+      });
+    return scorerDirectoryPromise;
+  }
+
+  function ensureScorerDirectoryThenRender() {
+    if (!isAdminUi() || state.scorerDirectory || scorerDirectoryLoading) return;
+    scorerDirectoryLoading = true;
+    loadScorerDirectory().then(function () {
+      scorerDirectoryLoading = false;
+      render();
+    }).catch(function (err) {
+      scorerDirectoryLoading = false;
+      console.warn('[tournament] scorer directory:', err);
+    });
+  }
+
+  function availableMatchScorers(tournament) {
+    const byUid = {};
+    function put(scorer) {
+      if (!scorer || !scorer.uid) return;
+      const prev = byUid[scorer.uid] || {};
+      byUid[scorer.uid] = {
+        uid: scorer.uid,
+        name: scorer.name || prev.name || '',
+        email: scorer.email || prev.email || ''
+      };
+    }
+    (state.scorerDirectory || []).forEach(put);
+    ((tournament && tournament.scorers) || []).forEach(put);
+    return Object.keys(byUid).map(function (uid) { return byUid[uid]; }).sort(sortScorers);
+  }
+
+  async function ensureTournamentHasScorer(tournament, scorer) {
+    if (!tournament || !scorer || !scorer.uid) return;
+    const exists = (tournament.scorers || []).some(function (item) { return item.uid === scorer.uid; });
+    if (exists) return;
+    const next = (tournament.scorers || []).concat([{
+      uid: scorer.uid,
+      name: scorer.name || scorer.email || 'Scorer',
+      email: scorer.email || ''
+    }]);
+    await db.collection('tournaments').doc(tournament.id).update({
+      scorers: next,
+      scorerUids: next.map(function (item) { return item.uid; }),
+      updatedAt: FieldValue.serverTimestamp()
+    });
+  }
+
   async function openTournamentScorers(tournamentId) {
     if (!isAdminUi()) return toast('Admin only', 'error');
     const tournament = state.tournaments.find(function (item) { return item.id === tournamentId; });
-    if (!isActivePublishedTournament(tournament)) {
-      return toast('Scorers can be assigned only after the tournament is published and started.', 'error');
-    }
+    if (!tournament) return toast('Tournament not found', 'error');
     const dialog = getOrCreateModal('tTournamentScorers', 'Tournament scorers', { wide: false });
     const modal = dialog.modal;
     const body = dialog.body;
     body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Loading registered scorers…</p>';
     modal.classList.add('open');
     try {
-      const snap = await db.collection('users').where('role', '==', 'scorer').get();
-      const candidates = [];
-      snap.forEach(function (doc) {
-        const data = doc.data() || {};
-        candidates.push({
-          uid: doc.id,
-          name: scorerProfileName(data),
-          email: String(data.email || '').trim().toLowerCase()
-        });
-      });
-      candidates.sort(function (a, b) {
-        return (a.name || a.email).localeCompare(b.name || b.email);
-      });
+      const candidates = await loadScorerDirectory(true);
       const selected = {};
       (tournament.scorers || []).forEach(function (scorer) { if (scorer && scorer.uid) selected[scorer.uid] = true; });
       body.innerHTML = `
-        <p class="t-mode-note" style="margin-top:0;">Choose from members who have the scorer role. Only these people can then be assigned to matches in this tournament.</p>
+        <p class="t-mode-note" style="margin-top:0;">These members have the scorer role. Save them here, or pick one on a match — that also adds them to this tournament.</p>
         <div class="t-scorer-list">
           ${candidates.length ? candidates.map(function (scorer) {
             return `<label class="t-scorer-person">
@@ -4789,7 +4870,7 @@
   }
 
   function matchScorerSelect(match, tournament) {
-    const scorers = (tournament && tournament.scorers) || [];
+    const scorers = availableMatchScorers(tournament);
     const known = scorers.some(function (scorer) { return scorer.uid === match.scorerUid; });
     const options = ['<option value="">No scorer assigned</option>'];
     if (match.scorerUid && !known) {
@@ -4801,15 +4882,17 @@
       options.push('<option value="' + escapeHtml(scorer.uid) + '"' + (scorer.uid === match.scorerUid ? ' selected' : '') + '>'
         + escapeHtml(label) + '</option>');
     });
-    return `<label class="t-match-scorer"><span>Match scorer</span><select class="t-select sm" data-scorer-select>${options.join('')}</select></label>`;
+    const emptyHint = scorers.length
+      ? ''
+      : '<span class="t-mode-note" style="margin:0;">No scorers yet. Grant the role on Members &amp; Admins, then pick them here.</span>';
+    return `<label class="t-match-scorer"><span>Match scorer</span><select class="t-select sm" data-scorer-select>${options.join('')}</select><button type="button" class="t-btn sm" data-act="tournament-scorers">Choose tournament scorers</button>${emptyHint}</label>`;
   }
 
   async function assignMatchScorer(match, tournament, uid) {
     if (!isAdminUi()) return toast('Admin only', 'error');
-    if (!isActivePublishedTournament(tournament)) return toast('The tournament must be published and started first.', 'error');
     if (match.status === 'completed') return toast('A completed match cannot be assigned to a scorer.', 'error');
-    const scorer = (tournament.scorers || []).find(function (item) { return item.uid === uid; }) || null;
-    if (uid && !scorer) return toast('Choose a scorer assigned to this tournament.', 'error');
+    const scorer = availableMatchScorers(tournament).find(function (item) { return item.uid === uid; }) || null;
+    if (uid && !scorer) return toast('Choose a registered scorer.', 'error');
     const patch = {
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
@@ -4824,6 +4907,7 @@
       patch.scorerEmail = FieldValue.delete();
     }
     try {
+      if (scorer) await ensureTournamentHasScorer(tournament, scorer);
       await db.collection('tournament_matches').doc(match.id).update(patch);
       toast(scorer ? 'Match assigned to ' + patch.scorerName : 'Match scorer cleared');
     } catch (err) {
@@ -4869,7 +4953,7 @@
         // Delete is always available to admins, regardless of match status.
         btns.push('<button class="t-btn danger sm" data-act="delete">🗑 Delete</button>');
       }
-      actions.innerHTML = (adminCanEdit && isActivePublishedTournament(tournament) && match.status !== 'completed'
+      actions.innerHTML = (adminCanEdit && match.status !== 'completed'
         ? matchScorerSelect(match, tournament)
         : '') + '<div class="t-match-action-buttons">' + btns.join(' ') + '</div>';
       const scorerSelect = actions.querySelector('[data-scorer-select]');
@@ -4901,6 +4985,9 @@
       }
       const ref = db.collection('tournament_matches').doc(match.id);
       const sport = getSportConfig(tournament, match.sport);
+      if (act === 'tournament-scorers') {
+        return openTournamentScorers(tournament.id);
+      }
       if (act === 'delete') {
         const p = participantsOf(match, tournament);
         const label = displayName(tournament, match.sport, p.a) + ' vs ' + displayName(tournament, match.sport, p.b);
@@ -7118,6 +7205,8 @@
     if (state.unsubRsvp)  { state.unsubRsvp();  state.unsubRsvp  = null; }
     state.users = [];
     state.rsvpResponses = [];
+    state.scorerDirectory = null;
+    scorerDirectoryPromise = null;
     state.ready.users = false;
     state.ready.rsvp  = false;
   }
