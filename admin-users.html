@@ -128,6 +128,7 @@
         }
         .role-badge.admin  { background: #d1fae5; color: #065f46; }
         .role-badge.member { background: #e5e7eb; color: #374151; }
+        .role-badge.scorer { background: #fef3c7; color: #92400e; }
         .role-badge.labuser { background: #dbeafe; color: #1e40af; margin-left: 6px; }
         .action-cell { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 
@@ -220,7 +221,7 @@
     <div id="mainContent" style="display:none;">
         <div class="header-card">
             <h2>Find members</h2>
-            <p>Search for a signed-in member, update their directory-linked first name, last name, and FID, or manage their access. Searches begin after three characters to avoid loading every user profile.</p>
+            <p>Search for a signed-in member, update their directory-linked profile, or manage admin, scorer, and lab access. Searches begin after three characters to avoid loading every user profile.</p>
         </div>
 
         <div class="import-card">
@@ -245,6 +246,7 @@
                 <button class="filter-btn active" data-filter="all"    onclick="setFilter('all')">All <span class="count-pill" id="countAll">0</span></button>
                 <button class="filter-btn"        data-filter="admin"  onclick="setFilter('admin')">Admins <span class="count-pill" id="countAdmin">0</span></button>
                 <button class="filter-btn"        data-filter="member" onclick="setFilter('member')">Members <span class="count-pill" id="countMember">0</span></button>
+                <button class="filter-btn"        data-filter="scorer" onclick="setFilter('scorer')">Scorers <span class="count-pill" id="countScorer">0</span></button>
                 <button class="filter-btn"        data-filter="labuser" onclick="setFilter('labuser')">Lab users <span class="count-pill" id="countLabUser">0</span></button>
             </div>
         </div>
@@ -305,7 +307,7 @@
 
 <div id="toast" class="toast"></div>
 
-<script src="firebase-config.js?v=16"></script>
+<script src="firebase-config.js?v=18"></script>
 <script>
 let allUsers = [];
 let currentFilter = 'all';
@@ -492,11 +494,13 @@ document.getElementById('searchInput').addEventListener('input', function () {
 function renderAll() {
     const q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
     const admins  = allUsers.filter(function (u) { return u.role === 'admin'; }).length;
+    const scorers = allUsers.filter(function (u) { return u.role === 'scorer'; }).length;
     const labUsers = allUsers.filter(function (u) { return u.labUser === true && u.role !== 'admin'; }).length;
-    const members = allUsers.length - admins;
+    const members = allUsers.filter(function (u) { return !u.role || u.role === 'member'; }).length;
     document.getElementById('countAll').textContent    = allUsers.length;
     document.getElementById('countAdmin').textContent  = admins;
     document.getElementById('countMember').textContent = members;
+    document.getElementById('countScorer').textContent = scorers;
     document.getElementById('countLabUser').textContent = labUsers;
 
     const body = document.getElementById('usersBody');
@@ -508,7 +512,8 @@ function renderAll() {
     const filtered = allUsers.filter(function (u) {
         const role = u.role || 'member';
         if (currentFilter === 'admin'  && role !== 'admin')  return false;
-        if (currentFilter === 'member' && role === 'admin')  return false;
+        if (currentFilter === 'member' && role !== 'member') return false;
+        if (currentFilter === 'scorer' && role !== 'scorer') return false;
         if (currentFilter === 'labuser' && (u.labUser !== true || role === 'admin')) return false;
         if (!q) return true;
         const names = displayNames(u);
@@ -532,6 +537,11 @@ function renderAll() {
             : (role === 'admin'
                 ? '<button class="btn danger" data-action="demote">Revoke admin</button>'
                 : '<button class="btn primary" data-action="promote">Grant admin</button>');
+        const scorerBtn = role === 'admin'
+            ? ''
+            : (role === 'scorer'
+                ? '<button class="btn danger" data-action="revoke-scorer">Revoke scorer</button>'
+                : '<button class="btn" data-action="grant-scorer">Grant scorer</button>');
         const labBtn = role === 'admin'
             ? ''
             : (isLab
@@ -551,7 +561,7 @@ function renderAll() {
             '<td><span class="role-badge ' + role + '">' + role + '</span>' +
                 (isLab && role !== 'admin' ? '<span class="role-badge labuser">lab user</span>' : '') +
             '</td>' +
-            '<td><div class="action-cell">' + profileBtn + adminBtn + labBtn + '</div></td>';
+            '<td><div class="action-cell">' + profileBtn + adminBtn + scorerBtn + labBtn + '</div></td>';
 
         tr.querySelectorAll('[data-action]').forEach(function (actionBtn) {
             actionBtn.addEventListener('click', function () {
@@ -559,6 +569,8 @@ function renderAll() {
                 if (action === 'edit-profile') openProfileEditor(u);
                 else if (action === 'promote') promote(u, actionBtn);
                 else if (action === 'demote') demote(u, actionBtn);
+                else if (action === 'grant-scorer') grantScorer(u, actionBtn);
+                else if (action === 'revoke-scorer') revokeScorer(u, actionBtn);
                 else if (action === 'grant-lab') grantLabUser(u, actionBtn);
                 else if (action === 'revoke-lab') revokeLabUser(u, actionBtn);
             });
@@ -874,6 +886,38 @@ async function demote(u, btn) {
         console.error('demote failed:', err);
         toast('Revoke failed: ' + (err.message || err), 'error');
         btn.disabled = false; btn.textContent = 'Revoke admin';
+    }
+}
+
+async function grantScorer(u, btn) {
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
+    if (!confirm('Grant scorer access to ' + label + '? An admin can then assign them to an active published tournament and its matches.')) return;
+    btn.disabled = true; btn.textContent = 'Updating…';
+    try {
+        await SmashAuth.grantScorer(u.__id);
+        toast(label + ' is now a scorer.');
+        await refreshCurrentSearch();
+    } catch (err) {
+        console.error('grant scorer failed:', err);
+        toast('Could not grant scorer access: ' + (err.message || err), 'error');
+        btn.disabled = false; btn.textContent = 'Grant scorer';
+    }
+}
+
+async function revokeScorer(u, btn) {
+    const names = displayNames(u);
+    const label = (names.first + ' ' + names.last).trim() || u.email || u.__id;
+    if (!confirm('Revoke scorer access for ' + label + '? Existing match assignments remain visible, but this person will no longer be able to score.')) return;
+    btn.disabled = true; btn.textContent = 'Updating…';
+    try {
+        await SmashAuth.revokeScorer(u.__id);
+        toast('Scorer access revoked for ' + label + '.');
+        await refreshCurrentSearch();
+    } catch (err) {
+        console.error('revoke scorer failed:', err);
+        toast('Could not revoke scorer access: ' + (err.message || err), 'error');
+        btn.disabled = false; btn.textContent = 'Revoke scorer';
     }
 }
 

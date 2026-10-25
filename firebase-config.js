@@ -168,9 +168,9 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
   // ── SmashAuth (role-aware auth state exposed to every page) ───────────
   // Shape passed to onChange listeners:
-  //   { user, profile, role, isAdmin, isLabUser, loading }
+  //   { user, profile, role, isAdmin, isScorer, isLabUser, loading }
   // Pages should treat loading=true as "unknown yet, don't render admin UI".
-  const state = { user: null, profile: null, role: null, isAdmin: false, isLabUser: false, loading: true };
+  const state = { user: null, profile: null, role: null, isAdmin: false, isScorer: false, isLabUser: false, loading: true };
   const listeners = [];
   let userDocUnsub = null;
 
@@ -184,6 +184,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
   function setState(patch) {
     Object.assign(state, patch);
     state.isAdmin = (state.role === 'admin');
+    state.isScorer = (state.role === 'scorer');
     state.isLabUser = !!state.isLabUser;
     notify();
   }
@@ -211,6 +212,8 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     get currentRole()  { return state.role;  },
     /** Convenience: SmashAuth.isAdmin() */
     isAdmin: function () { return state.isAdmin; },
+    /** Tournament scorer role. Scorers never receive admin tools. */
+    isScorer: function () { return state.isScorer; },
     /** Member granted the lab-user role (test in-progress features). */
     isLabUser: function () { return !!state.isLabUser; },
     /** Admins and lab users can open any lab feature. */
@@ -247,6 +250,24 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
       }
       await db.collection('users').doc(uid).set({
         role:      'member',
+        roleSetAt: FV.serverTimestamp(),
+        roleSetBy: (state.user && state.user.email) || 'unknown'
+      }, { merge: true });
+    },
+    /** Admin action: allow a registered member to be assigned as a scorer. */
+    grantScorer: async function (uid) {
+      if (!state.isAdmin) throw new Error('Only admins can grant scorer access.');
+      await db.collection('users').doc(uid).set({
+        role: 'scorer',
+        roleSetAt: FV.serverTimestamp(),
+        roleSetBy: (state.user && state.user.email) || 'unknown'
+      }, { merge: true });
+    },
+    /** Admin action: remove scorer access and return the user to member. */
+    revokeScorer: async function (uid) {
+      if (!state.isAdmin) throw new Error('Only admins can revoke scorer access.');
+      await db.collection('users').doc(uid).set({
+        role: 'member',
         roleSetAt: FV.serverTimestamp(),
         roleSetBy: (state.user && state.user.email) || 'unknown'
       }, { merge: true });
@@ -288,7 +309,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 
   function currentUserCanSeeTournament() {
     if (tournamentAccess.openToEveryone) return true;
-    return !!(window.SmashAuth && SmashAuth.canAccessLab());
+    return !!(window.SmashAuth && (SmashAuth.canAccessLab() || SmashAuth.isScorer()));
   }
 
   function applyTournamentNavVisibility() {
@@ -329,7 +350,7 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
     isLoaded: function () { return tournamentAccess.loaded; },
     canSeeNav: function (isAdmin) {
       if (isAdmin || tournamentAccess.openToEveryone) return true;
-      return !!(window.SmashAuth && SmashAuth.canAccessLab());
+      return !!(window.SmashAuth && (SmashAuth.canAccessLab() || SmashAuth.isScorer()));
     },
     canCurrentUserAccess: function () { return currentUserCanSeeTournament(); },
     onChange: function (fn) {

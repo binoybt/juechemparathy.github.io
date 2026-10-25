@@ -503,15 +503,26 @@ body.t-member-preview .t-admin-switch {
 
 /* Score stepper */
 .t-scorer {
-  display: grid; grid-template-columns: 1fr 60px 1fr; gap: 10px; align-items: center;
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; align-items: center;
   padding: 10px; border-radius: var(--t-r-sm); background: #f8fafc;
+}
+.t-scorer-period {
+  grid-column: 1 / -1;
+  text-align: center;
+  color: var(--t-muted);
+  font-size: .8rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .05em;
 }
 .t-scorer .side {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
+  min-width: 0;
 }
 .t-scorer .side .team-name {
   font-weight: 700; font-size: .85rem; color: var(--t-fg);
   display: flex; align-items: center; gap: 6px;
+  max-width: 100%; text-align: center;
 }
 .t-scorer .side .value {
   font-family: 'Barlow Condensed', sans-serif;
@@ -519,9 +530,39 @@ body.t-member-preview .t-admin-switch {
   font-variant-numeric: tabular-nums;
   color: var(--t-fg);
 }
-.t-scorer .side .btns { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; }
-.t-scorer .sep {
-  text-align: center; color: var(--t-muted); font-size: 1.4rem; font-weight: 700;
+.t-score-stepper {
+  display: grid;
+  grid-template-columns: 42px minmax(52px, 72px) 42px;
+  align-items: stretch;
+  gap: 4px;
+}
+.t-score-button {
+  min-width: 42px;
+  min-height: 42px;
+  border: 1px solid var(--t-border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--t-fg);
+  font-size: 1.35rem;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.t-score-button.add {
+  border-color: var(--t-primary);
+  background: var(--t-primary);
+  color: #fff;
+}
+.t-score-button:active { transform: translateY(1px); }
+.t-score-input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 4px;
+  text-align: center;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 1.45rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
 }
 .t-scorer-participants {
   display: grid;
@@ -555,6 +596,21 @@ body.t-member-preview .t-admin-switch {
   color: var(--t-fg);
   font-weight: 700;
 }
+.t-scorer-list { display: grid; gap: 8px; }
+.t-scorer-person {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--t-border);
+  border-radius: var(--t-r-sm); cursor: pointer;
+}
+.t-scorer-person input { width: 18px; height: 18px; accent-color: var(--t-primary); }
+.t-scorer-person span { display: grid; gap: 2px; min-width: 0; }
+.t-scorer-person small { color: var(--t-muted); overflow-wrap: anywhere; }
+.t-match-scorer {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 10px; color: var(--t-muted); font-size: .78rem; font-weight: 700;
+}
+.t-match-scorer .t-select { width: auto; min-width: 190px; padding: 7px 30px 7px 9px; }
+.t-match-action-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
 
 /* ── Modals ── */
 .t-modal {
@@ -1128,6 +1184,10 @@ body.t-member-preview .t-admin-switch {
 @media (max-width: 640px) {
   .t-container { padding: 14px 10px 40px; }
   .t-scorer-participants { grid-template-columns: 1fr; }
+  .t-scorer { gap: 8px; padding: 8px; }
+  .t-score-stepper { grid-template-columns: 38px minmax(46px, 60px) 38px; }
+  .t-score-button { min-width: 38px; min-height: 42px; }
+  .t-score-input { font-size: 1.3rem; }
   .t-bracket-points { align-items: flex-start; flex-direction: column; }
   .t-match-body { grid-template-columns: 1fr; gap: 6px; text-align: center; }
   .t-match-team.right { justify-content: center; text-align: center; }
