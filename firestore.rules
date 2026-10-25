@@ -1,0 +1,193 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myRole() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && myRole() == 'admin';
+    }
+
+    function isScorer() {
+      return isSignedIn() && myRole() == 'scorer';
+    }
+
+    function tournamentAllowsScorer(tournamentId) {
+      let tournament = get(/databases/$(database)/documents/tournaments/$(tournamentId));
+      return tournament.data.published == true
+        && tournament.data.started == true
+        && request.auth.uid in tournament.data.scorerUids;
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && (
+        (
+          request.auth.uid == uid
+          && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['role', 'labUser'])
+        )
+        || isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /pendingRegistrations/{docId} {
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /additionalMembers/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /slots/{slotId} {
+      allow read: if isSignedIn();
+      allow update: if isSignedIn();
+      allow create, delete: if isAdmin();
+    }
+
+    match /slots_backup/{docId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /blockedDays/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /blockedSlots/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /userPreferences/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    match /wishlistItems/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+
+      match /contributions/{contribId} {
+        allow read, create: if isSignedIn();
+        allow update, delete: if isAdmin();
+      }
+    }
+
+    match /events/{eventId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /rsvpEvents/{eventId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /rsvpResponses/{docId} {
+      allow read, create, update, delete: if isSignedIn();
+    }
+
+    match /tournaments/{docId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn()
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny([
+          'scorers',
+          'scorerUids',
+          'published',
+          'started',
+          'startedAt',
+          'publicBoard',
+          'publicBoardAt'
+        ])
+      );
+    }
+
+    match /tournament_matches/{docId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isScorer()
+        && resource.data.scorerUid == request.auth.uid
+        && resource.data.status == 'in_progress'
+        && tournamentAllowsScorer(resource.data.tournamentId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'games',
+          'sets',
+          'quarters',
+          'status',
+          'winner',
+          'resultType',
+          'updatedAt'
+        ])
+        && request.resource.data.status in ['in_progress', 'completed']
+        && (
+          (
+            request.resource.data.status == 'in_progress'
+            && request.resource.data.resultType == null
+          )
+          || (
+            request.resource.data.status == 'completed'
+            && request.resource.data.resultType == 'played'
+          )
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['games'])
+          || request.resource.data.games.size() == resource.data.games.size()
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['sets'])
+          || request.resource.data.sets.size() == resource.data.sets.size()
+        )
+        && (
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['quarters'])
+          || request.resource.data.quarters.size() == resource.data.quarters.size()
+        )
+      );
+    }
+
+    match /games/{docId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /members/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /identityClaims/{id} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /siteConfig/tournament {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /tournament_public/{id} {
+      allow get: if resource.data.publicBoard == true
+        && resource.data.published == true
+        && resource.data.started == true;
+      allow list: if false;
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}

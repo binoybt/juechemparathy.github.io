@@ -56,6 +56,8 @@
  *     archived      bool
  *     published     bool  — members see it only when true; missing = unpublished
  *                           (existing docs without the field stay unpublished)
+ *     scorers[]     { uid, name, email } — scorer-role members assigned by admin
+ *     scorerUids[]  string — mirrored UIDs used by Firestore authorization
  *     clonedFrom    string — source tournament id when created via Clone
  *     createdAt / updatedAt / createdBy
  *
@@ -84,6 +86,7 @@
  *     showUpcoming  bool — admin marks which scheduled matches appear in Upcoming
  *     status        'scheduled' | 'in_progress' | 'completed'
  *     winner        'A' | 'B' | 'tie' | null
+ *     scorerUid / scorerName / scorerEmail — admin-assigned match scorer
  *     scoringConfig snapshot of the stage's scoring rules at match-creation time
  *
  *     Racket sports:  games[]  { category, playersA, playersB, sets[{a,b}], status, winner }
@@ -877,6 +880,7 @@
   const state = {
     user: null,
     isAdmin: false,
+    isScorer: false,
     isLabUser: false,
     currentProfile: null,
     adminUi: true,
@@ -934,6 +938,8 @@
   // Real admin role (from Firestore). Lab users never have this.
   function isRealAdmin() { return !!state.isAdmin; }
 
+  function hasScorerRole() { return !!state.isScorer; }
+
   // Admin tools in the UI. Admins can turn this off to preview the member view.
   function isAdminUi() { return !!(state.isAdmin && state.adminUi); }
 
@@ -950,6 +956,46 @@
 
   function canEditSchedule() { return isAdminUi(); }
 
+  function isAssignedScorer(match) {
+    return !!(match && hasScorerRole() && currentUid() && match.scorerUid === currentUid());
+  }
+
+  function isActivePublishedTournament(tournament) {
+    return !!(tournament && tournament.started === true && tournament.published === true);
+  }
+
+  function tournamentForMatch(match) {
+    return match && state.tournaments.find(function (item) { return item.id === match.tournamentId; });
+  }
+
+  function isTournamentScorer(tournament) {
+    const uid = currentUid();
+    return !!(uid && tournament && (tournament.scorers || []).some(function (scorer) {
+      return scorer && scorer.uid === uid;
+    }));
+  }
+
+  function canScoreMatch(match) {
+    if (isAdminUi()) return true;
+    const tournament = tournamentForMatch(match);
+    return !!(isAssignedScorer(match)
+      && match.status === 'in_progress'
+      && isActivePublishedTournament(tournament)
+      && isTournamentScorer(tournament));
+  }
+
+  function assertCanScoreMatch(match) {
+    const latest = match && state.matches.find(function (item) { return item.id === match.id; });
+    const target = latest || match;
+    if (isAdminUi()) return target;
+    if (!target || !isAssignedScorer(target)) throw new Error('Only the assigned scorer or an admin can score this match.');
+    const tournament = tournamentForMatch(target);
+    if (!isActivePublishedTournament(tournament)) throw new Error('Scoring is available only while the tournament is active and published.');
+    if (!isTournamentScorer(tournament)) throw new Error('You are no longer assigned as a scorer for this tournament.');
+    if (target.status !== 'in_progress') throw new Error('Scoring is available only after an admin starts the match and before it is completed.');
+    return target;
+  }
+
   function tournamentOpenToEveryone() {
     return !!(window.TournamentAccess && TournamentAccess.isOpenToEveryone());
   }
@@ -964,7 +1010,7 @@
 
   function canUseTournamentPage() {
     if (!state.user) return false;
-    return !!(tournamentOpenToEveryone() || canAccessLab());
+    return !!(tournamentOpenToEveryone() || canAccessLab() || hasScorerRole());
   }
 
   // Members only see a tournament after an admin publishes it.
@@ -1365,7 +1411,7 @@
     const cats = racketCategoriesForMatch(tournament, sportCfg, match);
     const need = Math.ceil(cats.length / 2);
     let a = 0, b = 0;
-    (match.games || []).forEach(function (g) {
+    racketGamesForMatch(match, tournament, sportCfg).forEach(function (g) {
       if (g.winner === 'A') a++; else if (g.winner === 'B') b++;
     });
     if (a >= need) return 'A';
@@ -1438,7 +1484,10 @@
     if (!sc) return { a: '—', b: '—' };
     if (sc.kind === 'racket') {
       let a = 0, b = 0;
-      (match.games || []).forEach(function (g) { if (g.winner === 'A') a++; else if (g.winner === 'B') b++; });
+      racketGamesForMatch(match, tournament, sc).forEach(function (g) {
+        if (g.winner === 'A') a++;
+        else if (g.winner === 'B') b++;
+      });
       return { a: String(a), b: String(b), label: 'Games' };
     }
     if (sc.kind === 'volleyball') {
@@ -1464,7 +1513,7 @@
       return { a: 0, b: 0 };
     }
     if (sport.kind === 'racket') {
-      return (match.games || []).reduce(function (totals, game) {
+      return racketGamesForMatch(match, tournament, sport).reduce(function (totals, game) {
         (game.sets || []).forEach(function (set) {
           totals.a += Number(set.a) || 0;
           totals.b += Number(set.b) || 0;
@@ -1711,7 +1760,9 @@
     if (!state.user) {
       box.innerHTML = `<button class="t-nav-btn" onclick="window.__tournament.signIn()">Sign in</button>`;
     } else {
-      const label = isAdminUi() ? 'Admin' : (signedInDisplayName() || 'You');
+      const label = isAdminUi()
+        ? 'Admin'
+        : (hasScorerRole() ? 'Scorer · ' + (signedInDisplayName() || 'You') : (signedInDisplayName() || 'You'));
       box.innerHTML = `
         <span class="t-user-chip"><span class="dot"></span>${escapeHtml(label)}</span>
         <a class="t-nav-btn" href="profile.html?return=tournament.html">Profile</a>
@@ -3195,6 +3246,7 @@
   window.__tournament.clearSchedule = clearSchedule;
   window.__tournament.setSportMode = setSportMode;
   window.__tournament.setTournamentStarted = setTournamentStarted;
+  window.__tournament.openTournamentScorers = openTournamentScorers;
   window.__tournament.shareLiveBoard = shareLiveBoard;
   window.__tournament.stopLiveBoard = stopLiveBoard;
   window.__tournament.copySpectatorLink = copySpectatorLink;
@@ -3305,6 +3357,22 @@
     }
   }
 
+  function renderSummaryCurrentMatches(tournament, sport) {
+    const list = document.getElementById('tSummaryCurrentMatches');
+    if (!list || !sport) return;
+    const current = visibleMatchesFor(tournament, sport.id)
+      .filter(function (match) { return match.status === 'in_progress'; })
+      .sort(sortMatches);
+    list.innerHTML = '';
+    if (!current.length) {
+      list.innerHTML = '<div class="t-empty">No matches are currently in progress.</div>';
+      return;
+    }
+    current.forEach(function (match) {
+      list.appendChild(matchWithActions(match, tournament, { canEdit: isAdminUi() }));
+    });
+  }
+
   function renderTournament() {
     harvestScheduleEditor();
     const parsed = parseUrl();
@@ -3352,15 +3420,6 @@
 
       ${renderTournamentViewTabs(t, panel)}
 
-      ${panel === 'summary' && isMultiSportTournament(t) ? renderRulesCard({
-        title: 'Tournament rules',
-        subtitle: 'applies to every sport',
-        text: rulesText(t.rules),
-        textareaId: 'tTournamentRules',
-        placeholder: 'Eligibility, conduct, scoring notes, prize rules…',
-        saveCall: "saveTournamentRules('" + t.id + "')"
-      }) : ''}
-
       ${isAdminUi() ? `
       <section class="t-section" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="t-btn" type="button" onclick="window.__tournament.cloneTournament('${escapeHtml(t.id)}')">📄 Clone</button>
@@ -3370,6 +3429,9 @@
         ${tournamentHasStarted(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', false)">⏸ Mark not started</button>`
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', true)">▶ Start tournament</button>`}
+        ${isActivePublishedTournament(t)
+          ? `<button class="t-btn" type="button" onclick="window.__tournament.openTournamentScorers('${escapeHtml(t.id)}')">🧑‍⚖️ Tournament scorers (${(t.scorers || []).length})</button>`
+          : ''}
         <button class="t-btn" type="button" onclick="window.__tournament.shareLiveBoard('${escapeHtml(t.id)}')">${t.publicBoard ? '📺 Spectator link on' : '📺 Spectator link'}</button>
         ${isTournamentPublished(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', false)">🙈 Unpublish</button>`
@@ -3405,6 +3467,13 @@
         </section>
       ` : ''}
 
+      ${panel === 'summary' && sport && categorized ? `
+        <section class="t-section">
+          <div class="t-section-header"><h2 class="t-section-title">Current matches <small>all categories</small></h2></div>
+          <div class="t-match-list" id="tSummaryCurrentMatches"></div>
+        </section>
+      ` : ''}
+
       ${panel === 'summary' && sport && categorized ? '<div id="tCategoryRoot"></div>' : ''}
       ${panel === 'summary' && sport && !categorized ? `
         ${t.format === 'teams' ? `
@@ -3422,15 +3491,6 @@
           <div class="t-rosters-grid" id="tRostersGrid"></div>
         </section>
         ` : ''}
-
-        ${renderRulesCard({
-          title: (sport.label || 'Sport') + ' rules',
-          subtitle: 'this sport only',
-          text: rulesText(sport.rules),
-          textareaId: 'tSportRules',
-          placeholder: 'Format, scoring, substitutions, court rules for this sport…',
-          saveCall: "saveSportRules('" + t.id + "','" + sport.id + "')"
-        })}
 
         <section class="t-section" id="tScheduleSection">
           <div class="t-section-header">
@@ -3481,6 +3541,7 @@
     if (panel === 'matches') {
       renderAllMatchesPanel(t);
     } else if (panel === 'summary' && sport && categorized) {
+      renderSummaryCurrentMatches(t, sport);
       renderCategoryWorkspace(t, sport, parsed);
     } else if (panel === 'summary' && sport) {
       if (t.format === 'teams') renderRostersFor(t, sport);
@@ -3549,6 +3610,104 @@
     } catch (err) {
       console.error(err);
       toast('Could not update sport mode: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
+  function scorerProfileName(profile) {
+    if (!profile) return '';
+    const parts = [profile.firstName, profile.middleName, profile.lastName].map(function (part) {
+      return String(part || '').trim();
+    }).filter(Boolean);
+    return parts.join(' ') || String(profile.displayName || profile.email || '').trim();
+  }
+
+  async function openTournamentScorers(tournamentId) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const tournament = state.tournaments.find(function (item) { return item.id === tournamentId; });
+    if (!isActivePublishedTournament(tournament)) {
+      return toast('Scorers can be assigned only after the tournament is published and started.', 'error');
+    }
+    const dialog = getOrCreateModal('tTournamentScorers', 'Tournament scorers', { wide: false });
+    const modal = dialog.modal;
+    const body = dialog.body;
+    body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Loading registered scorers…</p>';
+    modal.classList.add('open');
+    try {
+      const snap = await db.collection('users').where('role', '==', 'scorer').get();
+      const candidates = [];
+      snap.forEach(function (doc) {
+        const data = doc.data() || {};
+        candidates.push({
+          uid: doc.id,
+          name: scorerProfileName(data),
+          email: String(data.email || '').trim().toLowerCase()
+        });
+      });
+      candidates.sort(function (a, b) {
+        return (a.name || a.email).localeCompare(b.name || b.email);
+      });
+      const selected = {};
+      (tournament.scorers || []).forEach(function (scorer) { if (scorer && scorer.uid) selected[scorer.uid] = true; });
+      body.innerHTML = `
+        <p class="t-mode-note" style="margin-top:0;">Choose from members who have the scorer role. Only these people can then be assigned to matches in this tournament.</p>
+        <div class="t-scorer-list">
+          ${candidates.length ? candidates.map(function (scorer) {
+            return `<label class="t-scorer-person">
+              <input type="checkbox" data-scorer-uid="${escapeHtml(scorer.uid)}" ${selected[scorer.uid] ? 'checked' : ''} />
+              <span><b>${escapeHtml(scorer.name || scorer.email || 'Registered scorer')}</b>${scorer.email ? '<small>' + escapeHtml(scorer.email) + '</small>' : ''}</span>
+            </label>`;
+          }).join('') : '<div class="t-empty" style="padding:18px;">No members have the scorer role. Grant it from Members &amp; Admins first.</div>'}
+        </div>
+        <div class="t-modal-foot" style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
+          <button type="button" class="t-btn" data-close-scorers>Cancel</button>
+          ${candidates.length ? '<button type="button" class="t-btn primary" data-save-scorers>Save scorers</button>' : ''}
+        </div>
+      `;
+      body.querySelector('[data-close-scorers]').addEventListener('click', function () { closeLiveModal('tTournamentScorers'); });
+      const save = body.querySelector('[data-save-scorers]');
+      if (save) {
+        save.addEventListener('click', async function () {
+          save.disabled = true;
+          save.textContent = 'Saving…';
+          const chosen = {};
+          body.querySelectorAll('[data-scorer-uid]:checked').forEach(function (input) {
+            chosen[input.getAttribute('data-scorer-uid')] = true;
+          });
+          const next = candidates.filter(function (scorer) { return chosen[scorer.uid]; });
+          const removed = {};
+          (tournament.scorers || []).forEach(function (scorer) {
+            if (scorer && scorer.uid && !chosen[scorer.uid]) removed[scorer.uid] = true;
+          });
+          try {
+            const batch = db.batch();
+            batch.update(db.collection('tournaments').doc(tournament.id), {
+              scorers: next,
+              scorerUids: next.map(function (scorer) { return scorer.uid; }),
+              updatedAt: FieldValue.serverTimestamp()
+            });
+            state.matches.forEach(function (match) {
+              if (match.tournamentId !== tournament.id || !removed[match.scorerUid] || match.status === 'completed') return;
+              batch.update(db.collection('tournament_matches').doc(match.id), {
+                scorerUid: FieldValue.delete(),
+                scorerName: FieldValue.delete(),
+                scorerEmail: FieldValue.delete(),
+                updatedAt: FieldValue.serverTimestamp()
+              });
+            });
+            await batch.commit();
+            closeLiveModal('tTournamentScorers');
+            toast('Tournament scorers updated');
+          } catch (err) {
+            console.error(err);
+            toast('Could not update tournament scorers: ' + (err.message || err.code || 'unknown'), 'error');
+            save.disabled = false;
+            save.textContent = 'Save scorers';
+          }
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Could not load scorers. ' + escapeHtml(err.message || err.code || 'Try again.') + '</p>';
     }
   }
 
@@ -4042,7 +4201,7 @@
         const viewing = bracket && bracket.id === b.id;
         return `
           <section class="t-section">
-            <div class="t-section-header"><h2 class="t-section-title">Bracket standing <small>${escapeHtml(b.name || 'Bracket')}${viewing ? ' · schedule open' : ''}${bracketIsComplete(b) ? ' · Complete' : ''} · ${escapeHtml(stageName)}</small></h2></div>
+            <div class="t-section-header"><h2 class="t-section-title">Points table <small>${escapeHtml(b.name || 'Bracket')}${viewing ? ' · schedule open' : ''}${bracketIsComplete(b) ? ' · Complete' : ''} · ${escapeHtml(stageName)}</small></h2></div>
             <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rows, division, b.id, 'No ' + (b.name || 'bracket') + ' matches completed yet.')}</div></div>
           </section>
         `;
@@ -4076,14 +4235,7 @@
       ${categoryTabs}
       ${stageTabs}
       ${focusTeam ? teamFocusHtml(tournament, sport, division, focusTeam) : ''}
-      ${renderRulesCard({
-        title: (sport.label || 'Sport') + ' rules',
-        subtitle: 'this sport only',
-        text: rulesText(sport.rules),
-        textareaId: 'tSportRules',
-        placeholder: 'Format, scoring, substitutions, court rules for this sport…',
-        saveCall: "saveSportRules('" + tournament.id + "','" + sport.id + "')"
-      })}
+      ${isAdminUi() ? `
       <section class="t-section">
         <div class="t-section-header">
           <h2 class="t-section-title">${sport.categoryMode === 'open' ? 'Teams' : escapeHtml(division.name || 'Category')} <small>max ${clampMaxPlayers(division.maxPlayers)} player${clampMaxPlayers(division.maxPlayers) === 1 ? '' : 's'}</small></h2>
@@ -4101,21 +4253,19 @@
         <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.</div>'}</div>
       </section>
       ${scheduleBlock}
+      ` : ''}
       ${showBoard ? `
         ${tournamentHasStarted(tournament) ? '' : '<p class="t-mode-note">Members see this board after you start the tournament. You can score matches before that.</p>'}
-        <section class="t-section" id="tLiveSection" style="display:none;">
-          <div class="t-section-header"><h2 class="t-section-title">Current match</h2></div>
-          <div class="t-match-list" id="tLiveList"></div>
-        </section>
         <section class="t-section" id="tUpcomingSection" style="display:none;">
           <div class="t-section-header"><h2 class="t-section-title">${isAdminUi() ? 'Scheduled <small>mark Upcoming so members and the spectator board list that match</small>' : 'Upcoming matches'}</h2></div>
           <div class="t-match-list" id="tUpcomingList"></div>
         </section>
         ${bracketTables}
         <section class="t-section">
-          <div class="t-section-header"><h2 class="t-section-title">Overall standing <small>${escapeHtml(stageName)}</small></h2></div>
+          <div class="t-section-header"><h2 class="t-section-title">Overall points table <small>${escapeHtml(stageName)}</small></h2></div>
           <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, overallRows, division, '', emptyStage)}</div></div>
         </section>
+        ${isAdminUi() ? `
         <section class="t-section" id="tCompletedSection" style="display:none;">
           <div class="t-section-header"><h2 class="t-section-title">Completed</h2></div>
           <div class="t-match-list" id="tCompletedList"></div>
@@ -4124,8 +4274,9 @@
           <div class="t-section-header"><h2 class="t-section-title">Playoffs</h2></div>
           <div class="t-bracket" id="tPlayoffs"></div>
         </section>
+        ` : ''}
       ` : `
-        <section class="t-section"><div class="t-card"><div class="t-card-body t-mode-note" style="margin:0;">Bracket standings, overall standings, the current match, and upcoming matches appear once an admin starts the tournament.</div></div></section>
+        <section class="t-section"><div class="t-card"><div class="t-card-body t-mode-note" style="margin:0;">Point tables and upcoming matches appear once an admin starts the tournament.</div></div></section>
       `}
     `;
 
@@ -4138,10 +4289,8 @@
         if ((m.stage || 'league') !== stageId) return false;
         return categoryMatchVisible(sport, m);
       });
-      const live = pool.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches);
       const upcoming = scheduledMatchesForBoard(pool);
       const completed = pool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
-      fillMatchList('tLiveList', 'tLiveSection', live, tournament);
       fillMatchList('tUpcomingList', 'tUpcomingSection', upcoming, tournament);
       fillMatchList('tCompletedList', 'tCompletedSection', completed, tournament, { compact: true });
       renderPlayoffsFor(tournament, sport.id, pool);
@@ -4478,6 +4627,7 @@
           ${match.bracketId ? '<span class="t-badge">' + escapeHtml((function () { const d = findDivision(sport, match.categoryId); const b = findBracket(d, match.bracketId); return (b && b.name) || 'Bracket'; })()) + '</span>' : ''}
           <span class="t-badge status-${match.status || 'scheduled'}">${escapeHtml(STATUS_LABEL[match.status] || 'Scheduled')}</span>
           ${match.status === 'scheduled' && match.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : ''}
+          ${match.scorerName ? '<span class="t-badge scorer">Scorer: ' + escapeHtml(match.scorerName) + '</span>' : ''}
           ${courtOf(match) ? '<span class="t-badge">🏟 ' + escapeHtml(courtOf(match)) + '</span>' : ''}
           ${match.scheduledAt ? '<span class="t-badge">🕒 ' + escapeHtml(fmtDateTime(match.scheduledAt)) + '</span>' : ''}
         </div>
@@ -4505,7 +4655,8 @@
   }
 
   function renderRacketDetail(match, tournament) {
-    const rows = (match.games || []).map(function (g) {
+    const sport = getSportConfig(tournament, match.sport);
+    const rows = racketGamesForMatch(match, tournament, sport).map(function (g) {
       const setsStr = (g.sets || []).map(function (s) {
         const cfg = getStageScoring(tournament, match.sport, match.stage);
         const w = racketSetWinner(s, cfg);
@@ -4597,6 +4748,50 @@
     return '';
   }
 
+  function matchScorerSelect(match, tournament) {
+    const scorers = (tournament && tournament.scorers) || [];
+    const known = scorers.some(function (scorer) { return scorer.uid === match.scorerUid; });
+    const options = ['<option value="">No scorer assigned</option>'];
+    if (match.scorerUid && !known) {
+      options.push('<option value="' + escapeHtml(match.scorerUid) + '" selected>'
+        + escapeHtml(match.scorerName || match.scorerEmail || 'Unavailable scorer') + ' (role removed)</option>');
+    }
+    scorers.forEach(function (scorer) {
+      const label = scorer.name || scorer.email || 'Registered scorer';
+      options.push('<option value="' + escapeHtml(scorer.uid) + '"' + (scorer.uid === match.scorerUid ? ' selected' : '') + '>'
+        + escapeHtml(label) + '</option>');
+    });
+    return `<label class="t-match-scorer"><span>Match scorer</span><select class="t-select sm" data-scorer-select>${options.join('')}</select></label>`;
+  }
+
+  async function assignMatchScorer(match, tournament, uid) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    if (!isActivePublishedTournament(tournament)) return toast('The tournament must be published and started first.', 'error');
+    if (match.status === 'completed') return toast('A completed match cannot be assigned to a scorer.', 'error');
+    const scorer = (tournament.scorers || []).find(function (item) { return item.uid === uid; }) || null;
+    if (uid && !scorer) return toast('Choose a scorer assigned to this tournament.', 'error');
+    const patch = {
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: (state.user && state.user.email) || ''
+    };
+    if (scorer) {
+      patch.scorerUid = scorer.uid;
+      patch.scorerName = scorer.name || scorer.email || 'Scorer';
+      patch.scorerEmail = scorer.email || '';
+    } else {
+      patch.scorerUid = FieldValue.delete();
+      patch.scorerName = FieldValue.delete();
+      patch.scorerEmail = FieldValue.delete();
+    }
+    try {
+      await db.collection('tournament_matches').doc(match.id).update(patch);
+      toast(scorer ? 'Match assigned to ' + patch.scorerName : 'Match scorer cleared');
+    } catch (err) {
+      console.error(err);
+      toast('Could not assign scorer: ' + (err.message || err.code || 'unknown'), 'error');
+    }
+  }
+
   function matchWithActions(match, tournament, opts) {
     opts = opts || {};
     const classes = ['t-match'];
@@ -4604,30 +4799,47 @@
     if (match.status === 'completed') classes.push('completed');
     const node = el('div', { class: classes.join(' ') });
     node.innerHTML = renderMatchHeadline(match, tournament) + (opts.compact ? '' : renderMatchDetail(match, tournament));
-    if (opts.canEdit) {
+    const adminCanEdit = !!opts.canEdit;
+    const scorerCanEdit = !adminCanEdit && canScoreMatch(match);
+    if (adminCanEdit || scorerCanEdit) {
       const actions = el('div', { class: 't-match-details', style: { borderTop: '1px solid var(--t-border)', paddingTop: '12px' } });
       const btns = [];
-      if (match.status === 'scheduled') {
-        btns.push('<button class="t-btn success sm" data-act="start">▶ Start match</button>');
-        btns.push('<button class="t-btn sm" data-act="schedule">📅 Reschedule</button>');
-        btns.push(match.showUpcoming
-          ? '<button class="t-btn sm" data-act="upcoming">Remove from upcoming</button>'
-          : '<button class="t-btn sm" data-act="upcoming">Show in Upcoming</button>');
-      } else if (match.status === 'in_progress') {
+      if (scorerCanEdit) {
         btns.push('<button class="t-btn primary sm" data-act="score">🎯 Enter scores</button>');
         btns.push('<button class="t-btn sm" data-act="complete">✔ Mark complete</button>');
-        btns.push('<button class="t-btn sm" data-act="reopen">↺ Back to scheduled</button>');
       } else {
-        btns.push('<button class="t-btn primary sm" data-act="score">✏ Edit scores</button>');
-        btns.push('<button class="t-btn sm" data-act="reopen">↺ Reopen</button>');
+        if (match.status === 'scheduled') {
+          btns.push('<button class="t-btn success sm" data-act="start">▶ Start match</button>');
+          btns.push('<button class="t-btn sm" data-act="schedule">📅 Reschedule</button>');
+          btns.push(match.showUpcoming
+            ? '<button class="t-btn sm" data-act="upcoming">Remove from upcoming</button>'
+            : '<button class="t-btn sm" data-act="upcoming">Show in Upcoming</button>');
+        } else if (match.status === 'in_progress') {
+          btns.push('<button class="t-btn primary sm" data-act="score">🎯 Enter scores</button>');
+          btns.push('<button class="t-btn sm" data-act="complete">✔ Mark complete</button>');
+          btns.push('<button class="t-btn sm" data-act="reopen">↺ Back to scheduled</button>');
+        } else {
+          btns.push('<button class="t-btn primary sm" data-act="score">✏ Edit scores</button>');
+          btns.push('<button class="t-btn sm" data-act="reopen">↺ Reopen</button>');
+        }
+        btns.push('<button class="t-btn sm" data-act="court">' + (courtOf(match) ? 'Change court' : 'Set court') + '</button>');
+        btns.push('<button class="t-btn sm" data-act="draw">Draw</button>');
+        btns.push('<button class="t-btn sm" data-act="walkover">Walkover</button>');
+        btns.push('<button class="t-btn sm" data-act="noresult">No result</button>');
+        // Delete is always available to admins, regardless of match status.
+        btns.push('<button class="t-btn danger sm" data-act="delete">🗑 Delete</button>');
       }
-      btns.push('<button class="t-btn sm" data-act="court">' + (courtOf(match) ? 'Change court' : 'Set court') + '</button>');
-      btns.push('<button class="t-btn sm" data-act="draw">Draw</button>');
-      btns.push('<button class="t-btn sm" data-act="walkover">Walkover</button>');
-      btns.push('<button class="t-btn sm" data-act="noresult">No result</button>');
-      // Delete is always available to admins, regardless of match status.
-      btns.push('<button class="t-btn danger sm" data-act="delete">🗑 Delete</button>');
-      actions.innerHTML = btns.join(' ');
+      actions.innerHTML = (adminCanEdit && isActivePublishedTournament(tournament) && match.status !== 'completed'
+        ? matchScorerSelect(match, tournament)
+        : '') + '<div class="t-match-action-buttons">' + btns.join(' ') + '</div>';
+      const scorerSelect = actions.querySelector('[data-scorer-select]');
+      if (scorerSelect) {
+        scorerSelect.addEventListener('click', function (e) { e.stopPropagation(); });
+        scorerSelect.addEventListener('change', function (e) {
+          e.stopPropagation();
+          assignMatchScorer(match, tournament, scorerSelect.value);
+        });
+      }
       actions.querySelectorAll('[data-act]').forEach(function (btn) {
         btn.addEventListener('click', function (e) {
           e.stopPropagation();
@@ -4641,6 +4853,12 @@
 
   async function handleMatchAction(match, tournament, act) {
     try {
+      if (!isAdminUi()) {
+        assertCanScoreMatch(match);
+        if (act !== 'score' && act !== 'complete') {
+          throw new Error('Scorers can enter live scores and mark their assigned match complete only.');
+        }
+      }
       const ref = db.collection('tournament_matches').doc(match.id);
       const sport = getSportConfig(tournament, match.sport);
       if (act === 'delete') {
@@ -4657,10 +4875,21 @@
       } else if (act === 'start') {
         const update = { status: 'in_progress', updatedAt: FieldValue.serverTimestamp() };
         if (sport.kind === 'racket' && (!match.games || !match.games.length)) {
-          update.games = racketGamesForMatch(match, tournament, sport);
+          const bestOf = (getStageScoring(tournament, match.sport, match.stage) || {}).bestOf || 1;
+          update.games = racketGamesForMatch(match, tournament, sport).map(function (game) {
+            const sets = (game.sets || []).map(function (set) { return { a: set.a || 0, b: set.b || 0 }; });
+            while (sets.length < bestOf) sets.push({ a: 0, b: 0 });
+            return Object.assign({}, game, { sets: sets });
+          });
         }
-        if (sport.kind === 'volleyball' && (!match.sets || !match.sets.length)) update.sets = [{ a: 0, b: 0 }];
-        if (sport.kind === 'basketball' && (!match.quarters || !match.quarters.length)) update.quarters = [{ a: 0, b: 0 }];
+        if (sport.kind === 'volleyball' && (!match.sets || !match.sets.length)) {
+          const bestOf = (getStageScoring(tournament, match.sport, match.stage) || {}).bestOf || 3;
+          update.sets = Array.from({ length: bestOf }, function () { return { a: 0, b: 0 }; });
+        }
+        if (sport.kind === 'basketball' && (!match.quarters || !match.quarters.length)) {
+          const total = (getStageScoring(tournament, match.sport, match.stage) || {}).quarters || 4;
+          update.quarters = Array.from({ length: total }, function () { return { a: 0, b: 0 }; });
+        }
         await ref.update(update);
         toast('Match started');
       } else if (act === 'complete') {
@@ -6360,6 +6589,7 @@
   }
 
   function openScorer(match, tournament) {
+    assertCanScoreMatch(match);
     const sport = getSportConfig(tournament, match.sport);
     const modal = getScorerModal();
     const p = participantsOf(match, tournament);
@@ -6373,6 +6603,15 @@
     modal.classList.add('open');
   }
 
+  function scoreMatchStatePatch(match, winner) {
+    const keepCompleted = isAdminUi() && match.status === 'completed';
+    return {
+      winner: winner || null,
+      status: keepCompleted ? 'completed' : 'in_progress',
+      resultType: keepCompleted && winner ? 'played' : null
+    };
+  }
+
   function buildRacketScorer(match, tournament, sport) {
     const cfg = getStageScoring(tournament, match.sport, match.stage) || {};
     const participants = participantsOf(match, tournament);
@@ -6381,6 +6620,8 @@
     const aColor = teamMeta(tournament, match.sport, participants.a).color;
     const bColor = teamMeta(tournament, match.sport, participants.b).color;
     const finalizedPlayers = usesRegistrationCategories(sport) && !!match.categoryId;
+    const playersReadOnly = finalizedPlayers || !isAdminUi();
+    const canChangeStructure = isAdminUi();
     const games = racketGamesForMatch(match, tournament, sport);
 
     const wrap = el('div');
@@ -6407,14 +6648,12 @@
         };
       });
       const overall = racketMatchWinner(Object.assign({}, match, { games: fresh }), tournament);
-      const patch = {
+      const patch = Object.assign({
         games: fresh,
-        winner: overall || null,
-        status: overall ? 'completed' : 'in_progress',
-        resultType: overall ? 'played' : null,
         updatedAt: FieldValue.serverTimestamp()
-      };
+      }, scoreMatchStatePatch(match, overall));
       autoSave(function () {
+        assertCanScoreMatch(match);
         return db.collection('tournament_matches').doc(match.id).update(patch);
       });
     }
@@ -6430,22 +6669,22 @@
           <div class="t-form-grid" style="margin-bottom:12px;">
             <div class="t-form-field">
               <label>${escapeHtml(aName)} players</label>
-              ${finalizedPlayers
+              ${playersReadOnly
                 ? `<div class="t-fixed-players">${escapeHtml(game.playersA || 'Players not listed')}</div>`
                 : `<input type="text" class="t-input" data-players="A" value="${escapeHtml(game.playersA || '')}" />`}
             </div>
             <div class="t-form-field">
               <label>${escapeHtml(bName)} players</label>
-              ${finalizedPlayers
+              ${playersReadOnly
                 ? `<div class="t-fixed-players">${escapeHtml(game.playersB || 'Players not listed')}</div>`
                 : `<input type="text" class="t-input" data-players="B" value="${escapeHtml(game.playersB || '')}" />`}
             </div>
           </div>
           <div data-sets></div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
+          ${canChangeStructure ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
             <button class="t-btn sm" data-act="add-set">+ Add set</button>
             <button class="t-btn sm danger" data-act="remove-set">− Remove last set</button>
-          </div>
+          </div>` : ''}
         </div>
       `;
 
@@ -6456,21 +6695,21 @@
           const w = racketSetWinner(set, cfg);
           const row = el('div', { class: 't-scorer', style: { marginBottom: '8px' } });
           row.innerHTML = `
+            <div class="t-scorer-period">Set ${si + 1}${w ? ' · ' + w : ''}</div>
             <div class="side">
               <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
-              <input type="number" min="0" class="t-input" style="width:80px;text-align:center;font-size:1.3rem;font-weight:700;" value="${set.a || 0}" data-side="A" data-set="${si}" />
-              <div class="btns">
-                <button class="t-btn sm" data-inc="A" data-set="${si}" data-delta="-1">−</button>
-                <button class="t-btn sm primary" data-inc="A" data-set="${si}" data-delta="1">+1</button>
+              <div class="t-score-stepper">
+                <button class="t-score-button" data-inc="A" data-set="${si}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
+                <input type="number" min="0" class="t-input t-score-input" value="${set.a || 0}" data-side="A" data-set="${si}" />
+                <button class="t-score-button add" data-inc="A" data-set="${si}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
               </div>
             </div>
-            <div class="sep">Set ${si + 1}${w ? ' · ' + w : ''}</div>
             <div class="side">
               <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
-              <input type="number" min="0" class="t-input" style="width:80px;text-align:center;font-size:1.3rem;font-weight:700;" value="${set.b || 0}" data-side="B" data-set="${si}" />
-              <div class="btns">
-                <button class="t-btn sm" data-inc="B" data-set="${si}" data-delta="-1">−</button>
-                <button class="t-btn sm primary" data-inc="B" data-set="${si}" data-delta="1">+1</button>
+              <div class="t-score-stepper">
+                <button class="t-score-button" data-inc="B" data-set="${si}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
+                <input type="number" min="0" class="t-input t-score-input" value="${set.b || 0}" data-side="B" data-set="${si}" />
+                <button class="t-score-button add" data-inc="B" data-set="${si}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
               </div>
             </div>
           `;
@@ -6506,18 +6745,20 @@
           queueGamesSave();
         });
       });
-      gameWrap.querySelector('[data-act="add-set"]').addEventListener('click', function () {
-        if (game.sets.length >= (cfg.bestOf || 1)) return toast('Best of ' + (cfg.bestOf || 1) + ' — cannot add more sets', 'error');
-        game.sets.push({ a: 0, b: 0 });
-        repaint();
-        queueGamesSave();
-      });
-      gameWrap.querySelector('[data-act="remove-set"]').addEventListener('click', function () {
-        if (game.sets.length <= 1) return;
-        game.sets.pop();
-        repaint();
-        queueGamesSave();
-      });
+      if (canChangeStructure) {
+        gameWrap.querySelector('[data-act="add-set"]').addEventListener('click', function () {
+          if (game.sets.length >= (cfg.bestOf || 1)) return toast('Best of ' + (cfg.bestOf || 1) + ' — cannot add more sets', 'error');
+          game.sets.push({ a: 0, b: 0 });
+          repaint();
+          queueGamesSave();
+        });
+        gameWrap.querySelector('[data-act="remove-set"]').addEventListener('click', function () {
+          if (game.sets.length <= 1) return;
+          game.sets.pop();
+          repaint();
+          queueGamesSave();
+        });
+      }
 
       wrap.appendChild(gameWrap);
     });
@@ -6532,6 +6773,7 @@
     const aColor = teamMeta(tournament, match.sport, p.a).color;
     const bColor = teamMeta(tournament, match.sport, p.b).color;
     const bestOf = cfg.bestOf || 3;
+    const canChangeStructure = isAdminUi();
     const sets = (match.sets && match.sets.length) ? match.sets.map(function (s) { return Object.assign({}, s); }) : [{ a: 0, b: 0 }];
 
     const wrap = el('div');
@@ -6541,24 +6783,25 @@
     wrap.appendChild(saveStatus);
     const autoSave = createScoreAutosaver(saveStatus);
     const setsBox = el('div'); wrap.appendChild(setsBox);
-    const controls = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
-    controls.innerHTML = `
-      <button class="t-btn sm" data-act="add-set">+ Add set</button>
-      <button class="t-btn sm danger" data-act="remove-set">− Remove last set</button>
-    `;
-    wrap.appendChild(controls);
+    let controls = null;
+    if (canChangeStructure) {
+      controls = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
+      controls.innerHTML = `
+        <button class="t-btn sm" data-act="add-set">+ Add set</button>
+        <button class="t-btn sm danger" data-act="remove-set">− Remove last set</button>
+      `;
+      wrap.appendChild(controls);
+    }
 
     function queueScoreSave() {
       const snapshot = sets.map(function (set) { return { a: set.a || 0, b: set.b || 0 }; });
       const winner = volleyballMatchWinner({ sets: snapshot }, cfg);
-      const patch = {
+      const patch = Object.assign({
         sets: snapshot,
-        winner: winner || null,
-        status: winner ? 'completed' : 'in_progress',
-        resultType: winner ? 'played' : null,
         updatedAt: FieldValue.serverTimestamp()
-      };
+      }, scoreMatchStatePatch(match, winner));
       autoSave(function () {
+        assertCanScoreMatch(match);
         return db.collection('tournament_matches').doc(match.id).update(patch);
       });
     }
@@ -6570,21 +6813,21 @@
         const w = volleyballSetWinner(s, cfg, isDeciding);
         const row = el('div', { class: 't-scorer', style: { marginBottom: '8px' } });
         row.innerHTML = `
+          <div class="t-scorer-period">Set ${i + 1}${w ? ' · ' + w : ''}${isDeciding ? ' (deciding)' : ''}</div>
           <div class="side">
             <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
-            <input type="number" min="0" class="t-input" style="width:80px;text-align:center;font-size:1.3rem;font-weight:700;" value="${s.a || 0}" data-side="A" data-set="${i}" />
-            <div class="btns">
-              <button class="t-btn sm" data-inc="A" data-set="${i}" data-delta="-1">−</button>
-              <button class="t-btn sm primary" data-inc="A" data-set="${i}" data-delta="1">+1</button>
+            <div class="t-score-stepper">
+              <button class="t-score-button" data-inc="A" data-set="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
+              <input type="number" min="0" class="t-input t-score-input" value="${s.a || 0}" data-side="A" data-set="${i}" />
+              <button class="t-score-button add" data-inc="A" data-set="${i}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
             </div>
           </div>
-          <div class="sep">Set ${i + 1}${w ? ' · ' + w : ''}${isDeciding ? ' (deciding)' : ''}</div>
           <div class="side">
             <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
-            <input type="number" min="0" class="t-input" style="width:80px;text-align:center;font-size:1.3rem;font-weight:700;" value="${s.b || 0}" data-side="B" data-set="${i}" />
-            <div class="btns">
-              <button class="t-btn sm" data-inc="B" data-set="${i}" data-delta="-1">−</button>
-              <button class="t-btn sm primary" data-inc="B" data-set="${i}" data-delta="1">+1</button>
+            <div class="t-score-stepper">
+              <button class="t-score-button" data-inc="B" data-set="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
+              <input type="number" min="0" class="t-input t-score-input" value="${s.b || 0}" data-side="B" data-set="${i}" />
+              <button class="t-score-button add" data-inc="B" data-set="${i}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
             </div>
           </div>
         `;
@@ -6613,14 +6856,16 @@
     }
     paint();
 
-    controls.querySelector('[data-act="add-set"]').addEventListener('click', function () {
-      if (sets.length >= bestOf) return toast('Best of ' + bestOf + ' — max ' + bestOf + ' sets', 'error');
-      sets.push({ a: 0, b: 0 }); paint(); queueScoreSave();
-    });
-    controls.querySelector('[data-act="remove-set"]').addEventListener('click', function () {
-      if (sets.length <= 1) return;
-      sets.pop(); paint(); queueScoreSave();
-    });
+    if (controls) {
+      controls.querySelector('[data-act="add-set"]').addEventListener('click', function () {
+        if (sets.length >= bestOf) return toast('Best of ' + bestOf + ' — max ' + bestOf + ' sets', 'error');
+        sets.push({ a: 0, b: 0 }); paint(); queueScoreSave();
+      });
+      controls.querySelector('[data-act="remove-set"]').addEventListener('click', function () {
+        if (sets.length <= 1) return;
+        sets.pop(); paint(); queueScoreSave();
+      });
+    }
     return wrap;
   }
 
@@ -6632,35 +6877,37 @@
     const aColor = teamMeta(tournament, match.sport, p.a).color;
     const bColor = teamMeta(tournament, match.sport, p.b).color;
     const totalQuarters = cfg.quarters || 4;
+    const canChangeStructure = isAdminUi();
     const quarters = (match.quarters && match.quarters.length) ? match.quarters.map(function (q) { return Object.assign({}, q); }) : [{ a: 0, b: 0 }];
 
     const wrap = el('div');
     wrap.appendChild(el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
-      totalQuarters + ' quarters × ' + (cfg.quarterMinutes || 7) + ' min. Use +1 / +2 / +3 buttons or type values directly.'));
+      totalQuarters + ' quarters × ' + (cfg.quarterMinutes || 7) + ' min. Use +/− or type values directly.'));
     const saveStatus = el('div', { class: 't-score-autosave' }, 'Scores save automatically');
     wrap.appendChild(saveStatus);
     const autoSave = createScoreAutosaver(saveStatus);
     const totalsBox = el('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', margin: '12px 0 18px', fontFamily: 'Barlow Condensed, sans-serif' } });
     wrap.appendChild(totalsBox);
     const quartersBox = el('div'); wrap.appendChild(quartersBox);
-    const controls = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
-    controls.innerHTML = `
-      <button class="t-btn sm" data-act="add-q">+ Add quarter</button>
-      <button class="t-btn sm danger" data-act="remove-q">− Remove last quarter</button>
-    `;
-    wrap.appendChild(controls);
+    let controls = null;
+    if (canChangeStructure) {
+      controls = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
+      controls.innerHTML = `
+        <button class="t-btn sm" data-act="add-q">+ Add quarter</button>
+        <button class="t-btn sm danger" data-act="remove-q">− Remove last quarter</button>
+      `;
+      wrap.appendChild(controls);
+    }
 
     function queueScoreSave() {
       const snapshot = quarters.map(function (quarter) { return { a: quarter.a || 0, b: quarter.b || 0 }; });
       const winner = basketballWinner({ quarters: snapshot }, cfg);
-      const patch = {
+      const patch = Object.assign({
         quarters: snapshot,
-        winner: winner || null,
-        status: winner ? 'completed' : 'in_progress',
-        resultType: winner ? 'played' : null,
         updatedAt: FieldValue.serverTimestamp()
-      };
+      }, scoreMatchStatePatch(match, winner));
       autoSave(function () {
+        assertCanScoreMatch(match);
         return db.collection('tournament_matches').doc(match.id).update(patch);
       });
     }
@@ -6682,28 +6929,23 @@
       quarters.forEach(function (q, i) {
         const row = el('div', { class: 't-card', style: { marginBottom: '8px' } });
         row.innerHTML = `
-          <div class="t-card-header"><h3>Q${i + 1}</h3></div>
           <div class="t-card-body">
             <div class="t-scorer">
+              <div class="t-scorer-period">Quarter ${i + 1}</div>
               <div class="side">
                 <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
-                <input type="number" min="0" class="t-input" style="width:80px;text-align:center;font-size:1.3rem;font-weight:700;" value="${q.a || 0}" data-side="A" data-q="${i}" />
-                <div class="btns">
-                  <button class="t-btn sm" data-inc="A" data-q="${i}" data-delta="-1">−</button>
-                  <button class="t-btn sm primary" data-inc="A" data-q="${i}" data-delta="1">+1</button>
-                  <button class="t-btn sm primary" data-inc="A" data-q="${i}" data-delta="2">+2</button>
-                  <button class="t-btn sm primary" data-inc="A" data-q="${i}" data-delta="3">+3</button>
+                <div class="t-score-stepper">
+                  <button class="t-score-button" data-inc="A" data-q="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
+                  <input type="number" min="0" class="t-input t-score-input" value="${q.a || 0}" data-side="A" data-q="${i}" />
+                  <button class="t-score-button add" data-inc="A" data-q="${i}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
                 </div>
               </div>
-              <div class="sep">Q${i + 1}</div>
               <div class="side">
                 <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
-                <input type="number" min="0" class="t-input" style="width:80px;text-align:center;font-size:1.3rem;font-weight:700;" value="${q.b || 0}" data-side="B" data-q="${i}" />
-                <div class="btns">
-                  <button class="t-btn sm" data-inc="B" data-q="${i}" data-delta="-1">−</button>
-                  <button class="t-btn sm primary" data-inc="B" data-q="${i}" data-delta="1">+1</button>
-                  <button class="t-btn sm primary" data-inc="B" data-q="${i}" data-delta="2">+2</button>
-                  <button class="t-btn sm primary" data-inc="B" data-q="${i}" data-delta="3">+3</button>
+                <div class="t-score-stepper">
+                  <button class="t-score-button" data-inc="B" data-q="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
+                  <input type="number" min="0" class="t-input t-score-input" value="${q.b || 0}" data-side="B" data-q="${i}" />
+                  <button class="t-score-button add" data-inc="B" data-q="${i}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
                 </div>
               </div>
             </div>
@@ -6734,14 +6976,16 @@
     }
     paint();
 
-    controls.querySelector('[data-act="add-q"]').addEventListener('click', function () {
-      if (quarters.length >= totalQuarters) return toast('Only ' + totalQuarters + ' quarters allowed', 'error');
-      quarters.push({ a: 0, b: 0 }); paint(); queueScoreSave();
-    });
-    controls.querySelector('[data-act="remove-q"]').addEventListener('click', function () {
-      if (quarters.length <= 1) return;
-      quarters.pop(); paint(); queueScoreSave();
-    });
+    if (controls) {
+      controls.querySelector('[data-act="add-q"]').addEventListener('click', function () {
+        if (quarters.length >= totalQuarters) return toast('Only ' + totalQuarters + ' quarters allowed', 'error');
+        quarters.push({ a: 0, b: 0 }); paint(); queueScoreSave();
+      });
+      controls.querySelector('[data-act="remove-q"]').addEventListener('click', function () {
+        if (quarters.length <= 1) return;
+        quarters.pop(); paint(); queueScoreSave();
+      });
+    }
     return wrap;
   }
 
@@ -7189,7 +7433,7 @@
       return (match.quarters || []).map(function (q, i) { return 'Q' + (i + 1) + ' ' + (q.a || 0) + '–' + (q.b || 0); }).join('  ·  ');
     }
     if (sport.kind === 'racket') {
-      return (match.games || []).map(function (g) {
+      return racketGamesForMatch(match, tournament, sport).map(function (g) {
         const sets = (g.sets || []).map(function (s) { return (s.a || 0) + '–' + (s.b || 0); }).join(', ');
         return (g.category || 'Game') + (sets ? ' ' + sets : '');
       }).join('  ·  ');
@@ -7335,10 +7579,13 @@
     }
     const divisions = sport.divisions || [];
     const categorized = usesRegistrationCategories(sport);
-    let division = categorized ? (findDivision(sport, params.categoryId) || divisions[0] || null) : null;
-    const pool = matches.filter(function (m) {
+    const division = categorized && params.categoryId ? findDivision(sport, params.categoryId) : null;
+    const categorySummary = categorized && !division;
+    const sportPool = matches.filter(function (m) { return m.sport === sport.id; });
+    const pool = sportPool.filter(function (m) {
       if (m.sport !== sport.id) return false;
       if (division && m.categoryId !== division.id) return false;
+      if (categorySummary) return true;
       if (!division && (m.categoryId || m.bracketId)) return false;
       return true;
     });
@@ -7350,7 +7597,9 @@
     }
     const stageName = stageLabelOf(sport, stageId);
     const stagePool = pool.filter(function (m) { return (m.stage || 'league') === stageId; });
-    const live = stagePool.filter(function (m) { return m.status === 'in_progress'; }).sort(sortMatches);
+    const live = (categorySummary ? pool : stagePool)
+      .filter(function (m) { return m.status === 'in_progress'; })
+      .sort(sortMatches);
     const upcoming = stagePool.filter(function (m) { return m.status === 'scheduled' && m.showUpcoming; }).sort(sortMatches);
     const done = stagePool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
     const allLive = pool.filter(function (m) { return m.status === 'in_progress'; });
@@ -7367,20 +7616,26 @@
       <button type="button" class="w-copy" data-act="copy">Copy link</button>
     `;
 
-    const catPills = categorized && sport.categoryMode === 'split'
-      ? `<div class="w-pills w-sub">${divisions.map(function (d) {
+    const catPills = categorized
+      ? `<div class="w-pills w-sub">
+          <button type="button" class="w-pill ${categorySummary ? 'is-on' : ''}" data-act="cat" data-cat="">Summary</button>
+          ${divisions.map(function (d) {
           return `<button type="button" class="w-pill ${division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
         }).join('')}</div>`
       : '';
-    const stagePills = `<div class="w-pills w-sub">${stages.map(function (st) {
+    const stagePills = categorySummary ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
       const count = pool.filter(function (m) { return m.stage === st.id && m.status === 'in_progress'; }).length;
       return `<button type="button" class="w-pill ${st.id === stageId ? 'is-on' : ''}" data-act="stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${count ? '<i>' + count + '</i>' : ''}</button>`;
     }).join('')}</div>`;
 
-    const heroMatches = live.length ? live : (upcoming[0] ? [upcoming[0]] : []);
+    const heroMatches = categorySummary
+      ? live
+      : (categorized ? [] : (live.length ? live : (upcoming[0] ? [upcoming[0]] : [])));
     const hero = heroMatches.length
       ? `<div class="w-hero-row">${heroMatches.map(function (m, i) { return watchScoreboardHtml(m, tournament, i === 0); }).join('')}</div>`
-      : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches appear after an admin marks them.</p></section>`;
+      : (categorySummary
+        ? '<section class="w-quiet-card"><h2>No current matches</h2><p>Live matches from every category will appear here.</p></section>'
+        : (categorized ? '' : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches appear after an admin marks them.</p></section>`));
 
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
@@ -7427,41 +7682,47 @@
       `;
     }
 
-    const rules = [tournament.rulesText, sport.rulesText].filter(Boolean);
     root.innerHTML = `
       ${watch.preview ? '<div class="w-sample">Sample board — this is not a live tournament.</div>' : ''}
       <div class="w-accent" style="--accent:${sport.color || '#3b82f6'}"></div>
       ${catPills}
+      ${categorySummary ? hero : `
       ${stagePills}
       ${focus}
-      ${hero}
+      ${categorized ? '' : hero}
       <div class="w-layout">
         <div class="w-col">
           <section class="w-panel">
             <h3>Upcoming <small>${escapeHtml(stageName)}</small></h3>
             ${upcoming.length ? '<div class="w-list">' + upcoming.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') + '</div>' : '<p class="w-empty">No upcoming matches in ' + escapeHtml(stageName) + '. An admin chooses which scheduled matches appear here.</p>'}
           </section>
+          ${categorized ? '' : `
           <section class="w-panel">
             <h3>Results <small>${escapeHtml(stageName)}</small></h3>
             ${done.length ? '<div class="w-list">' + done.slice(0, 8).map(function (m) { return watchFixtureHtml(m, tournament); }).join('') + '</div>' : '<p class="w-empty">Results land here as matches finish.</p>'}
           </section>
+          `}
         </div>
         <div class="w-col">
           ${bracketBlocks}
           <section class="w-panel">
-            <h3>${brackets.length ? 'Overall' : 'Standing'} <small>${escapeHtml(stageName)}</small></h3>
+            <h3>${categorized ? (brackets.length ? 'Overall points table' : 'Points table') : (brackets.length ? 'Overall' : 'Standing')} <small>${escapeHtml(stageName)}</small></h3>
             ${watchTableHtml(tournament, sport.id, overall, 'No ' + stageName + ' matches completed yet.')}
           </section>
-          ${rules.length ? '<details class="w-rules"><summary>Rules</summary>' + rules.map(function (text) { return '<p>' + escapeHtml(text) + '</p>'; }).join('') + '</details>' : ''}
         </div>
       </div>
-      ${allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
+      ${!categorized && allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
+      `}
     `;
 
     function goSport(id) { setWatchParams({ sport: id, st: '', cat: '', team: '' }); }
     function goStage(id) { setWatchParams({ sport: sport.id, st: id, cat: division ? division.id : '', team: '' }); }
     function goCat(id) { setWatchParams({ sport: sport.id, st: stageId, cat: id, team: '' }); }
-    function goTeam(id) { setWatchParams({ sport: sport.id, st: stageId, cat: division ? division.id : '', team: id }); }
+    function goTeam(id) {
+      const found = findEntryTeam(tournament, sport.id, id);
+      const categoryId = (found && found.division && found.division.id) || (division && division.id) || '';
+      setWatchParams({ sport: sport.id, st: stageId, cat: categoryId, team: id });
+    }
     const shell = document.body;
     shell.querySelectorAll('[data-act="sport"]').forEach(function (btn) {
       btn.addEventListener('click', function () { goSport(btn.getAttribute('data-sport')); });
@@ -7693,14 +7954,17 @@
     if (window.SmashAuth) {
       SmashAuth.onChange(function (s) {
         const nextAdmin = !!(s.user && s.isAdmin);
+        const nextScorer = !!(s.user && s.isScorer);
         const nextLab = !!(s.user && s.isLabUser);
         const nextLoading = !!s.loading;
         const nextProfile = s.profile || null;
         const changed = state.isAdmin !== nextAdmin
+          || state.isScorer !== nextScorer
           || state.isLabUser !== nextLab
           || state.authLoading !== nextLoading
           || state.currentProfile !== nextProfile;
         state.isAdmin = nextAdmin;
+        state.isScorer = nextScorer;
         state.isLabUser = nextLab;
         state.authLoading = nextLoading;
         state.currentProfile = nextProfile;
