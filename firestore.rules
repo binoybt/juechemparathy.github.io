@@ -152,7 +152,8 @@ service cloud.firestore {
           'started',
           'startedAt',
           'publicBoard',
-          'publicBoardAt'
+          'publicBoardAt',
+          'spectatorToken'
         ])
       );
     }
