@@ -647,6 +647,14 @@
     return !!(tournament && tournament.format === 'teams');
   }
 
+  function isIndividualTournament(tournament) {
+    return !!(tournament && tournament.format === 'individual');
+  }
+
+  function showsOverallPointsTable(tournament) {
+    return !isIndividualTournament(tournament);
+  }
+
   // Legacy fixtures have no category. Bracket fixtures must match both ids.
   function entryInScope(match, sportId, categoryId, bracketId) {
     if (!match || match.sport !== sportId) return false;
@@ -4152,7 +4160,7 @@
             <div class="t-stage-standing-title">${escapeHtml(st.name)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}</div>
             <div class="t-focus-grid">
               <div><div class="lbl">Bracket standing</div><div class="val">${escapeHtml(bracket ? standingLine(rankOf(bracketRows, team.id)) : 'Not placed in a bracket')}</div></div>
-              <div><div class="lbl">Overall standing</div><div class="val">${escapeHtml(standingLine(rankOf(overall, team.id)))}</div></div>
+              ${showsOverallPointsTable(tournament) ? '<div><div class="lbl">Overall standing</div><div class="val">' + escapeHtml(standingLine(rankOf(overall, team.id))) + '</div></div>' : ''}
             </div>
           </div>
         `;
@@ -4326,7 +4334,8 @@
         `;
       }).join('');
     }
-    const overallRows = showBoard ? computeStandings(tournament, state.matches, sport.id, {
+    const showOverall = showBoard && showsOverallPointsTable(tournament);
+    const overallRows = showOverall ? computeStandings(tournament, state.matches, sport.id, {
       categoryId: division.id,
       stageId: stageId,
       useTeams: true
@@ -4380,10 +4389,12 @@
           <div class="t-match-list" id="tUpcomingList"></div>
         </section>
         ${bracketTables}
+        ${showOverall ? `
         <section class="t-section">
           <div class="t-section-header"><h2 class="t-section-title">Overall points table <small>${escapeHtml(stageName)}</small></h2></div>
           <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, overallRows, division, '', emptyStage)}</div></div>
         </section>
+        ` : ''}
         ${isAdminUi() ? `
         <section class="t-section" id="tCompletedSection" style="display:none;">
           <div class="t-section-header"><h2 class="t-section-title">Completed</h2></div>
@@ -8000,8 +8011,9 @@
 
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
-    const overall = computeStandings(tournament, matches, sport.id, standScope);
     const brackets = division ? bracketsInStage(division, stageId) : [];
+    const showOverallTable = showsOverallPointsTable(tournament) || !brackets.length;
+    const overall = showOverallTable ? computeStandings(tournament, matches, sport.id, standScope) : [];
     const bracketBlocks = brackets.map(function (b) {
       const rows = computeStandings(tournament, matches, sport.id, {
         stageId: stageId,
@@ -8036,7 +8048,7 @@
           </div>
           <div class="w-follow-stats">
             <div><span>Bracket</span><b>${escapeHtml(bracket ? standingLine(rankOf(bracketRows, params.teamId)) : 'Not in a bracket this stage')}</b></div>
-            <div><span>Overall</span><b>${escapeHtml(standingLine(rankOf(bracket ? overall : (rowsForTeam || overall), params.teamId)))}</b></div>
+            ${showsOverallPointsTable(tournament) ? '<div><span>Overall</span><b>' + escapeHtml(standingLine(rankOf(bracket ? overall : (rowsForTeam || overall), params.teamId))) + '</b></div>' : ''}
           </div>
           <div class="w-follow-matches">${mine.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') || '<p class="w-empty">No matches for this team yet.</p>'}</div>
         </section>
@@ -8068,10 +8080,12 @@
         </div>
         <div class="w-col">
           ${bracketBlocks}
+          ${showOverallTable ? `
           <section class="w-panel">
             <h3>${categorized ? (brackets.length ? 'Overall points table' : 'Points table') : (brackets.length ? 'Overall' : 'Standing')} <small>${escapeHtml(stageName)}</small></h3>
             ${watchTableHtml(tournament, sport.id, overall, 'No ' + stageName + ' matches completed yet.')}
           </section>
+          ` : ''}
         </div>
       </div>
       ${!categorized && allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
