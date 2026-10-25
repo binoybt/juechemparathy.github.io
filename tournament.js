@@ -7669,7 +7669,9 @@
     closed: false,
     expired: false,
     error: null,
-    preview: false
+    preview: false,
+    completedOpen: {},
+    completedPage: {}
   };
 
   function mergeWatchMatches(parent, liveMatches) {
@@ -7751,7 +7753,7 @@
   }
 
   function sampleWatchBoard() {
-    return {
+    const board = {
       publicBoard: true,
       published: true,
       started: true,
@@ -7762,7 +7764,7 @@
       sports: [
         {
           id: 'badminton', label: 'Badminton', kind: 'racket', emoji: '🏸', color: '#06b6d4', date: '2026-10-19',
-          hasThirdPlace: false, categoryMode: 'open',
+          hasThirdPlace: false, categoryMode: 'split',
           tablePoints: { win: 2, draw: 1, walkover: 2, noResult: 0 },
           stageList: [
             { id: 'league', name: 'League' },
@@ -7784,6 +7786,15 @@
               { id: 'b1', name: 'Group 1', stageId: 'league', teamIds: ['A', 'B', 'C'] },
               { id: 'b2', name: 'Group 2', stageId: 'league', teamIds: ['D'] },
               { id: 'b3', name: 'Bracket A', stageId: 'stg_r16', teamIds: ['A', 'C'] }
+            ]
+          }, {
+            id: 'mixed', name: 'Mixed doubles', open: false, maxPlayers: 2,
+            teams: [
+              { id: 'E', name: 'Rivers', players: ['Ivy', 'Jon'] },
+              { id: 'F', name: 'Lake', players: ['Kim', 'Leo'] }
+            ],
+            brackets: [
+              { id: 'b4', name: 'Mixed A', stageId: 'league', teamIds: ['E', 'F'] }
             ]
           }]
         },
@@ -7812,14 +7823,55 @@
         { id: 'm8', sport: 'badminton', categoryId: 'open', bracketId: 'b2', stage: 'league', status: 'in_progress', teamA: 'C', teamB: 'D', court: 'Court 2', venue: 'Court 2', scheduledAt: '2026-10-19T18:05:00.000Z', games: [{ category: 'OD1', playersA: 'Eve / Finn', playersB: 'Gia / Hugo', sets: [{ a: 11, b: 9 }], winner: null }] },
         { id: 'm2', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'scheduled', showUpcoming: true, teamA: 'A', teamB: 'C', scheduledAt: '2026-10-19T18:40:00.000Z' },
         { id: 'm9', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'scheduled', showUpcoming: false, teamA: 'B', teamB: 'D', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T19:10:00.000Z' },
-        { id: 'm3', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'completed', teamA: 'B', teamB: 'C', winner: 'B', resultType: 'played', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T17:10:00.000Z', games: [{ category: 'OD1', sets: [{ a: 21, b: 19 }], winner: 'A' }] },
+        { id: 'm3', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'completed', teamA: 'B', teamB: 'C', winner: 'A', resultType: 'played', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T17:10:00.000Z', games: [{ category: 'OD1', playersA: 'Cia / Dev', playersB: 'Eve / Finn', sets: [{ a: 21, b: 19 }, { a: 21, b: 17 }], winner: 'A' }] },
         { id: 'm4', sport: 'badminton', categoryId: 'open', bracketId: 'b3', stage: 'stg_r16', status: 'scheduled', showUpcoming: true, teamA: 'A', teamB: 'C', court: 'Court 1', venue: 'Court 1', scheduledAt: '2026-10-19T20:00:00.000Z' },
         { id: 'm5', sport: 'volleyball', stage: 'league', status: 'completed', teamA: 'G1', teamB: 'G2', winner: 'A', resultType: 'played', venue: 'Hall', scheduledAt: '2026-10-19T16:00:00.000Z', sets: [{ a: 25, b: 20 }, { a: 25, b: 22 }] },
         { id: 'm6', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: false, teamA: 'G3', teamB: 'G4', venue: 'Hall', scheduledAt: '2026-10-19T19:15:00.000Z' },
         { id: 'm10', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: true, teamA: 'G1', teamB: 'G4', scheduledAt: '2026-10-19T19:45:00.000Z' },
-        { id: 'm7', sport: 'volleyball', stage: 'semifinal', status: 'completed', teamA: 'G1', teamB: 'G3', winner: 'B', resultType: 'walkover', venue: 'Hall', scheduledAt: '2026-10-19T21:00:00.000Z' }
+        { id: 'm7', sport: 'volleyball', stage: 'semifinal', status: 'completed', teamA: 'G1', teamB: 'G3', winner: 'B', resultType: 'walkover', venue: 'Hall', scheduledAt: '2026-10-19T21:00:00.000Z' },
+        { id: 'm11', sport: 'badminton', categoryId: 'mixed', bracketId: 'b4', stage: 'league', status: 'completed', teamA: 'E', teamB: 'F', winner: 'B', resultType: 'played', court: 'Court 3', venue: 'Court 3', scheduledAt: '2026-10-19T16:40:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 19, b: 21 }, { a: 16, b: 21 }], winner: 'B' }] }
       ]
     };
+    const pairs = [
+      ['A', 'B', 'Ann / Ben', 'Cia / Dev'],
+      ['A', 'C', 'Ann / Ben', 'Eve / Finn'],
+      ['A', 'D', 'Ann / Ben', 'Gia / Hugo'],
+      ['B', 'C', 'Cia / Dev', 'Eve / Finn'],
+      ['B', 'D', 'Cia / Dev', 'Gia / Hugo'],
+      ['C', 'D', 'Eve / Finn', 'Gia / Hugo'],
+      ['A', 'B', 'Ann / Ben', 'Cia / Dev'],
+      ['C', 'A', 'Eve / Finn', 'Ann / Ben'],
+      ['D', 'B', 'Gia / Hugo', 'Cia / Dev'],
+      ['C', 'B', 'Eve / Finn', 'Cia / Dev']
+    ];
+    pairs.forEach(function (pair, i) {
+      const winner = i % 2 === 0 ? 'A' : 'B';
+      board.matches.push({
+        id: 'mx' + i,
+        sport: 'badminton',
+        categoryId: 'open',
+        bracketId: 'b1',
+        stage: 'league',
+        status: 'completed',
+        teamA: pair[0],
+        teamB: pair[1],
+        winner: winner,
+        resultType: 'played',
+        court: 'Court 1',
+        venue: 'Court 1',
+        scheduledAt: '2026-10-19T' + String(10 + i).padStart(2, '0') + ':00:00.000Z',
+        games: [{
+          category: 'OD1',
+          playersA: pair[2],
+          playersB: pair[3],
+          sets: winner === 'A'
+            ? [{ a: 21, b: 16 }, { a: 21, b: 18 }]
+            : [{ a: 18, b: 21 }, { a: 15, b: 21 }],
+          winner: winner
+        }]
+      });
+    });
+    return board;
   }
 
   function watchParams() {
@@ -8018,6 +8070,180 @@
     return '<div class="w-rules-grid">' + blocks.join('') + '</div>';
   }
 
+  const WATCH_COMPLETED_PAGE = 10;
+
+  function watchCompletedPage(key) {
+    const pages = watch.completedPage || {};
+    return Math.max(1, parseInt(pages[key], 10) || 1);
+  }
+
+  function setWatchCompletedPage(key, page) {
+    if (!watch.completedPage) watch.completedPage = {};
+    watch.completedPage[key] = Math.max(1, page);
+  }
+
+  function watchCompletedIsOpen(key) {
+    return !!(watch.completedOpen && watch.completedOpen[key]);
+  }
+
+  function setWatchCompletedOpen(key, open) {
+    if (!watch.completedOpen) watch.completedOpen = {};
+    watch.completedOpen[key] = !!open;
+  }
+
+  function watchPlayersForSide(match, tournament, side) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    if (sport && sport.kind === 'racket') {
+      const game = racketGamesForMatch(match, tournament, sport)[0] || {};
+      const fromGame = String((side === 'B' ? game.playersB : game.playersA) || '').trim();
+      if (fromGame) return fromGame;
+    }
+    const p = participantsOf(match, tournament);
+    const id = side === 'B' ? p.b : p.a;
+    const found = findEntryTeam(tournament, match.sport, id);
+    return found ? teamPlayersLabel(found.team) : '';
+  }
+
+  function watchSideLines(match, tournament, side) {
+    const p = participantsOf(match, tournament);
+    const id = side === 'B' ? p.b : p.a;
+    const meta = teamMeta(tournament, match.sport, id);
+    const players = watchPlayersForSide(match, tournament, side);
+    const same = !players || players.replace(/\s+/g, ' ').toLowerCase() === String(meta.name || '').replace(/\s+/g, ' ').toLowerCase();
+    return {
+      id: id || '',
+      name: meta.name || '—',
+      players: same ? '' : players,
+      winner: match.winner === side,
+      color: meta.color
+    };
+  }
+
+  function watchSetScores(match, tournament) {
+    const kind = resultKind(match);
+    if (kind === 'walkover' || kind === 'no_result') return [];
+    const sport = getSportConfig(tournament, match && match.sport);
+    if (!sport) return [];
+    function pairs(list) {
+      return (list || []).filter(function (s, i, all) {
+        return (s.a || 0) > 0 || (s.b || 0) > 0 || (all.length === 1 && i === 0);
+      }).map(function (s) { return (s.a || 0) + '–' + (s.b || 0); });
+    }
+    if (sport.kind === 'racket') {
+      return pairs((racketGamesForMatch(match, tournament, sport)[0] || {}).sets);
+    }
+    if (sport.kind === 'volleyball') return pairs(match.sets);
+    if (sport.kind === 'basketball') {
+      return (match.quarters || []).map(function (q, i) {
+        return 'Q' + (i + 1) + ' ' + (q.a || 0) + '–' + (q.b || 0);
+      });
+    }
+    return [];
+  }
+
+  function watchWinnerText(match, tournament) {
+    const kind = resultKind(match);
+    if (kind === 'no_result') return 'No result';
+    if (kind === 'draw') return 'Draw';
+    if (match.winner !== 'A' && match.winner !== 'B') return '';
+    const side = watchSideLines(match, tournament, match.winner);
+    const label = side.players ? side.name + ' · ' + side.players : side.name;
+    return (kind === 'walkover' ? 'Walkover: ' : 'Winner: ') + label;
+  }
+
+  function watchCompletedMatchHtml(match, tournament) {
+    const a = watchSideLines(match, tournament, 'A');
+    const b = watchSideLines(match, tournament, 'B');
+    const sets = watchSetScores(match, tournament);
+    const winner = watchWinnerText(match, tournament);
+    const sport = getSportConfig(tournament, match.sport);
+    const kind = resultKind(match);
+    const setsHtml = sets.length
+      ? '<div class="w-result-sets" aria-label="Set scores">' + sets.map(function (s) {
+        return '<span>' + escapeHtml(s) + '</span>';
+      }).join('') + '</div>'
+      : '<div class="w-result-sets is-empty">' + escapeHtml(kind === 'walkover' ? 'Walkover' : (kind === 'no_result' ? 'No result' : '—')) + '</div>';
+    function sideHtml(side, align) {
+      return `
+        <div class="w-result-side ${align} ${side.winner ? 'is-winner' : ''}">
+          <span class="w-swatch sm" style="background:${side.color}"></span>
+          <div>
+            <b>${escapeHtml(side.name)}</b>
+            ${side.players ? '<small>' + escapeHtml(side.players) + '</small>' : ''}
+          </div>
+        </div>`;
+    }
+    return `
+      <article class="w-result">
+        <div class="w-result-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Completed')}${courtOf(match) ? ' · ' + escapeHtml(courtOf(match)) : ''}${sport ? ' · ' + escapeHtml(stageLabelOf(sport, match.stage)) : ''}</div>
+        <div class="w-result-row">
+          ${sideHtml(a, '')}
+          ${setsHtml}
+          ${sideHtml(b, 'right')}
+        </div>
+        ${winner ? '<div class="w-result-win">' + escapeHtml(winner) + '</div>' : ''}
+      </article>`;
+  }
+
+  function watchCompletedSectionHtml(matches, tournament, key, title) {
+    const list = matches || [];
+    if (!list.length) return '';
+    const total = list.length;
+    const pages = Math.max(1, Math.ceil(total / WATCH_COMPLETED_PAGE));
+    let page = watchCompletedPage(key);
+    if (page > pages) {
+      page = pages;
+      setWatchCompletedPage(key, page);
+    }
+    const start = (page - 1) * WATCH_COMPLETED_PAGE;
+    const slice = list.slice(start, start + WATCH_COMPLETED_PAGE);
+    const open = watchCompletedIsOpen(key);
+    const pager = pages > 1
+      ? `<div class="w-pager">
+          <button type="button" class="w-copy" data-act="done-page" data-key="${escapeHtml(key)}" data-page="${page - 1}" ${page <= 1 ? 'disabled' : ''}>Previous</button>
+          <span>Page ${page} of ${pages}</span>
+          <button type="button" class="w-copy" data-act="done-page" data-key="${escapeHtml(key)}" data-page="${page + 1}" ${page >= pages ? 'disabled' : ''}>Next</button>
+        </div>`
+      : '';
+    return `
+      <section class="w-panel w-completed" id="wDone-${escapeHtml(key)}">
+        <details class="w-done" data-done-key="${escapeHtml(key)}" ${open ? 'open' : ''}>
+          <summary>
+            <h3>Completed matches ${title ? '<small>' + escapeHtml(title) + '</small>' : ''} <i>${total}</i></h3>
+          </summary>
+          <div class="w-list">${slice.map(function (m) { return watchCompletedMatchHtml(m, tournament); }).join('')}</div>
+          ${pager}
+        </details>
+      </section>`;
+  }
+
+  function bindWatchCompletedControls(root) {
+    if (!root) return;
+    root.querySelectorAll('details.w-done').forEach(function (node) {
+      node.addEventListener('toggle', function () {
+        setWatchCompletedOpen(node.getAttribute('data-done-key'), node.open);
+      });
+    });
+    root.querySelectorAll('[data-act="done-page"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const key = btn.getAttribute('data-key');
+        const page = parseInt(btn.getAttribute('data-page'), 10) || 1;
+        if (btn.disabled || page < 1) return;
+        setWatchCompletedOpen(key, true);
+        setWatchCompletedPage(key, page);
+        renderPublicWatch();
+        const el = document.getElementById('wDone-' + key);
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+      });
+    });
+  }
+
+  function completedMatchesForCategory(matches, sportId, categoryId) {
+    return (matches || []).filter(function (m) {
+      return m.sport === sportId && m.status === 'completed' && m.categoryId === categoryId;
+    }).sort(sortMatches).reverse();
+  }
+
   function renderPublicWatch() {
     const top = document.getElementById('wTop');
     const root = document.getElementById('wContent');
@@ -8091,7 +8317,34 @@
       .sort(sortMatches);
     const upcoming = stagePool.filter(function (m) { return m.status === 'scheduled' && m.showUpcoming; }).sort(sortMatches);
     const done = stagePool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
+    const categoryDone = division
+      ? completedMatchesForCategory(sportPool, sport.id, division.id)
+      : [];
+    const completedByCategory = categorized
+      ? divisions.map(function (d) {
+        return {
+          division: d,
+          matches: completedMatchesForCategory(sportPool, sport.id, d.id)
+        };
+      }).filter(function (group) { return group.matches.length; })
+      : [];
     const allLive = pool.filter(function (m) { return m.status === 'in_progress'; });
+    const summaryCompletedHtml = categorySummary
+      ? completedByCategory.map(function (group) {
+        return watchCompletedSectionHtml(
+          group.matches,
+          tournament,
+          'sum-' + sport.id + '-' + group.division.id,
+          group.division.name || 'Category'
+        );
+      }).join('')
+      : '';
+    const categoryCompletedHtml = division
+      ? watchCompletedSectionHtml(categoryDone, tournament, 'cat-' + sport.id + '-' + division.id, division.name || 'Category')
+      : '';
+    const teamCompletedHtml = !categorized
+      ? watchCompletedSectionHtml(done, tournament, 'st-' + sport.id + '-' + stageId, stageName)
+      : '';
 
     document.title = (tournament.name || 'Live') + ' — ' + (sport.label || 'Scores');
     const sportPills = sports.map(function (s) {
@@ -8184,7 +8437,7 @@
       ${viewTabs}
       ${panel === 'rules' ? watchRulesPanelHtml(tournament, sport) : `
       ${catPills}
-      ${categorySummary ? hero : `
+      ${categorySummary ? hero + summaryCompletedHtml : `
       ${stagePills}
       ${focus}
       ${categorized ? '' : hero}
@@ -8194,12 +8447,7 @@
             <h3>Upcoming <small>${escapeHtml(stageName)}</small></h3>
             ${upcoming.length ? '<div class="w-list">' + upcoming.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') + '</div>' : '<p class="w-empty">No upcoming matches in ' + escapeHtml(stageName) + '. An admin chooses which scheduled matches appear here.</p>'}
           </section>
-          ${categorized ? '' : `
-          <section class="w-panel">
-            <h3>Results <small>${escapeHtml(stageName)}</small></h3>
-            ${done.length ? '<div class="w-list">' + done.slice(0, 8).map(function (m) { return watchFixtureHtml(m, tournament); }).join('') + '</div>' : '<p class="w-empty">Results land here as matches finish.</p>'}
-          </section>
-          `}
+          ${teamCompletedHtml}
         </div>
         <div class="w-col">
           ${bracketBlocks}
@@ -8211,6 +8459,7 @@
           ` : ''}
         </div>
       </div>
+      ${categoryCompletedHtml}
       ${!categorized && allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
       `}
       `}
@@ -8254,6 +8503,7 @@
     shell.querySelectorAll('[data-act="clear-team"]').forEach(function (btn) {
       btn.addEventListener('click', function () { goStage(stageId); });
     });
+    bindWatchCompletedControls(root);
     shell.querySelectorAll('[data-act="copy"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         const url = location.href;
