@@ -897,9 +897,12 @@
     unsubUsers: null,
     unsubRsvp: null,
     ready: { tournaments: false, matches: false, users: false, rsvp: false },
+    scorerDirectory: null,
     // Last error surfaced by each data source, for diagnostics in the UI.
     errors: { users: null, rsvp: null, upsert: null }
   };
+  let scorerDirectoryPromise = null;
+  let scorerDirectoryLoading = false;
 
   // Flipped to true once auth.onAuthStateChanged has fired at least once,
   // so we can distinguish "still restoring session" from "definitely signed out".
@@ -1479,10 +1482,48 @@
     return null;
   }
 
+  function usesRacketSetPoints(match, tournament) {
+    if (!tournament || tournament.format !== 'individual') return false;
+    const sport = getSportConfig(tournament, match && match.sport);
+    if (!sport || sport.kind !== 'racket') return false;
+    if (usesRegistrationCategories(sport) && match && match.categoryId) return true;
+    return racketGamesForMatch(match, tournament, sport).length <= 1;
+  }
+
+  function racketSetScoreLine(match, tournament) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    const games = racketGamesForMatch(match, tournament, sport);
+    const game = games[0] || {};
+    const sets = (game.sets || []).filter(function (set, index, list) {
+      return (set.a || 0) > 0 || (set.b || 0) > 0 || index === list.length - 1;
+    });
+    const shown = sets.length ? sets : [{ a: 0, b: 0 }];
+    return shown.map(function (set) {
+      return (set.a || 0) + '–' + (set.b || 0);
+    }).join('  ');
+  }
+
+  function latestRacketSet(match, tournament) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    const sets = (racketGamesForMatch(match, tournament, sport)[0] || {}).sets || [];
+    let set = sets[0] || { a: 0, b: 0 };
+    for (let i = sets.length - 1; i >= 0; i--) {
+      if ((sets[i].a || 0) > 0 || (sets[i].b || 0) > 0 || i === 0) {
+        set = sets[i];
+        break;
+      }
+    }
+    return { a: set.a || 0, b: set.b || 0 };
+  }
+
   function matchScoreDisplay(match, tournament) {
     const sc = getSportConfig(tournament, match.sport);
     if (!sc) return { a: '—', b: '—' };
     if (sc.kind === 'racket') {
+      if (usesRacketSetPoints(match, tournament)) {
+        const set = latestRacketSet(match, tournament);
+        return { a: String(set.a), b: String(set.b), label: 'Points' };
+      }
       let a = 0, b = 0;
       racketGamesForMatch(match, tournament, sc).forEach(function (g) {
         if (g.winner === 'A') a++;
@@ -1943,6 +1984,7 @@
       renderAdminGate();
       return;
     }
+    ensureScorerDirectoryThenRender();
     document.title = mode === 'manage' ? 'Manage tournament' : 'New tournament';
     const container = document.getElementById('tContent');
     let draft;
@@ -2019,6 +2061,21 @@
           </div>
         </div>
       </section>
+
+      ${mode === 'manage' && draft.id ? `
+      <section class="t-section">
+        <div class="t-card">
+          <div class="t-card-body">
+            <h2 class="t-section-title" style="margin:0 0 8px;">Tournament scorers</h2>
+            <p class="t-mode-note" style="margin-top:0;">Grant the scorer role on Members &amp; Admins first. Then choose who can be assigned to matches here. Assigned scorers also appear in the match dropdown.</p>
+            <p style="margin:0 0 12px;color:var(--t-fg);">${(draft.scorers || []).length
+              ? escapeHtml((draft.scorers || []).map(function (scorer) { return scorer.name || scorer.email || 'Scorer'; }).join(', '))
+              : 'No scorers assigned to this tournament yet.'}</p>
+            <button type="button" class="t-btn primary" onclick="window.__tournament.openTournamentScorers('${escapeHtml(draft.id)}')">Choose scorers</button>
+          </div>
+        </div>
+      </section>
+      ` : ''}
 
       <section class="t-section">
         <div class="t-section-header">
@@ -3374,6 +3431,7 @@
   }
 
   function renderTournament() {
+    ensureScorerDirectoryThenRender();
     harvestScheduleEditor();
     const parsed = parseUrl();
     const t = currentTournament();
@@ -3429,9 +3487,7 @@
         ${tournamentHasStarted(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', false)">⏸ Mark not started</button>`
           : `<button class="t-btn primary" type="button" onclick="window.__tournament.setTournamentStarted('${escapeHtml(t.id)}', true)">▶ Start tournament</button>`}
-        ${isActivePublishedTournament(t)
-          ? `<button class="t-btn" type="button" onclick="window.__tournament.openTournamentScorers('${escapeHtml(t.id)}')">🧑‍⚖️ Tournament scorers (${(t.scorers || []).length})</button>`
-          : ''}
+        <button class="t-btn ${(t.scorers || []).length ? '' : 'primary'}" type="button" onclick="window.__tournament.openTournamentScorers('${escapeHtml(t.id)}')">🧑‍⚖️ Tournament scorers (${(t.scorers || []).length})</button>
         <button class="t-btn" type="button" onclick="window.__tournament.shareLiveBoard('${escapeHtml(t.id)}')">${t.publicBoard ? '📺 Spectator link on' : '📺 Spectator link'}</button>
         ${isTournamentPublished(t)
           ? `<button class="t-btn" type="button" onclick="window.__tournament.setTournamentPublished('${escapeHtml(t.id)}', false)">🙈 Unpublish</button>`
@@ -3621,35 +3677,98 @@
     return parts.join(' ') || String(profile.displayName || profile.email || '').trim();
   }
 
+  function sortScorers(a, b) {
+    return String(a.name || a.email || '').localeCompare(String(b.name || b.email || ''));
+  }
+
+  async function loadScorerDirectory(force) {
+    if (force) {
+      state.scorerDirectory = null;
+      scorerDirectoryPromise = null;
+    }
+    if (state.scorerDirectory) return state.scorerDirectory;
+    if (scorerDirectoryPromise) return scorerDirectoryPromise;
+    scorerDirectoryPromise = db.collection('users').where('role', '==', 'scorer').get()
+      .then(function (snap) {
+        const list = [];
+        snap.forEach(function (doc) {
+          const data = doc.data() || {};
+          list.push({
+            uid: doc.id,
+            name: scorerProfileName(data),
+            email: String(data.email || '').trim().toLowerCase()
+          });
+        });
+        list.sort(sortScorers);
+        state.scorerDirectory = list;
+        return list;
+      })
+      .catch(function (err) {
+        scorerDirectoryPromise = null;
+        throw err;
+      });
+    return scorerDirectoryPromise;
+  }
+
+  function ensureScorerDirectoryThenRender() {
+    if (!isAdminUi() || state.scorerDirectory || scorerDirectoryLoading) return;
+    scorerDirectoryLoading = true;
+    loadScorerDirectory().then(function () {
+      scorerDirectoryLoading = false;
+      render();
+    }).catch(function (err) {
+      scorerDirectoryLoading = false;
+      console.warn('[tournament] scorer directory:', err);
+    });
+  }
+
+  function availableMatchScorers(tournament) {
+    const byUid = {};
+    function put(scorer) {
+      if (!scorer || !scorer.uid) return;
+      const prev = byUid[scorer.uid] || {};
+      byUid[scorer.uid] = {
+        uid: scorer.uid,
+        name: scorer.name || prev.name || '',
+        email: scorer.email || prev.email || ''
+      };
+    }
+    (state.scorerDirectory || []).forEach(put);
+    ((tournament && tournament.scorers) || []).forEach(put);
+    return Object.keys(byUid).map(function (uid) { return byUid[uid]; }).sort(sortScorers);
+  }
+
+  async function ensureTournamentHasScorer(tournament, scorer) {
+    if (!tournament || !scorer || !scorer.uid) return;
+    const exists = (tournament.scorers || []).some(function (item) { return item.uid === scorer.uid; });
+    if (exists) return;
+    const next = (tournament.scorers || []).concat([{
+      uid: scorer.uid,
+      name: scorer.name || scorer.email || 'Scorer',
+      email: scorer.email || ''
+    }]);
+    await db.collection('tournaments').doc(tournament.id).update({
+      scorers: next,
+      scorerUids: next.map(function (item) { return item.uid; }),
+      updatedAt: FieldValue.serverTimestamp()
+    });
+  }
+
   async function openTournamentScorers(tournamentId) {
     if (!isAdminUi()) return toast('Admin only', 'error');
     const tournament = state.tournaments.find(function (item) { return item.id === tournamentId; });
-    if (!isActivePublishedTournament(tournament)) {
-      return toast('Scorers can be assigned only after the tournament is published and started.', 'error');
-    }
+    if (!tournament) return toast('Tournament not found', 'error');
     const dialog = getOrCreateModal('tTournamentScorers', 'Tournament scorers', { wide: false });
     const modal = dialog.modal;
     const body = dialog.body;
     body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Loading registered scorers…</p>';
     modal.classList.add('open');
     try {
-      const snap = await db.collection('users').where('role', '==', 'scorer').get();
-      const candidates = [];
-      snap.forEach(function (doc) {
-        const data = doc.data() || {};
-        candidates.push({
-          uid: doc.id,
-          name: scorerProfileName(data),
-          email: String(data.email || '').trim().toLowerCase()
-        });
-      });
-      candidates.sort(function (a, b) {
-        return (a.name || a.email).localeCompare(b.name || b.email);
-      });
+      const candidates = await loadScorerDirectory(true);
       const selected = {};
       (tournament.scorers || []).forEach(function (scorer) { if (scorer && scorer.uid) selected[scorer.uid] = true; });
       body.innerHTML = `
-        <p class="t-mode-note" style="margin-top:0;">Choose from members who have the scorer role. Only these people can then be assigned to matches in this tournament.</p>
+        <p class="t-mode-note" style="margin-top:0;">These members have the scorer role. Save them here, or pick one on a match — that also adds them to this tournament.</p>
         <div class="t-scorer-list">
           ${candidates.length ? candidates.map(function (scorer) {
             return `<label class="t-scorer-person">
@@ -4641,7 +4760,9 @@
             ${teamTagsHtml(aMeta.tags)}
           </div>
         </div>
-        <div class="t-match-score"><span>${s.a}</span><span class="dash">–</span><span>${s.b}</span></div>
+        <div class="t-match-score">${s.label === 'Points'
+          ? '<span class="sets">' + escapeHtml(racketSetScoreLine(match, tournament)) + '</span>'
+          : '<span>' + s.a + '</span><span class="dash">–</span><span>' + s.b + '</span>'}</div>
         <div class="t-match-team right ${bWin ? 'winner' : ''}">
           <div class="info">
             <div class="name">${match.categoryId && p.b ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.b + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(bMeta.name) + '</button>' : escapeHtml(bMeta.name)}</div>
@@ -4749,7 +4870,7 @@
   }
 
   function matchScorerSelect(match, tournament) {
-    const scorers = (tournament && tournament.scorers) || [];
+    const scorers = availableMatchScorers(tournament);
     const known = scorers.some(function (scorer) { return scorer.uid === match.scorerUid; });
     const options = ['<option value="">No scorer assigned</option>'];
     if (match.scorerUid && !known) {
@@ -4761,15 +4882,17 @@
       options.push('<option value="' + escapeHtml(scorer.uid) + '"' + (scorer.uid === match.scorerUid ? ' selected' : '') + '>'
         + escapeHtml(label) + '</option>');
     });
-    return `<label class="t-match-scorer"><span>Match scorer</span><select class="t-select sm" data-scorer-select>${options.join('')}</select></label>`;
+    const emptyHint = scorers.length
+      ? ''
+      : '<span class="t-mode-note" style="margin:0;">No scorers yet. Grant the role on Members &amp; Admins, then pick them here.</span>';
+    return `<label class="t-match-scorer"><span>Match scorer</span><select class="t-select sm" data-scorer-select>${options.join('')}</select><button type="button" class="t-btn sm" data-act="tournament-scorers">Choose tournament scorers</button>${emptyHint}</label>`;
   }
 
   async function assignMatchScorer(match, tournament, uid) {
     if (!isAdminUi()) return toast('Admin only', 'error');
-    if (!isActivePublishedTournament(tournament)) return toast('The tournament must be published and started first.', 'error');
     if (match.status === 'completed') return toast('A completed match cannot be assigned to a scorer.', 'error');
-    const scorer = (tournament.scorers || []).find(function (item) { return item.uid === uid; }) || null;
-    if (uid && !scorer) return toast('Choose a scorer assigned to this tournament.', 'error');
+    const scorer = availableMatchScorers(tournament).find(function (item) { return item.uid === uid; }) || null;
+    if (uid && !scorer) return toast('Choose a registered scorer.', 'error');
     const patch = {
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
@@ -4784,6 +4907,7 @@
       patch.scorerEmail = FieldValue.delete();
     }
     try {
+      if (scorer) await ensureTournamentHasScorer(tournament, scorer);
       await db.collection('tournament_matches').doc(match.id).update(patch);
       toast(scorer ? 'Match assigned to ' + patch.scorerName : 'Match scorer cleared');
     } catch (err) {
@@ -4829,7 +4953,7 @@
         // Delete is always available to admins, regardless of match status.
         btns.push('<button class="t-btn danger sm" data-act="delete">🗑 Delete</button>');
       }
-      actions.innerHTML = (adminCanEdit && isActivePublishedTournament(tournament) && match.status !== 'completed'
+      actions.innerHTML = (adminCanEdit && match.status !== 'completed'
         ? matchScorerSelect(match, tournament)
         : '') + '<div class="t-match-action-buttons">' + btns.join(' ') + '</div>';
       const scorerSelect = actions.querySelector('[data-scorer-select]');
@@ -4861,6 +4985,9 @@
       }
       const ref = db.collection('tournament_matches').doc(match.id);
       const sport = getSportConfig(tournament, match.sport);
+      if (act === 'tournament-scorers') {
+        return openTournamentScorers(tournament.id);
+      }
       if (act === 'delete') {
         const p = participantsOf(match, tournament);
         const label = displayName(tournament, match.sport, p.a) + ' vs ' + displayName(tournament, match.sport, p.b);
@@ -4871,6 +4998,14 @@
             : '\n\nThis cannot be undone.';
         if (!confirm('Delete ' + stageLabelOf(sport, match.stage) + ' — ' + label + '?' + warn)) return;
         await ref.delete();
+        if (shouldMirrorPublicMatch(tournament)) {
+          try {
+            await db.collection('tournament_public').doc(tournament.id)
+              .collection('matches').doc(match.id).delete();
+          } catch (publicErr) {
+            console.warn('[tournament] public match delete failed:', publicErr);
+          }
+        }
         toast('Match deleted');
       } else if (act === 'start') {
         const update = { status: 'in_progress', updatedAt: FieldValue.serverTimestamp() };
@@ -4890,15 +5025,25 @@
           const total = (getStageScoring(tournament, match.sport, match.stage) || {}).quarters || 4;
           update.quarters = Array.from({ length: total }, function () { return { a: 0, b: 0 }; });
         }
-        await ref.update(update);
+        await updateMatchAndPublicScore(match, tournament, update);
         toast('Match started');
       } else if (act === 'complete') {
         const winner = matchWinner(match, tournament);
         if (!winner && !confirm('No clear winner detected. Mark complete anyway?')) return;
-        await ref.update({ status: 'completed', winner: winner || null, resultType: 'played', updatedAt: FieldValue.serverTimestamp() });
+        await updateMatchAndPublicScore(match, tournament, {
+          status: 'completed',
+          winner: winner || null,
+          resultType: 'played',
+          updatedAt: FieldValue.serverTimestamp()
+        });
         toast('Match completed');
       } else if (act === 'draw') {
-        await ref.update({ status: 'completed', winner: 'tie', resultType: 'draw', updatedAt: FieldValue.serverTimestamp() });
+        await updateMatchAndPublicScore(match, tournament, {
+          status: 'completed',
+          winner: 'tie',
+          resultType: 'draw',
+          updatedAt: FieldValue.serverTimestamp()
+        });
         toast('Recorded as a draw. Both teams receive the draw points.');
       } else if (act === 'walkover') {
         const sides = participantsOf(match, tournament);
@@ -4911,7 +5056,12 @@
         if (choice === '1' || choice === 'a') side = 'A';
         else if (choice === '2' || choice === 'b') side = 'B';
         else return toast('Enter 1 or 2 for the team that showed up', 'error');
-        await ref.update({ status: 'completed', winner: side, resultType: 'walkover', updatedAt: FieldValue.serverTimestamp() });
+        await updateMatchAndPublicScore(match, tournament, {
+          status: 'completed',
+          winner: side,
+          resultType: 'walkover',
+          updatedAt: FieldValue.serverTimestamp()
+        });
         const award = tablePointsForScope(sport, {
           categoryId: match.categoryId || '',
           bracketId: match.bracketId || ''
@@ -4919,10 +5069,20 @@
         toast('Walkover recorded — ' + award + ' point' + (award === 1 ? '' : 's') + ' awarded. The other team receives none.');
       } else if (act === 'noresult') {
         if (!confirm('Record a no result? Neither team showed up, so neither team receives points.')) return;
-        await ref.update({ status: 'completed', winner: null, resultType: 'no_result', updatedAt: FieldValue.serverTimestamp() });
+        await updateMatchAndPublicScore(match, tournament, {
+          status: 'completed',
+          winner: null,
+          resultType: 'no_result',
+          updatedAt: FieldValue.serverTimestamp()
+        });
         toast('No result recorded');
       } else if (act === 'reopen') {
-        await ref.update({ status: 'scheduled', winner: null, resultType: null, updatedAt: FieldValue.serverTimestamp() });
+        await updateMatchAndPublicScore(match, tournament, {
+          status: 'scheduled',
+          winner: null,
+          resultType: null,
+          updatedAt: FieldValue.serverTimestamp()
+        });
         toast('Match reopened');
       } else if (act === 'schedule') {
         const cur = toDatetimeLocal(match.scheduledAt);
@@ -6565,6 +6725,33 @@
       </div>`;
   }
 
+  function shouldMirrorPublicMatch(tournament) {
+    return !!(tournament
+      && tournament.publicBoard === true
+      && tournament.published === true
+      && tournament.started === true);
+  }
+
+  async function mirrorPublicMatch(match, tournament, patch) {
+    if (!shouldMirrorPublicMatch(tournament) || !match || !match.id) return;
+    const merged = Object.assign({}, match, patch || {});
+    const payload = sanitizePublicMatch(merged, tournament);
+    payload.updatedAt = FieldValue.serverTimestamp();
+    await db.collection('tournament_public').doc(tournament.id)
+      .collection('matches').doc(match.id).set(payload);
+  }
+
+  async function updateMatchAndPublicScore(match, tournament, patch) {
+    await db.collection('tournament_matches').doc(match.id).update(patch);
+    try {
+      await mirrorPublicMatch(match, tournament, patch);
+    } catch (err) {
+      // The canonical score is already saved. Keep score entry usable even if
+      // public mirroring has not been enabled in Firestore rules yet.
+      console.warn('[tournament] public score mirror failed:', err);
+    }
+  }
+
   function createScoreAutosaver(statusNode) {
     let chain = Promise.resolve();
     let revision = 0;
@@ -6654,7 +6841,7 @@
       }, scoreMatchStatePatch(match, overall));
       autoSave(function () {
         assertCanScoreMatch(match);
-        return db.collection('tournament_matches').doc(match.id).update(patch);
+        return updateMatchAndPublicScore(match, tournament, patch);
       });
     }
 
@@ -6802,7 +6989,7 @@
       }, scoreMatchStatePatch(match, winner));
       autoSave(function () {
         assertCanScoreMatch(match);
-        return db.collection('tournament_matches').doc(match.id).update(patch);
+        return updateMatchAndPublicScore(match, tournament, patch);
       });
     }
 
@@ -6908,7 +7095,7 @@
       }, scoreMatchStatePatch(match, winner));
       autoSave(function () {
         assertCanScoreMatch(match);
-        return db.collection('tournament_matches').doc(match.id).update(patch);
+        return updateMatchAndPublicScore(match, tournament, patch);
       });
     }
 
@@ -7018,6 +7205,8 @@
     if (state.unsubRsvp)  { state.unsubRsvp();  state.unsubRsvp  = null; }
     state.users = [];
     state.rsvpResponses = [];
+    state.scorerDirectory = null;
+    scorerDirectoryPromise = null;
     state.ready.users = false;
     state.ready.rsvp  = false;
   }
@@ -7106,7 +7295,7 @@
     };
   }
 
-  function sanitizePublicMatch(match) {
+  function sanitizePublicMatch(match, tournament) {
     const out = {
       id: match.id,
       sport: match.sport || '',
@@ -7131,8 +7320,12 @@
     if (Array.isArray(match.quarters) && match.quarters.length) {
       out.quarters = match.quarters.map(function (q) { return { a: q.a || 0, b: q.b || 0 }; });
     }
-    if (Array.isArray(match.games) && match.games.length) {
-      out.games = match.games.map(function (g) {
+    const sport = tournament ? getSportConfig(tournament, match.sport) : null;
+    const publicGames = sport && sport.kind === 'racket'
+      ? racketGamesForMatch(match, tournament, sport)
+      : match.games;
+    if (Array.isArray(publicGames) && publicGames.length) {
+      out.games = publicGames.map(function (g) {
         return {
           category: g.category || '',
           playersA: g.playersA || '',
@@ -7182,7 +7375,7 @@
       sportMode: sportModeOf(tournament),
       rulesText: isMultiSportTournament(tournament) ? rulesText(tournament.rules) : '',
       sports: (tournament.sports || []).map(sanitizePublicSport),
-      matches: visible.map(sanitizePublicMatch),
+      matches: visible.map(function (match) { return sanitizePublicMatch(match, tournament); }),
       updatedAt: FieldValue.serverTimestamp()
     };
   }
@@ -7194,6 +7387,42 @@
     if (!tournamentId || !isRealAdmin()) return;
     clearTimeout(publicSyncTimer);
     publicSyncTimer = setTimeout(function () { syncPublicBoardNow(tournamentId); }, 700);
+  }
+
+  async function commitPublicWrites(writes) {
+    const chunk = 400;
+    for (let i = 0; i < writes.length; i += chunk) {
+      const batch = db.batch();
+      writes.slice(i, i + chunk).forEach(function (item) {
+        if (item.type === 'delete') batch.delete(item.ref);
+        else batch.set(item.ref, item.data);
+      });
+      await batch.commit();
+    }
+  }
+
+  async function syncPublicMatchDocs(tournament, matches, open) {
+    const col = db.collection('tournament_public').doc(tournament.id).collection('matches');
+    const existing = await col.get();
+    const keep = {};
+    const writes = [];
+    if (open) {
+      (matches || []).forEach(function (match) {
+        if (!match || !match.id || !publicMatchVisible(tournament, match)) return;
+        keep[match.id] = true;
+        writes.push({
+          type: 'set',
+          ref: col.doc(match.id),
+          data: Object.assign({}, sanitizePublicMatch(match, tournament), {
+            updatedAt: FieldValue.serverTimestamp()
+          })
+        });
+      });
+    }
+    existing.forEach(function (doc) {
+      if (!keep[doc.id]) writes.push({ type: 'delete', ref: doc.ref });
+    });
+    await commitPublicWrites(writes);
   }
 
   async function syncPublicBoardNow(tournamentId, opts) {
@@ -7210,6 +7439,11 @@
     const key = JSON.stringify(comparable);
     if (publicSyncKeys[t.id] === key && !(opts && opts.force)) return;
     await db.collection('tournament_public').doc(t.id).set(payload);
+    try {
+      await syncPublicMatchDocs(t, matches, open);
+    } catch (err) {
+      console.warn('[tournament] public match docs sync failed:', err);
+    }
     publicSyncKeys[t.id] = key;
   }
 
@@ -7309,7 +7543,111 @@
     }
   }
 
-  const watch = { board: null, ready: false, missing: false, closed: false, error: null, preview: false };
+  const watch = {
+    board: null,
+    parentBoard: null,
+    liveMatches: [],
+    ready: false,
+    missing: false,
+    closed: false,
+    error: null,
+    preview: false,
+    refreshTimer: null
+  };
+
+  function mergeWatchMatches(parent, liveMatches) {
+    if (!parent) return parent;
+    const byId = {};
+    const order = [];
+    function put(match) {
+      if (!match || !match.id) return;
+      if (!byId[match.id]) order.push(match.id);
+      byId[match.id] = Object.assign({}, byId[match.id] || {}, match);
+    }
+    (parent.matches || []).forEach(put);
+    (liveMatches || []).forEach(put);
+    return Object.assign({}, parent, {
+      matches: order.map(function (id) { return byId[id]; })
+    });
+  }
+
+  function watchBoardKey(board) {
+    if (!board) return '';
+    return JSON.stringify((board.matches || []).map(function (match) {
+      return [
+        match.id,
+        match.status,
+        match.winner,
+        match.resultType,
+        match.games,
+        match.sets,
+        match.quarters,
+        match.showUpcoming,
+        match.scheduledAt,
+        match.court,
+        match.venue
+      ];
+    }));
+  }
+
+  function publishWatchBoard() {
+    const data = watch.parentBoard;
+    if (!data) {
+      watch.board = null;
+      watch.renderKey = '';
+      renderPublicWatch();
+      return;
+    }
+    const open = data.publicBoard === true && data.published === true && data.started === true;
+    const next = open ? mergeWatchMatches(data, watch.liveMatches) : null;
+    const nextKey = (open ? 'open:' : 'closed:') + watchBoardKey(next);
+    watch.closed = !open;
+    if (watch.board && watch.renderKey === nextKey) return;
+    watch.renderKey = nextKey;
+    watch.board = next;
+    renderPublicWatch();
+  }
+
+  function liveMatchesFromSnapshot(snap) {
+    const list = [];
+    snap.forEach(function (doc) {
+      list.push(Object.assign({ id: doc.id }, doc.data() || {}));
+    });
+    return list;
+  }
+
+  function applyWatchParent(snap) {
+    watch.error = null;
+    if (!snap.exists) {
+      watch.parentBoard = null;
+      watch.closed = true;
+      return;
+    }
+    watch.parentBoard = Object.assign({ id: snap.id }, snap.data() || {});
+  }
+
+  async function refreshWatchBoard(id) {
+    try {
+      const snap = await db.collection('tournament_public').doc(id).get();
+      applyWatchParent(snap);
+      try {
+        const matchesSnap = await db.collection('tournament_public').doc(id).collection('matches').get();
+        watch.liveMatches = liveMatchesFromSnapshot(matchesSnap);
+      } catch (err) {
+        console.warn('[watch] live match refresh skipped:', err);
+      }
+      watch.ready = true;
+      publishWatchBoard();
+    } catch (err) {
+      console.error('[watch]', err);
+      watch.ready = true;
+      watch.parentBoard = null;
+      watch.board = null;
+      watch.error = err;
+      watch.closed = !!(err && err.code === 'permission-denied');
+      renderPublicWatch();
+    }
+  }
 
   function sampleWatchBoard() {
     return {
@@ -7417,9 +7755,21 @@
 
   function watchScoreText(match, tournament) {
     const kind = resultKind(match);
-    if (match.status !== 'in_progress' && match.status !== 'completed') return { a: '', b: '', note: 'vs' };
     if (kind === 'no_result') return { a: '–', b: '–', note: 'No result' };
     if (kind === 'walkover') return { a: match.winner === 'A' ? 'W' : '0', b: match.winner === 'B' ? 'W' : '0', note: 'Walkover' };
+    if (usesRacketSetPoints(match, tournament)) {
+      const line = racketSetScoreLine(match, tournament);
+      const parts = line.split('  ');
+      const last = parts[parts.length - 1] || '0–0';
+      const split = last.split('–');
+      return {
+        a: split[0] || '0',
+        b: split[1] || '0',
+        note: kind === 'draw' ? 'Draw' : '',
+        line: line
+      };
+    }
+    if (match.status !== 'in_progress' && match.status !== 'completed') return { a: '', b: '', note: 'vs' };
     const s = matchScoreDisplay(match, tournament);
     return { a: s.a, b: s.b, note: kind === 'draw' ? 'Draw' : '' };
   }
@@ -7473,7 +7823,9 @@
     ].filter(Boolean).join(' · ');
     const center = score.note === 'vs'
       ? '<div class="w-vs">VS</div>'
-      : '<div class="w-score-num"><b>' + escapeHtml(score.a) + '</b><span>–</span><b>' + escapeHtml(score.b) + '</b></div>';
+      : (score.line
+        ? '<div class="w-score-num w-score-sets"><b>' + escapeHtml(score.line) + '</b></div>'
+        : '<div class="w-score-num"><b>' + escapeHtml(score.a) + '</b><span>–</span><b>' + escapeHtml(score.b) + '</b></div>');
     return `
       <article class="w-scoreboard ${live ? 'is-live' : ''} ${featured ? 'is-featured' : ''} ${match.status === 'completed' ? 'is-done' : ''}">
         <div class="w-kicker">${live ? '<span class="w-live-dot"></span>' : ''}${escapeHtml(kicker)}</div>
@@ -7498,7 +7850,7 @@
     const a = teamMeta(tournament, match.sport, p.a);
     const b = teamMeta(tournament, match.sport, p.b);
     const score = watchScoreText(match, tournament);
-    const mid = score.note === 'vs' ? 'vs' : (score.a + '–' + score.b);
+    const mid = score.note === 'vs' ? 'vs' : (score.line || (score.a + '–' + score.b));
     return `
       <div class="w-fixture">
         <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${courtOf(match) ? ' · ' + escapeHtml(courtOf(match)) : ''}</div>
@@ -7820,25 +8172,27 @@
     renderPublicWatch();
     db.collection('tournament_public').doc(id).onSnapshot(function (snap) {
       watch.ready = true;
-      watch.error = null;
-      if (!snap.exists) {
-        watch.board = null;
-        watch.closed = true;
-      } else {
-        const data = Object.assign({ id: snap.id }, snap.data() || {});
-        const open = data.publicBoard === true && data.published === true && data.started === true;
-        watch.board = open ? data : null;
-        watch.closed = !open;
-      }
-      renderPublicWatch();
+      applyWatchParent(snap);
+      publishWatchBoard();
     }, function (err) {
       console.error('[watch]', err);
       watch.ready = true;
+      watch.parentBoard = null;
       watch.board = null;
       watch.error = err;
       watch.closed = !!(err && err.code === 'permission-denied');
       renderPublicWatch();
     });
+    db.collection('tournament_public').doc(id).collection('matches').onSnapshot(function (snap) {
+      watch.liveMatches = liveMatchesFromSnapshot(snap);
+      if (watch.ready) publishWatchBoard();
+    }, function (err) {
+      console.warn('[watch] live matches unavailable:', err);
+      watch.liveMatches = [];
+      if (watch.ready) publishWatchBoard();
+    });
+    if (watch.refreshTimer) clearInterval(watch.refreshTimer);
+    watch.refreshTimer = setInterval(function () { refreshWatchBoard(id); }, 10000);
   }
 
   function render() {

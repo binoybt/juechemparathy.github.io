@@ -211,6 +211,7 @@ body.watch {
 }
 .w-score-num { font-size: clamp(2.8rem, 8vw, 4.4rem); line-height: .85; }
 .w-score-num span { color: var(--w-muted); font-size: .6em; }
+.w-score-num.w-score-sets { font-size: clamp(1.6rem, 5vw, 2.6rem); letter-spacing: .06em; }
 .w-vs { font-size: 1.4rem; color: var(--w-muted); letter-spacing: .18em; }
 .w-detail, .w-meta { color: var(--w-muted); font-size: .82rem; margin-top: 8px; }
 .w-detail { color: #dbe7f5; font-variant-numeric: tabular-nums; }
