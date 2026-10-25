@@ -249,7 +249,8 @@ body.watch {
 .w-fix-name.right { text-align: right; }
 .w-fix-mid { font-family: 'Barlow Condensed', sans-serif; font-size: 1.25rem; letter-spacing: .04em; color: var(--w-gold); }
 
-.w-table { width: 100%; border-collapse: collapse; }
+.w-table-scroll { width: 100%; overflow-x: auto; }
+.w-table { width: 100%; min-width: 520px; border-collapse: collapse; }
 .w-table th, .w-table td { padding: 8px 6px; text-align: center; border-bottom: 1px solid var(--w-line); font-variant-numeric: tabular-nums; }
 .w-table th {
   font-family: 'Barlow Condensed', sans-serif;
