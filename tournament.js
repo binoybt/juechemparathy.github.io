@@ -8,9 +8,9 @@
  *   /tournament.html?t=<id>&sport=<id>&cat=<id>&bracket=<id>&team=<id>&st=<stageId>
  *                                         → category, bracket, stage, or team detail
  *   /tournament.html?t=<id>&manage=1          → edit tournament config (admin)
- *   /watch.html?t=<id>                        → public spectator board (no sign-in)
- *                                             only after the tournament is published,
- *                                             started, and an admin has shared the link
+ *   /watch.html?s=<token>                     → public spectator board (no sign-in)
+ *                                             one unique token per tournament; disabled
+ *                                             links do not read public score data
  *
  * Firestore layout:
  *   tournaments/{docId}
@@ -58,6 +58,8 @@
  *                           (existing docs without the field stay unpublished)
  *     scorers[]     { uid, name, email } — scorer-role members assigned by admin
  *     scorerUids[]  string — mirrored UIDs used by Firestore authorization
+ *     spectatorToken one unique public-board key; reused when the link is re-enabled
+ *     publicBoard   bool — spectator link is on only while this is true
  *     clonedFrom    string — source tournament id when created via Clone
  *     createdAt / updatedAt / createdBy
  *
@@ -5022,7 +5024,7 @@
         await ref.delete();
         if (shouldMirrorPublicMatch(tournament)) {
           try {
-            await db.collection('tournament_public').doc(tournament.id)
+            await db.collection('tournament_public').doc(publicBoardDocId(tournament))
               .collection('matches').doc(match.id).delete();
           } catch (publicErr) {
             console.warn('[tournament] public match delete failed:', publicErr);
@@ -6751,15 +6753,50 @@
     return !!(tournament
       && tournament.publicBoard === true
       && tournament.published === true
-      && tournament.started === true);
+      && tournament.started === true
+      && tournament.spectatorToken);
+  }
+
+  function publicBoardDocId(tournament) {
+    return String((tournament && tournament.spectatorToken) || '').trim();
+  }
+
+  function newSpectatorToken() {
+    if (window.crypto && crypto.getRandomValues) {
+      const bytes = new Uint8Array(16);
+      crypto.getRandomValues(bytes);
+      let out = '';
+      for (let i = 0; i < bytes.length; i++) {
+        out += ('0' + bytes[i].toString(16)).slice(-2);
+      }
+      return out;
+    }
+    return db.collection('tournament_public').doc().id;
+  }
+
+  async function ensureSpectatorToken(tournament) {
+    if (tournament.spectatorToken) return tournament.spectatorToken;
+    const token = newSpectatorToken();
+    await db.collection('tournaments').doc(tournament.id).update({
+      spectatorToken: token,
+      updatedAt: FieldValue.serverTimestamp()
+    });
+    tournament.spectatorToken = token;
+    const idx = state.tournaments.findIndex(function (item) { return item.id === tournament.id; });
+    if (idx >= 0) {
+      state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { spectatorToken: token });
+    }
+    return token;
   }
 
   async function mirrorPublicMatch(match, tournament, patch) {
     if (!shouldMirrorPublicMatch(tournament) || !match || !match.id) return;
+    const boardId = publicBoardDocId(tournament);
+    if (!boardId) return;
     const merged = Object.assign({}, match, patch || {});
     const payload = sanitizePublicMatch(merged, tournament);
     payload.updatedAt = FieldValue.serverTimestamp();
-    await db.collection('tournament_public').doc(tournament.id)
+    await db.collection('tournament_public').doc(boardId)
       .collection('matches').doc(match.id).set(payload);
   }
 
@@ -7265,8 +7302,12 @@
     return file === 'watch.html';
   }
 
-  function spectatorUrl(tournamentId) {
-    return new URL('watch.html?t=' + encodeURIComponent(tournamentId), location.href).href;
+  function spectatorUrl(tournament) {
+    const token = typeof tournament === 'string'
+      ? (state.tournaments.find(function (item) { return item.id === tournament; }) || {}).spectatorToken
+      : publicBoardDocId(tournament);
+    if (!token) return '';
+    return new URL('watch.html?s=' + encodeURIComponent(token), location.href).href;
   }
 
   function sanitizePublicTeam(team) {
@@ -7375,19 +7416,6 @@
   }
 
   function publicBoardDocument(tournament, matches) {
-    const open = !!(tournament.publicBoard && isTournamentPublished(tournament) && tournamentHasStarted(tournament));
-    if (!open) {
-      return {
-        publicBoard: false,
-        expired: true,
-        published: isTournamentPublished(tournament),
-        started: tournamentHasStarted(tournament),
-        name: tournament.name || 'Tournament',
-        sports: [],
-        matches: [],
-        updatedAt: FieldValue.serverTimestamp()
-      };
-    }
     const visible = (matches || []).filter(function (m) { return publicMatchVisible(tournament, m); });
     return {
       publicBoard: true,
@@ -7424,8 +7452,28 @@
     }
   }
 
+  async function deletePublicBoardDocs(tournament) {
+    const keys = [];
+    const token = publicBoardDocId(tournament);
+    if (token) keys.push(token);
+    if (tournament && tournament.id && keys.indexOf(tournament.id) === -1) keys.push(tournament.id);
+    for (let i = 0; i < keys.length; i++) {
+      const ref = db.collection('tournament_public').doc(keys[i]);
+      try {
+        const existing = await ref.collection('matches').get();
+        const writes = [{ type: 'delete', ref: ref }];
+        existing.forEach(function (doc) { writes.push({ type: 'delete', ref: doc.ref }); });
+        await commitPublicWrites(writes);
+      } catch (err) {
+        console.warn('[tournament] public board delete skipped:', keys[i], err);
+      }
+    }
+  }
+
   async function syncPublicMatchDocs(tournament, matches, open) {
-    const col = db.collection('tournament_public').doc(tournament.id).collection('matches');
+    const boardId = publicBoardDocId(tournament);
+    if (!boardId) return;
+    const col = db.collection('tournament_public').doc(boardId).collection('matches');
     const existing = await col.get();
     const keep = {};
     const writes = [];
@@ -7455,16 +7503,27 @@
     const open = !!(t.publicBoard && isTournamentPublished(t) && tournamentHasStarted(t));
     if (!open && !(opts && opts.forceClose)) return;
     if (open && (state.currentId !== t.id || !state.ready.matches)) return;
+    if (!open) {
+      await deletePublicBoardDocs(t);
+      publicSyncKeys[t.id] = 'closed';
+      return;
+    }
+    if (!publicBoardDocId(t)) return;
     const matches = state.matches || [];
     const payload = publicBoardDocument(t, matches);
     const comparable = Object.assign({}, payload);
     delete comparable.updatedAt;
     const key = JSON.stringify(comparable);
     if (publicSyncKeys[t.id] === key && !(opts && opts.force)) return;
-    await db.collection('tournament_public').doc(t.id).set(payload);
-    if (opts && (opts.force || opts.forceClose)) {
+    await db.collection('tournament_public').doc(publicBoardDocId(t)).set(payload);
+    if (t.spectatorToken && t.spectatorToken !== t.id) {
+      try { await deletePublicBoardDocs({ id: t.id, spectatorToken: '' }); } catch (err) {
+        console.warn('[tournament] legacy public board cleanup failed:', err);
+      }
+    }
+    if (opts && opts.force) {
       try {
-        await syncPublicMatchDocs(t, matches, open);
+        await syncPublicMatchDocs(t, matches, true);
       } catch (err) {
         console.warn('[tournament] public match docs sync failed:', err);
       }
@@ -7472,8 +7531,9 @@
     publicSyncKeys[t.id] = key;
   }
 
-  function copySpectatorLink(tournamentId) {
-    const url = spectatorUrl(tournamentId);
+  function copySpectatorLink(tournament) {
+    const url = spectatorUrl(tournament);
+    if (!url) return toast('Enable the spectator link first', 'error');
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(function () {
         toast('Spectator link copied');
@@ -7487,9 +7547,9 @@
 
   function bindSpectatorLinkModal(t) {
     const { modal, body } = getOrCreateModal('tShareBoard', 'Spectator link', { wide: false });
-    const url = spectatorUrl(t.id);
+    const url = spectatorUrl(t);
     body.innerHTML = `
-      <p class="t-mode-note" style="margin-top:0;">Share this link anywhere. Spectators see the matches on court, the matches you mark as upcoming, and standings for each stage and bracket. They do not sign in, and they never see rosters, captains, or admin tools.</p>
+      <p class="t-mode-note" style="margin-top:0;">This tournament has one spectator link. Disable it to expire the link and stop all public reads. Enable it again later to turn the same link back on.</p>
       <div class="t-form-field">
         <label>Spectator link</label>
         <input type="text" class="t-input" id="tSpectatorUrl" readonly value="${escapeHtml(url)}" />
@@ -7503,7 +7563,7 @@
     modal.classList.add('open');
     const input = body.querySelector('#tSpectatorUrl');
     if (input) input.addEventListener('focus', function () { input.select(); });
-    body.querySelector('[data-copy-share]').addEventListener('click', function () { copySpectatorLink(t.id); });
+    body.querySelector('[data-copy-share]').addEventListener('click', function () { copySpectatorLink(t); });
     body.querySelector('[data-stop-share]').addEventListener('click', function () { stopLiveBoard(t.id); });
   }
 
@@ -7529,6 +7589,20 @@
       return;
     }
     if (t.publicBoard) {
+      if (!t.spectatorToken) {
+        body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Creating this tournament\'s spectator link…</p>';
+        modal.classList.add('open');
+        try {
+          await ensureSpectatorToken(t);
+          await syncPublicBoardNow(t.id, { force: true });
+          const latest = state.tournaments.find(function (item) { return item.id === t.id; }) || t;
+          bindSpectatorLinkModal(latest);
+        } catch (err) {
+          console.error(err);
+          body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Could not create the spectator link. ' + escapeHtml(err.message || err.code || 'Try again.') + '</p>';
+        }
+        return;
+      }
       bindSpectatorLinkModal(t);
       return;
     }
@@ -7540,15 +7614,22 @@
     body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Preparing the live board…</p>';
     modal.classList.add('open');
     try {
+      const token = await ensureSpectatorToken(t);
       await db.collection('tournaments').doc(t.id).update({
         publicBoard: true,
+        spectatorToken: token,
         publicBoardAt: new Date().toISOString(),
         updatedAt: FieldValue.serverTimestamp()
       });
       const idx = state.tournaments.findIndex(function (x) { return x.id === t.id; });
-      if (idx >= 0) state.tournaments[idx] = Object.assign({}, state.tournaments[idx], { publicBoard: true });
+      if (idx >= 0) {
+        state.tournaments[idx] = Object.assign({}, state.tournaments[idx], {
+          publicBoard: true,
+          spectatorToken: token
+        });
+      }
       await syncPublicBoardNow(t.id, { force: true });
-      bindSpectatorLinkModal(state.tournaments[idx] || t);
+      bindSpectatorLinkModal(state.tournaments[idx] || Object.assign({}, t, { publicBoard: true, spectatorToken: token }));
       render();
     } catch (err) {
       console.error(err);
@@ -7634,8 +7715,8 @@
     const data = watch.parentBoard;
     if (!data) {
       watch.board = null;
-      watch.expired = false;
-      watch.renderKey = '';
+      watch.closed = true;
+      watch.renderKey = 'expired';
       renderPublicWatch();
       return;
     }
@@ -7663,6 +7744,7 @@
     if (!snap.exists) {
       watch.parentBoard = null;
       watch.closed = true;
+      watch.expired = true;
       return;
     }
     watch.parentBoard = Object.assign({ id: snap.id }, snap.data() || {});
@@ -7743,6 +7825,7 @@
   function watchParams() {
     const params = new URLSearchParams(location.search);
     return {
+      token: params.get('s') || '',
       tournamentId: params.get('t') || '',
       sportId: params.get('sport') || '',
       panel: params.get('panel') === 'rules' ? 'rules' : 'summary',
@@ -7754,10 +7837,14 @@
 
   function setWatchParams(next) {
     const params = new URLSearchParams(location.search);
+    const token = params.get('s');
     ['sport', 'panel', 'st', 'cat', 'team'].forEach(function (key) {
       if (next[key]) params.set(key, next[key]);
       else params.delete(key);
     });
+    if (token) params.set('s', token);
+    else params.delete('s');
+    params.delete('t');
     const qs = params.toString();
     history.replaceState(null, '', 'watch.html' + (qs ? '?' + qs : ''));
     renderPublicWatch();
@@ -8189,10 +8276,12 @@
       renderPublicWatch();
       return;
     }
-    const id = params.get('t');
-    if (!id) {
+    const token = params.get('s');
+    if (!token) {
       watch.ready = true;
-      watch.missing = true;
+      watch.expired = true;
+      watch.closed = true;
+      watch.board = null;
       renderPublicWatch();
       return;
     }
@@ -8208,7 +8297,7 @@
     }
     function startWatchMatches() {
       if (unsubWatchMatches) return;
-      unsubWatchMatches = db.collection('tournament_public').doc(id).collection('matches').onSnapshot(function (snap) {
+      unsubWatchMatches = db.collection('tournament_public').doc(token).collection('matches').onSnapshot(function (snap) {
         watch.liveMatches = liveMatchesFromSnapshot(snap);
         if (watch.ready) publishWatchBoard();
       }, function (err) {
@@ -8217,7 +8306,7 @@
         if (watch.ready) publishWatchBoard();
       });
     }
-    db.collection('tournament_public').doc(id).onSnapshot(function (snap) {
+    db.collection('tournament_public').doc(token).onSnapshot(function (snap) {
       watch.ready = true;
       applyWatchParent(snap);
       if (publicWatchIsOpen(watch.parentBoard)) startWatchMatches();
@@ -8228,9 +8317,9 @@
       watch.ready = true;
       watch.parentBoard = null;
       watch.board = null;
-      watch.error = err;
-      watch.closed = !!(err && err.code === 'permission-denied');
-      watch.expired = !!(err && err.code === 'permission-denied');
+      watch.error = null;
+      watch.closed = true;
+      watch.expired = true;
       stopWatchMatches();
       renderPublicWatch();
     });
