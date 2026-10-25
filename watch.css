@@ -100,6 +100,7 @@ body.watch {
 }
 .w-main { padding: 14px 16px 48px; max-width: 1180px; margin: 0 auto; }
 .w-sub { margin: 0 0 12px; }
+.w-view-tabs { margin-bottom: 14px; }
 .w-accent { height: 3px; border-radius: 999px; background: var(--accent, var(--w-accent)); margin: 4px 0 14px; }
 
 .w-sample {
@@ -286,6 +287,12 @@ body.watch {
 .w-follow-stats b { display: block; margin-top: 3px; font-size: .92rem; }
 .w-rules summary { cursor: pointer; font-weight: 700; }
 .w-rules p { color: var(--w-muted); white-space: pre-wrap; }
+.w-rules-grid { display: grid; gap: 14px; }
+.w-rules-text { color: #dbe7f5; line-height: 1.6; overflow-wrap: anywhere; }
+.w-rules-text p:first-child { margin-top: 0; }
+.w-rules-text p:last-child { margin-bottom: 0; }
+.w-rules-text ul, .w-rules-text ol { padding-left: 1.35rem; }
+.w-rules-text mark { background: #fde047; color: #422006; padding: 0 2px; }
 
 .w-status, .w-closed { padding: 48px 8px; text-align: center; }
 .w-closed-mark { font-size: 3rem; }

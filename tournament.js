@@ -7388,6 +7388,7 @@
     return {
       tournamentId: params.get('t') || '',
       sportId: params.get('sport') || '',
+      panel: params.get('panel') === 'rules' ? 'rules' : 'summary',
       stageId: params.get('st') || '',
       categoryId: params.get('cat') || '',
       teamId: params.get('team') || ''
@@ -7396,7 +7397,7 @@
 
   function setWatchParams(next) {
     const params = new URLSearchParams(location.search);
-    ['sport', 'st', 'cat', 'team'].forEach(function (key) {
+    ['sport', 'panel', 'st', 'cat', 'team'].forEach(function (key) {
       if (next[key]) params.set(key, next[key]);
       else params.delete(key);
     });
@@ -7535,6 +7536,30 @@
     `;
   }
 
+  function watchRulesPanelHtml(tournament, sport) {
+    const blocks = [];
+    if (String(tournament.rulesText || '').trim()) {
+      blocks.push(`
+        <section class="w-panel">
+          <h3>Tournament rules</h3>
+          <div class="w-rules-text">${rulesToDisplayHtml(tournament.rulesText)}</div>
+        </section>
+      `);
+    }
+    if (sport && String(sport.rulesText || '').trim()) {
+      blocks.push(`
+        <section class="w-panel">
+          <h3>${escapeHtml((sport.emoji || '') + ' ' + (sport.label || 'Sport'))} rules</h3>
+          <div class="w-rules-text">${rulesToDisplayHtml(sport.rulesText)}</div>
+        </section>
+      `);
+    }
+    if (!blocks.length) {
+      return '<section class="w-quiet-card"><h2>No rules posted yet</h2><p>The organizer has not added tournament or sport rules.</p></section>';
+    }
+    return '<div class="w-rules-grid">' + blocks.join('') + '</div>';
+  }
+
   function renderPublicWatch() {
     const top = document.getElementById('wTop');
     const root = document.getElementById('wContent');
@@ -7566,6 +7591,7 @@
     const tournament = watch.board;
     const matches = tournament.matches || [];
     const params = watchParams();
+    const panel = params.panel;
     const sports = tournament.sports || [];
     let sport = sports.find(function (s) { return s.id === params.sportId; }) || null;
     if (!sport) {
@@ -7636,6 +7662,11 @@
       : (categorySummary
         ? '<section class="w-quiet-card"><h2>No current matches</h2><p>Live matches from every category will appear here.</p></section>'
         : (categorized ? '' : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches appear after an admin marks them.</p></section>`));
+    const viewTabs = `
+      <div class="w-pills w-sub w-view-tabs" aria-label="Spectator views">
+        <button type="button" class="w-pill ${panel === 'summary' ? 'is-on' : ''}" data-act="watch-panel" data-panel="summary">Summary</button>
+        <button type="button" class="w-pill ${panel === 'rules' ? 'is-on' : ''}" data-act="watch-panel" data-panel="rules">Rules</button>
+      </div>`;
 
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
@@ -7685,6 +7716,8 @@
     root.innerHTML = `
       ${watch.preview ? '<div class="w-sample">Sample board — this is not a live tournament.</div>' : ''}
       <div class="w-accent" style="--accent:${sport.color || '#3b82f6'}"></div>
+      ${viewTabs}
+      ${panel === 'rules' ? watchRulesPanelHtml(tournament, sport) : `
       ${catPills}
       ${categorySummary ? hero : `
       ${stagePills}
@@ -7713,15 +7746,16 @@
       </div>
       ${!categorized && allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
       `}
+      `}
     `;
 
-    function goSport(id) { setWatchParams({ sport: id, st: '', cat: '', team: '' }); }
-    function goStage(id) { setWatchParams({ sport: sport.id, st: id, cat: division ? division.id : '', team: '' }); }
-    function goCat(id) { setWatchParams({ sport: sport.id, st: stageId, cat: id, team: '' }); }
+    function goSport(id) { setWatchParams({ sport: id, panel: panel, st: '', cat: '', team: '' }); }
+    function goStage(id) { setWatchParams({ sport: sport.id, panel: 'summary', st: id, cat: division ? division.id : '', team: '' }); }
+    function goCat(id) { setWatchParams({ sport: sport.id, panel: 'summary', st: stageId, cat: id, team: '' }); }
     function goTeam(id) {
       const found = findEntryTeam(tournament, sport.id, id);
       const categoryId = (found && found.division && found.division.id) || (division && division.id) || '';
-      setWatchParams({ sport: sport.id, st: stageId, cat: categoryId, team: id });
+      setWatchParams({ sport: sport.id, panel: 'summary', st: stageId, cat: categoryId, team: id });
     }
     const shell = document.body;
     shell.querySelectorAll('[data-act="sport"]').forEach(function (btn) {
@@ -7732,6 +7766,17 @@
     });
     shell.querySelectorAll('[data-act="cat"]').forEach(function (btn) {
       btn.addEventListener('click', function () { goCat(btn.getAttribute('data-cat')); });
+    });
+    shell.querySelectorAll('[data-act="watch-panel"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setWatchParams({
+          sport: sport.id,
+          panel: btn.getAttribute('data-panel'),
+          st: panel === 'summary' ? stageId : '',
+          cat: panel === 'summary' && division ? division.id : '',
+          team: ''
+        });
+      });
     });
     shell.querySelectorAll('[data-act="team"]').forEach(function (node) {
       node.addEventListener('click', function () {
