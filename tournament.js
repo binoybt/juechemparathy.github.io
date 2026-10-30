@@ -4155,7 +4155,6 @@
     const sport = t ? getSportConfig(t, sportId) : null;
     const division = sport ? findDivision(sport, divisionId) : null;
     if (!division) return;
-    if ((division.teams || []).length < 2) return toast('Add at least two teams before creating a bracket', 'error');
     const stage = stageId || 'league';
     const n = bracketsInStage(division, stage).length + 1;
     const bracket = {
@@ -4182,7 +4181,12 @@
         }
         div.brackets.splice(insertAt, 0, bracket);
       });
-      toast('Bracket created. Pull teams into it, then build the schedule.', 'success');
+      toast(
+        (division.teams || []).length < 2
+          ? 'Bracket created in ' + stageLabelOf(sport, stage) + '. Add teams, then pull them in.'
+          : 'Bracket created in ' + stageLabelOf(sport, stage) + '. Pull teams into it, then build the schedule.',
+        'success'
+      );
       navigate({
         view: 'tournament',
         tournamentId: tournamentId,
@@ -4428,6 +4432,13 @@
       const count = bracketsInStage(division, st.id).length;
       return `<button type="button" class="t-tab ${active ? 'active' : ''}" style="--sport-color:${sport.color || 'var(--t-primary)'}" data-act="select-stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}<span class="count">${count}</span></button>`;
     }).join('')}</div>`;
+    const stageToolbar = isAdminUi()
+      ? `<div class="t-stage-toolbar">
+          <div class="t-stage-toolbar-label"><b>${escapeHtml(stageName)}</b> · ${brackets.length} bracket${brackets.length === 1 ? '' : 's'} in this category</div>
+          <button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>
+          <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ${escapeHtml(stageName)}</button>
+        </div>`
+      : '';
     const hidden = {};
     disabledStagesOf(division).forEach(function (id) { hidden[id] = true; });
     const stageOverride = isAdminUi() && allStages.length
@@ -4571,6 +4582,7 @@
       ${categoryTabs}
       ${stageOverride}
       ${stageTabs}
+      ${stageToolbar}
       ${focusTeam ? teamFocusHtml(tournament, sport, division, focusTeam) : ''}
       ${isAdminUi() ? `
       <section class="t-section">
@@ -4584,10 +4596,10 @@
         <div class="t-section-header">
           <h2 class="t-section-title">Brackets <small>${escapeHtml(stageName)} — pull teams in, then schedule inside the bracket</small></h2>
           ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>` : ''}
-          ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket">➕ Create bracket</button>` : ''}
+          ${isAdminUi() ? `<button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ${escapeHtml(stageName)}</button>` : ''}
         </div>
         <p class="t-mode-note">A team can sit in one bracket of ${escapeHtml(stageName)}. The same team can be pulled into a different bracket in another stage. Generate round-robin asks which bracket to fill and skips any bracket marked complete.</p>
-        <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.</div>'}</div>
+        <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.' + (isAdminUi() ? ' <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ' + escapeHtml(stageName) + '</button>' : '') + '</div>'}</div>
       </section>
       ${scheduleBlock}
       ` : ''}

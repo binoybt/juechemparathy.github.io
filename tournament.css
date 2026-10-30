@@ -1078,6 +1078,19 @@ body.t-member-preview .t-admin-switch {
   font-size: .9rem;
 }
 .t-subtabs { margin-bottom: 14px; }
+.t-stage-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: -4px 0 16px;
+}
+.t-stage-toolbar-label {
+  margin-right: auto;
+  color: var(--t-muted);
+  font-size: .88rem;
+}
+.t-stage-toolbar-label b { color: var(--t-fg); }
 .t-stage-override {
   margin: 0 0 14px;
   padding: 12px 14px;
@@ -1108,6 +1121,12 @@ body.t-member-preview .t-admin-switch {
 }
 .t-bracket-grid > .t-empty,
 .t-rosters-grid > .t-empty { grid-column: 1 / -1; }
+.t-bracket-grid > .t-empty {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
 .t-bracket-card {
   background: #fff;
   border: 1px solid var(--t-border);
