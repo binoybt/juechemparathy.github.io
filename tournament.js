@@ -59,6 +59,10 @@
  *                     standings are one table per stage, and one per bracket
  *                     a category can skip a stage; Advance on its points table
  *                     sends a team to the next stage it still uses
+ *                     when that category's last stage other than 3rd place is
+ *                     finished, the summary shows a champion and a runner-up,
+ *                     then 3rd and 4th from the 3rd-place match or the stage
+ *                     before, and everyone else as a ranked list
  *       schedule    { draft, published }            — legacy per-sport fixture list
  *                     draft.entries[]     working copy (admin only)
  *                     published.entries[] public copy (visible after Publish)
@@ -3642,6 +3646,342 @@
     }
   }
 
+  function decisiveResult(match, tournament) {
+    const kind = resultKind(match);
+    if (kind !== 'win' && kind !== 'walkover') return null;
+    if (!match || (match.winner !== 'A' && match.winner !== 'B')) return null;
+    const people = participantsOf(match, tournament);
+    if (!people.a || !people.b) return null;
+    return match.winner === 'A'
+      ? { winnerId: people.a, loserId: people.b }
+      : { winnerId: people.b, loserId: people.a };
+  }
+
+  function mainStagesFor(sport, division) {
+    const stages = division ? categoryStages(sport, division) : stageListFor(sport);
+    return stages.filter(function (st) { return st.id !== 'third_place'; });
+  }
+
+  function championshipStage(sport, division) {
+    const main = mainStagesFor(sport, division);
+    return main.length ? main[main.length - 1] : null;
+  }
+
+  function matchesForPlacement(tournament, sport, division, stageId) {
+    return visibleMatchesFor(tournament, sport.id).filter(function (match) {
+      if ((match.stage || 'league') !== stageId) return false;
+      if (division) return match.categoryId === division.id;
+      return !match.categoryId && !match.bracketId;
+    });
+  }
+
+  // A stage is finished only when a win or walkover has been recorded and
+  // nothing in that stage is still scheduled or live. Marking a bracket
+  // complete does not invent a winner when no match was scored.
+  function stageIsFinished(tournament, sport, division, stageId) {
+    const matches = matchesForPlacement(tournament, sport, division, stageId);
+    if (matches.some(function (match) {
+      return match.status === 'scheduled' || match.status === 'in_progress';
+    })) return false;
+    if (!matches.some(function (match) { return !!decisiveResult(match, tournament); })) return false;
+    if (!division) return true;
+    const brackets = bracketsInStage(division, stageId).filter(bracketHasTeams);
+    if (!brackets.length) return true;
+    return brackets.every(function (bracket) {
+      if (bracketIsComplete(bracket)) return true;
+      const own = matches.filter(function (match) { return match.bracketId === bracket.id; });
+      if (!own.length) return false;
+      return own.every(function (match) { return match.status === 'completed'; });
+    });
+  }
+
+  function scoringResults(matches) {
+    return (matches || []).filter(function (match) {
+      const kind = resultKind(match);
+      return kind === 'win' || kind === 'walkover' || kind === 'draw';
+    });
+  }
+
+  function isKnockoutDecider(matches, tournament) {
+    const decisive = (matches || []).filter(function (match) { return !!decisiveResult(match, tournament); });
+    return decisive.length === 1 && scoringResults(matches).length === 1;
+  }
+
+  function participantIdsIn(matches, tournament) {
+    const ids = [];
+    (matches || []).forEach(function (match) {
+      if (match.status !== 'completed') return;
+      const people = participantsOf(match, tournament);
+      [people.a, people.b].forEach(function (id) {
+        if (id && ids.indexOf(id) === -1) ids.push(id);
+      });
+    });
+    return ids;
+  }
+
+  function rawRowsForStage(tournament, sport, division, stageId, visible) {
+    const ids = participantIdsIn(matchesForPlacement(tournament, sport, division, stageId), tournament);
+    if (!ids.length) return [];
+    const scope = { stageId: stageId, teamIds: ids };
+    if (division) scope.categoryId = division.id;
+    return computeStandings(tournament, visible, sport.id, scope);
+  }
+
+  function earlierRankLookups(tournament, sport, division, beforeStageId, visible) {
+    const main = mainStagesFor(sport, division);
+    const idx = main.findIndex(function (st) { return st.id === beforeStageId; });
+    const prior = idx > 0 ? main.slice(0, idx).reverse() : [];
+    return prior.map(function (st) {
+      const rank = {};
+      rawRowsForStage(tournament, sport, division, st.id, visible).forEach(function (row, index) {
+        if (row.played > 0) rank[row.id] = index;
+      });
+      return function (id) {
+        return Object.prototype.hasOwnProperty.call(rank, id) ? rank[id] : null;
+      };
+    });
+  }
+
+  function orderedRowsForStage(tournament, sport, division, stageId, visible) {
+    const rows = rawRowsForStage(tournament, sport, division, stageId, visible).filter(function (row) {
+      return row.played > 0;
+    });
+    const lookups = earlierRankLookups(tournament, sport, division, stageId, visible);
+    rows.sort(function (x, y) {
+      if (y.points !== x.points) return y.points - x.points;
+      if (x.h2h[y.id] === 'W' && y.h2h[x.id] !== 'W') return -1;
+      if (y.h2h[x.id] === 'W' && x.h2h[y.id] !== 'W') return 1;
+      for (let i = 0; i < lookups.length; i++) {
+        const rankX = lookups[i](x.id);
+        const rankY = lookups[i](y.id);
+        if (rankX != null && rankY != null && rankX !== rankY) return rankX - rankY;
+        if (rankX != null && rankY == null) return -1;
+        if (rankY != null && rankX == null) return 1;
+      }
+      return String(x.id).localeCompare(String(y.id));
+    });
+    return rows;
+  }
+
+  function pushPlace(list, id) {
+    if (!id || list.indexOf(id) !== -1) return;
+    list.push(id);
+  }
+
+  function firstDecisive(matches, tournament) {
+    for (let i = 0; i < (matches || []).length; i++) {
+      const decided = decisiveResult(matches[i], tournament);
+      if (decided) return decided;
+    }
+    return null;
+  }
+
+  function categoryPlaceIds(tournament, sport, division) {
+    const champ = championshipStage(sport, division);
+    if (!champ || !stageIsFinished(tournament, sport, division, champ.id)) return null;
+    const visible = visibleMatchesFor(tournament, sport.id);
+    const matches = matchesForPlacement(tournament, sport, division, champ.id);
+    const placed = [];
+    if (isKnockoutDecider(matches, tournament)) {
+      const decided = firstDecisive(matches, tournament);
+      pushPlace(placed, decided.winnerId);
+      pushPlace(placed, decided.loserId);
+      const stages = division ? categoryStages(sport, division) : stageListFor(sport);
+      const third = stages.find(function (st) { return st.id === 'third_place'; }) || null;
+      if (third && stageIsFinished(tournament, sport, division, third.id)) {
+        const thirdMatches = matchesForPlacement(tournament, sport, division, third.id);
+        if (isKnockoutDecider(thirdMatches, tournament)) {
+          const thirdDecided = firstDecisive(thirdMatches, tournament);
+          pushPlace(placed, thirdDecided.winnerId);
+          pushPlace(placed, thirdDecided.loserId);
+        } else {
+          orderedRowsForStage(tournament, sport, division, third.id, visible).forEach(function (row) {
+            pushPlace(placed, row.id);
+          });
+        }
+      }
+      const main = mainStagesFor(sport, division);
+      for (let i = main.length - 2; i >= 0; i--) {
+        orderedRowsForStage(tournament, sport, division, main[i].id, visible).forEach(function (row) {
+          pushPlace(placed, row.id);
+        });
+      }
+    } else {
+      orderedRowsForStage(tournament, sport, division, champ.id, visible).forEach(function (row) {
+        pushPlace(placed, row.id);
+      });
+    }
+    const pool = division ? ((division && division.teams) || []) : teamsFor(tournament, sport);
+    const main = mainStagesFor(sport, division);
+    const entry = main[0];
+    const entryIds = pool.map(function (team) { return team && team.id; }).filter(Boolean);
+    const entryRank = {};
+    if (entry && entryIds.length) {
+      const scope = { stageId: entry.id, teamIds: entryIds };
+      if (division) scope.categoryId = division.id;
+      computeStandings(tournament, visible, sport.id, scope).forEach(function (row, index) {
+        entryRank[row.id] = index;
+      });
+    }
+    const rest = pool.filter(function (team) { return team && team.id && placed.indexOf(team.id) === -1; });
+    rest.sort(function (a, b) {
+      const rankA = Object.prototype.hasOwnProperty.call(entryRank, a.id) ? entryRank[a.id] : null;
+      const rankB = Object.prototype.hasOwnProperty.call(entryRank, b.id) ? entryRank[b.id] : null;
+      if (rankA != null && rankB != null && rankA !== rankB) return rankA - rankB;
+      if (rankA != null && rankB == null) return -1;
+      if (rankB != null && rankA == null) return 1;
+      return displayName(tournament, sport.id, a.id).localeCompare(displayName(tournament, sport.id, b.id));
+    });
+    rest.forEach(function (team) { pushPlace(placed, team.id); });
+    return placed.length ? placed : null;
+  }
+
+  let podiumSvgSeq = 0;
+
+  function championTrophySvg() {
+    podiumSvgSeq += 1;
+    const id = 'podiumGold' + podiumSvgSeq;
+    return `
+      <svg class="t-podium-icon" viewBox="0 0 80 80" role="img" aria-label="Champion trophy">
+        <defs>
+          <linearGradient id="${id}" x1="18" y1="8" x2="62" y2="72" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#fff6cc"/>
+            <stop offset="0.42" stop-color="#f6c445"/>
+            <stop offset="1" stop-color="#c8890a"/>
+          </linearGradient>
+          <linearGradient id="${id}d" x1="20" y1="48" x2="60" y2="74" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#e6b325"/>
+            <stop offset="1" stop-color="#8a5a08"/>
+          </linearGradient>
+        </defs>
+        <path d="M22 26c-12 1-16 12-11 18 4 5 12 5 15 1" fill="none" stroke="url(#${id})" stroke-width="4" stroke-linecap="round"/>
+        <path d="M58 26c12 1 16 12 11 18-4 5-12 5-15 1" fill="none" stroke="url(#${id})" stroke-width="4" stroke-linecap="round"/>
+        <path d="M24 16h32c0 18-5 30-16 34C29 46 24 34 24 16z" fill="url(#${id})"/>
+        <ellipse cx="40" cy="16" rx="16" ry="5" fill="#ffe89a"/>
+        <path d="M40 24.5l2.1 4.3 4.7.7-3.4 3.3.8 4.7L40 35.3l-4.2 2.2.8-4.7-3.4-3.3 4.7-.7z" fill="#fff8e6"/>
+        <rect x="36" y="50" width="8" height="9" rx="2" fill="url(#${id}d)"/>
+        <rect x="27" y="59" width="26" height="5" rx="2" fill="url(#${id})"/>
+        <rect x="22" y="65" width="36" height="6" rx="2.5" fill="url(#${id}d)"/>
+      </svg>
+    `;
+  }
+
+  function runnerMedalSvg() {
+    podiumSvgSeq += 1;
+    const id = 'podiumSilver' + podiumSvgSeq;
+    return `
+      <svg class="t-podium-icon" viewBox="0 0 80 80" role="img" aria-label="Runner-up medal">
+        <defs>
+          <linearGradient id="${id}" x1="22" y1="30" x2="60" y2="74" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stop-color="#ffffff"/>
+            <stop offset="0.45" stop-color="#d7dee8"/>
+            <stop offset="1" stop-color="#8e9aab"/>
+          </linearGradient>
+        </defs>
+        <path d="M27 6h12l7 26H33z" fill="#dc2626"/>
+        <path d="M41 6h12l-7 26H34z" fill="#fb7185"/>
+        <circle cx="40" cy="50" r="20" fill="url(#${id})" stroke="#64748b" stroke-width="1.5"/>
+        <circle cx="40" cy="50" r="14" fill="none" stroke="#f8fafc" stroke-width="2"/>
+        <text x="40" y="56" text-anchor="middle" font-size="18" font-family="Barlow Condensed, sans-serif" font-weight="700" fill="#334155">2</text>
+      </svg>
+    `;
+  }
+
+  function placeLabel(rank) {
+    const mod100 = rank % 100;
+    if (mod100 >= 11 && mod100 <= 13) return rank + 'th';
+    const mod10 = rank % 10;
+    if (mod10 === 1) return rank + 'st';
+    if (mod10 === 2) return rank + 'nd';
+    if (mod10 === 3) return rank + 'rd';
+    return rank + 'th';
+  }
+
+  function podiumBlocks(tournament, sport) {
+    if (!sport) return [];
+    if (usesRegistrationCategories(sport)) {
+      return (sport.divisions || []).map(function (division) {
+        const ids = categoryPlaceIds(tournament, sport, division);
+        if (!ids) return null;
+        const champ = championshipStage(sport, division);
+        return {
+          key: division.id,
+          title: division.name || 'Category',
+          stageName: champ ? (champ.name || stageLabelOf(sport, champ.id)) : '',
+          ids: ids
+        };
+      }).filter(Boolean);
+    }
+    const ids = categoryPlaceIds(tournament, sport, null);
+    if (!ids) return [];
+    const champ = championshipStage(sport, null);
+    return [{
+      key: sport.id,
+      title: sport.label || 'Sport',
+      stageName: champ ? (champ.name || stageLabelOf(sport, champ.id)) : '',
+      ids: ids
+    }];
+  }
+
+  function podiumBlockHtml(tournament, sport, block) {
+    const ids = block.ids || [];
+    const champion = ids[0] ? teamMeta(tournament, sport.id, ids[0]) : null;
+    const runner = ids[1] ? teamMeta(tournament, sport.id, ids[1]) : null;
+    const rest = ids.slice(2).map(function (id, index) {
+      const meta = teamMeta(tournament, sport.id, id);
+      const rank = index + 3;
+      return `
+        <li>
+          <span class="t-place-rank">${placeLabel(rank)}</span>
+          <span class="t-place-name">${escapeHtml(meta.name)}</span>
+        </li>
+      `;
+    }).join('');
+    return `
+      <article class="t-podium" data-category="${escapeHtml(block.key || '')}">
+        <h3 class="t-podium-title">${escapeHtml(block.title)}${block.stageName ? '<small>' + escapeHtml(block.stageName) + '</small>' : ''}</h3>
+        <div class="t-podium-top">
+          ${champion ? `
+            <div class="t-podium-card is-champion" data-place="1" data-team="${escapeHtml(champion.id)}">
+              ${championTrophySvg()}
+              <div class="t-podium-place">Champion</div>
+              <div class="t-podium-name">${escapeHtml(champion.name)}</div>
+            </div>
+          ` : ''}
+          ${runner ? `
+            <div class="t-podium-card is-runner" data-place="2" data-team="${escapeHtml(runner.id)}">
+              ${runnerMedalSvg()}
+              <div class="t-podium-place">Runner-up</div>
+              <div class="t-podium-name">${escapeHtml(runner.name)}</div>
+            </div>
+          ` : ''}
+        </div>
+        ${rest ? '<ol class="t-place-list">' + rest + '</ol>' : ''}
+      </article>
+    `;
+  }
+
+  function renderSummaryPodium(tournament, sport) {
+    const root = document.getElementById('tSummaryPodium');
+    if (!root || !sport) return;
+    const section = document.getElementById('tSummaryPodiumSection');
+    const blocks = podiumBlocks(tournament, sport);
+    if (!blocks.length) {
+      if (usesRegistrationCategories(sport)) {
+        root.innerHTML = '<p class="t-empty">Champions appear here when a category\'s last stage is complete.</p>';
+        if (section) section.style.display = '';
+      } else {
+        root.innerHTML = '';
+        if (section) section.style.display = 'none';
+      }
+      return;
+    }
+    if (section) section.style.display = '';
+    root.innerHTML = '<div class="t-podium-grid">' + blocks.map(function (block) {
+      return podiumBlockHtml(tournament, sport, block);
+    }).join('') + '</div>';
+  }
+
   function renderSummaryCurrentMatches(tournament, sport) {
     const list = document.getElementById('tSummaryCurrentMatches');
     if (!list || !sport) return;
@@ -3804,6 +4144,10 @@
       ` : ''}
 
       ${panel === 'summary' && sport && categorized ? `
+        <section class="t-section" id="tSummaryPodiumSection">
+          <div class="t-section-header"><h2 class="t-section-title">Champions <small>winner and runner-up when the last stage is complete</small></h2></div>
+          <div id="tSummaryPodium"></div>
+        </section>
         <section class="t-section">
           <div class="t-section-header"><h2 class="t-section-title">Current matches <small>all categories</small></h2></div>
           <div class="t-match-list" id="tSummaryCurrentMatches"></div>
@@ -3816,6 +4160,10 @@
 
       ${panel === 'summary' && sport && categorized ? '<div id="tCategoryRoot"></div>' : ''}
       ${panel === 'summary' && sport && !categorized ? `
+        <section class="t-section" id="tSummaryPodiumSection" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">Champions <small>winner and runner-up when the last stage is complete</small></h2></div>
+          <div id="tSummaryPodium"></div>
+        </section>
         ${t.format === 'teams' ? `
         <section class="t-section" id="tRostersSection">
           <div class="t-section-header">
@@ -3881,10 +4229,12 @@
     if (panel === 'matches') {
       renderAllMatchesPanel(t);
     } else if (panel === 'summary' && sport && categorized) {
+      renderSummaryPodium(t, sport);
       renderSummaryCurrentMatches(t, sport);
       renderSummaryUpcoming(t, sport);
       renderCategoryWorkspace(t, sport, parsed);
     } else if (panel === 'summary' && sport) {
+      renderSummaryPodium(t, sport);
       if (t.format === 'teams') renderRostersFor(t, sport);
       renderScheduleFor(t, sport);
       renderStandingsFor(t, sport.id);
