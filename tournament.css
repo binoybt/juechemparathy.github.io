@@ -939,6 +939,8 @@ body.t-member-preview .t-admin-switch {
 
 /* ── Sport schedule ── */
 .t-schedule-wrap { overflow-x: auto; margin-top: 8px; }
+.t-schedule-picker { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; font-weight: 700; color: var(--t-muted); }
+.t-schedule-picker .t-select { min-width: 200px; font-weight: 600; color: var(--t-fg); }
 .t-schedule-table { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 860px; }
 .t-schedule-table th, .t-schedule-table td {
   padding: 8px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle;
