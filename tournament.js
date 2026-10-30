@@ -369,6 +369,15 @@
     return (stages[0] && stages[0].id) || 'league';
   }
 
+  function matchStageApplies(sport, match) {
+    if (!sport || !match) return true;
+    if (!usesRegistrationCategories(sport) || !match.categoryId) return true;
+    const division = findDivision(sport, match.categoryId);
+    if (!division) return true;
+    const stageId = match.stage || 'league';
+    return stageListForDivision(sport, division).some(function (st) { return st.id === stageId; });
+  }
+
   function ensureStageList(sport) {
     if (!sport) return;
     sport.stageList = stageListFor(sport);
@@ -4033,6 +4042,7 @@
         disabledStages: next
       }), parseUrl().stageId || stageId);
       toast(enabled ? 'Stage restored for this category' : 'Stage hidden for this category', 'success');
+      schedulePublicBoardSync(tournamentId);
       navigate({
         view: 'tournament',
         tournamentId: tournamentId,
@@ -7595,6 +7605,7 @@
     if (!match) return false;
     const sport = getSportConfig(tournament, match.sport);
     if (!sport) return false;
+    if (!matchStageApplies(sport, match)) return false;
     if (match.fromSchedule || match.scheduleEntryId) {
       if (match.bracketId) {
         const division = findDivision(sport, match.categoryId);
@@ -7882,7 +7893,16 @@
 
   function watchBoardKey(board) {
     if (!board) return '';
-    return JSON.stringify((board.matches || []).map(function (match) {
+    const stages = (board.sports || []).map(function (sport) {
+      return [
+        sport.id,
+        (sport.stageList || []).map(function (st) { return st && st.id; }),
+        (sport.divisions || []).map(function (d) {
+          return [d && d.id, disabledStagesOf(d)];
+        })
+      ];
+    });
+    const matches = (board.matches || []).map(function (match) {
       return [
         match.id,
         match.status,
@@ -7894,9 +7914,12 @@
         match.showUpcoming,
         match.scheduledAt,
         match.court,
-        match.venue
+        match.venue,
+        match.stage,
+        match.categoryId
       ];
-    }));
+    });
+    return JSON.stringify([stages, matches]);
   }
 
   function publicWatchIsOpen(data) {
@@ -8021,6 +8044,8 @@
         { id: 'm10', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: true, teamA: 'G1', teamB: 'G4', scheduledAt: '2026-10-19T19:45:00.000Z' },
         { id: 'm7', sport: 'volleyball', stage: 'semifinal', status: 'completed', teamA: 'G1', teamB: 'G3', winner: 'B', resultType: 'walkover', venue: 'Hall', scheduledAt: '2026-10-19T21:00:00.000Z', sets: [{ a: 0, b: 15 }] },
         { id: 'm11', sport: 'badminton', categoryId: 'mixed', bracketId: 'b4', stage: 'league', status: 'completed', teamA: 'E', teamB: 'F', winner: 'B', resultType: 'played', court: 'Court 3', venue: 'Court 3', scheduledAt: '2026-10-19T16:40:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 19, b: 21 }, { a: 16, b: 21 }], winner: 'B' }] },
+        { id: 'm13', sport: 'badminton', categoryId: 'mixed', stage: 'stg_r16', status: 'completed', teamA: 'E', teamB: 'F', winner: 'A', resultType: 'played', court: 'Court 3', venue: 'Court 3', scheduledAt: '2026-10-19T17:00:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 21, b: 12 }], winner: 'A' }] },
+        { id: 'm14', sport: 'badminton', categoryId: 'mixed', stage: 'stg_r16', status: 'in_progress', teamA: 'E', teamB: 'F', court: 'Court 4', venue: 'Court 4', scheduledAt: '2026-10-19T18:10:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 8, b: 5 }], winner: null }] },
         { id: 'm12', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'completed', teamA: 'A', teamB: 'D', winner: 'A', resultType: 'walkover', court: 'Court 2', venue: 'Court 2', scheduledAt: '2026-10-19T15:20:00.000Z', games: [{ category: 'OD1', playersA: 'Ann / Ben', playersB: 'Gia / Hugo', sets: [{ a: 15, b: 0 }], winner: 'A' }] }
       ]
     };
@@ -8442,9 +8467,11 @@
     });
   }
 
-  function completedMatchesForCategory(matches, sportId, categoryId) {
+  function completedMatchesForCategory(matches, sport, categoryId) {
+    const sportId = sport && sport.id;
     return (matches || []).filter(function (m) {
-      return m.sport === sportId && m.status === 'completed' && m.categoryId === categoryId;
+      if (m.sport !== sportId || m.status !== 'completed' || m.categoryId !== categoryId) return false;
+      return matchStageApplies(sport, m);
     }).sort(sortMatches).reverse();
   }
 
@@ -8500,7 +8527,9 @@
     const categorized = usesRegistrationCategories(sport);
     const division = categorized && params.categoryId ? findDivision(sport, params.categoryId) : null;
     const categorySummary = categorized && !division;
-    const sportPool = matches.filter(function (m) { return m.sport === sport.id; });
+    const sportPool = matches.filter(function (m) {
+      return m.sport === sport.id && matchStageApplies(sport, m);
+    });
     const pool = sportPool.filter(function (m) {
       if (m.sport !== sport.id) return false;
       if (division && m.categoryId !== division.id) return false;
@@ -8524,13 +8553,13 @@
     const upcoming = stagePool.filter(function (m) { return m.status === 'scheduled' && m.showUpcoming; }).sort(sortMatches);
     const done = stagePool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
     const categoryDone = division
-      ? completedMatchesForCategory(sportPool, sport.id, division.id)
+      ? completedMatchesForCategory(sportPool, sport, division.id)
       : [];
     const completedByCategory = categorized
       ? divisions.map(function (d) {
         return {
           division: d,
-          matches: completedMatchesForCategory(sportPool, sport.id, d.id)
+          matches: completedMatchesForCategory(sportPool, sport, d.id)
         };
       }).filter(function (group) { return group.matches.length; })
       : [];
@@ -8555,7 +8584,9 @@
     document.title = (tournament.name || 'Live') + ' — ' + (sport.label || 'Scores');
     const sportPills = sports.map(function (s) {
       const on = s.id === sport.id;
-      const n = matches.filter(function (m) { return m.sport === s.id && m.status === 'in_progress'; }).length;
+      const n = matches.filter(function (m) {
+        return m.sport === s.id && m.status === 'in_progress' && matchStageApplies(s, m);
+      }).length;
       return `<button type="button" class="w-pill ${on ? 'is-on' : ''}" style="--accent:${s.color || '#3b82f6'}" data-act="sport" data-sport="${escapeHtml(s.id)}">${escapeHtml((s.emoji || '') + ' ' + (s.label || s.id))}${n ? '<i>' + n + '</i>' : ''}</button>`;
     }).join('');
     top.innerHTML = `
@@ -8617,7 +8648,7 @@
         stageId: stageId, categoryId: division.id, bracketId: bracket.id, teamIds: bracket.teamIds || [], useTeams: true
       }) : [];
       const mine = matches.filter(function (m) {
-        if (m.sport !== sport.id) return false;
+        if (m.sport !== sport.id || !matchStageApplies(sport, m)) return false;
         const p = participantsOf(m, tournament);
         return p.a === params.teamId || p.b === params.teamId;
       }).sort(sortMatches);
