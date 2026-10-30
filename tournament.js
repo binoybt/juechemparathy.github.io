@@ -673,6 +673,25 @@
     return !!(pub && Array.isArray(pub.entries) && pub.entries.length);
   }
 
+  function bracketScheduleCount(bracket) {
+    const sch = getSchedule(bracket);
+    const draft = (sch.draft && sch.draft.entries && sch.draft.entries.length) || 0;
+    const published = (sch.published && sch.published.entries && sch.published.entries.length) || 0;
+    return Math.max(draft, published);
+  }
+
+  function scheduleBracketPickerHtml(brackets, selectedId) {
+    const options = ['<option value="">Select a bracket…</option>'].concat((brackets || []).map(function (b) {
+      const count = bracketScheduleCount(b);
+      return '<option value="' + escapeHtml(b.id) + '"' + (b.id === selectedId ? ' selected' : '') + '>'
+        + escapeHtml(b.name || 'Bracket')
+        + (count ? ' · ' + count + ' fixture' + (count === 1 ? '' : 's') : '')
+        + (bracketIsComplete(b) ? ' · Complete' : '')
+        + '</option>';
+    })).join('');
+    return '<label class="t-schedule-picker">Bracket <select class="t-select" data-act="schedule-bracket">' + options + '</select></label>';
+  }
+
   // Single-sport tournaments have no tournament-wide rules. Multi-sport
   // tournaments do. Older docs infer the mode from how many sports they have.
   function sportModeOf(tournament) {
@@ -3637,6 +3656,57 @@
     });
   }
 
+  function matchBracketName(tournament, match) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    const division = findDivision(sport, match && match.categoryId);
+    const bracket = findBracket(division, match && match.bracketId);
+    return (bracket && bracket.name) || '';
+  }
+
+  function renderSummaryUpcoming(tournament, sport) {
+    const root = document.getElementById('tSummaryUpcoming');
+    if (!root || !sport) return;
+    const split = sport.categoryMode === 'split';
+    const rows = visibleMatchesFor(tournament, sport.id).filter(function (match) {
+      if (match.status !== 'scheduled' || !match.showUpcoming) return false;
+      if (usesRegistrationCategories(sport) && !match.categoryId) return false;
+      return categoryMatchVisible(sport, match);
+    }).sort(sortMatches);
+    if (!rows.length) {
+      root.innerHTML = '<p class="t-empty">No upcoming matches yet. Publish a bracket schedule and mark the fixtures you want listed here.</p>';
+      return;
+    }
+    root.innerHTML = `
+      <div class="t-schedule-wrap"><table class="t-schedule-table t-summary-upcoming">
+        <thead><tr>
+          ${split ? '<th>Category</th>' : ''}
+          <th>Bracket</th>
+          <th>Stage</th>
+          <th>Match</th>
+          <th>When</th>
+          <th>Court</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map(function (match) {
+            const division = findDivision(sport, match.categoryId);
+            const people = participantsOf(match, tournament);
+            const bracketName = matchBracketName(tournament, match) || '—';
+            return `
+              <tr>
+                ${split ? '<td>' + escapeHtml((division && division.name) || 'Category') + '</td>' : ''}
+                <td>${escapeHtml(bracketName)}</td>
+                <td>${escapeHtml(stageLabelOf(sport, match.stage))}</td>
+                <td class="t-schedule-vs"><b>${escapeHtml(displayName(tournament, sport.id, people.a))}</b> <span>vs</span> <b>${escapeHtml(displayName(tournament, sport.id, people.b))}</b></td>
+                <td>${match.scheduledAt ? escapeHtml(fmtDateTime(match.scheduledAt)) : '—'}</td>
+                <td>${courtOf(match) ? escapeHtml(courtOf(match)) : '—'}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table></div>
+    `;
+  }
+
   function renderTournament() {
     ensureScorerDirectoryThenRender();
     harvestScheduleEditor();
@@ -3736,6 +3806,10 @@
           <div class="t-section-header"><h2 class="t-section-title">Current matches <small>all categories</small></h2></div>
           <div class="t-match-list" id="tSummaryCurrentMatches"></div>
         </section>
+        <section class="t-section">
+          <div class="t-section-header"><h2 class="t-section-title">Upcoming matches <small>all categories</small></h2></div>
+          <div class="t-card"><div class="t-card-body" id="tSummaryUpcoming"></div></div>
+        </section>
       ` : ''}
 
       ${panel === 'summary' && sport && categorized ? '<div id="tCategoryRoot"></div>' : ''}
@@ -3806,6 +3880,7 @@
       renderAllMatchesPanel(t);
     } else if (panel === 'summary' && sport && categorized) {
       renderSummaryCurrentMatches(t, sport);
+      renderSummaryUpcoming(t, sport);
       renderCategoryWorkspace(t, sport, parsed);
     } else if (panel === 'summary' && sport) {
       if (t.format === 'teams') renderRostersFor(t, sport);
@@ -4667,22 +4742,25 @@
     if (!entryStage) overallScope.teamIds = offeredTeams.map(function (tm) { return tm.id; });
     const overallRows = showOverall ? computeStandings(tournament, state.matches, sport.id, overallScope) : [];
 
-    const scheduleBlock = bracket ? `
+    const scheduleBlock = brackets.length ? `
       <section class="t-section" id="tScheduleSection">
         <div class="t-section-header">
-          <h2 class="t-section-title">Schedule <small>${escapeHtml(bracket.name || 'Bracket')}</small></h2>
-          <div id="tScheduleActions" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+          <h2 class="t-section-title">Schedule <small>${escapeHtml(stageName)}</small></h2>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            ${scheduleBracketPickerHtml(brackets, bracket ? bracket.id : '')}
+            <div id="tScheduleActions" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+          </div>
         </div>
-        <div class="t-card"><div class="t-card-body" id="tScheduleBody"><p class="t-empty">Loading…</p></div></div>
+        <div class="t-card"><div class="t-card-body" id="tScheduleBody">${bracket
+          ? '<p class="t-empty">Loading…</p>'
+          : '<p class="t-mode-note" style="margin:0;">Select a bracket to see its schedule. Each bracket keeps its own fixtures.</p>'}</div></div>
       </section>
     ` : `
       <section class="t-section">
         <div class="t-card"><div class="t-card-body t-mode-note" style="margin:0;">
-          ${brackets.length
-            ? 'Schedules are created inside a bracket. Choose Schedule on a bracket to add matches for the teams you pulled in.'
-            : (entryStage
-              ? 'Once the teams are in, create a bracket and pull teams into it. The schedule for those teams lives in that bracket.'
-              : 'Create a bracket from the teams advanced into ' + escapeHtml(stageName) + '. The schedule for those teams lives in that bracket.')}
+          ${entryStage
+            ? 'Once the teams are in, create a bracket and pull teams into it. The schedule for those teams lives in that bracket.'
+            : 'Create a bracket from the teams advanced into ' + escapeHtml(stageName) + '. The schedule for those teams lives in that bracket.'}
         </div></div>
       </section>
     `;
@@ -4878,6 +4956,11 @@
     root.querySelectorAll('[data-act="select-bracket"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         go({ bracketId: btn.getAttribute('data-bracket') });
+      });
+    });
+    root.querySelectorAll('[data-act="schedule-bracket"]').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        go({ bracketId: sel.value || '' });
       });
     });
     root.querySelectorAll('[data-act="delete-bracket"]').forEach(function (btn) {
@@ -5691,7 +5774,7 @@
     }
 
     if (!canEdit) {
-      body.innerHTML = renderScheduleReadOnly(tournament, sport, entries, sch.published);
+      body.innerHTML = renderScheduleReadOnly(tournament, sport, entries, sch.published, scope.bracket);
       return;
     }
 
@@ -5699,10 +5782,11 @@
     bindScheduleEditor(tournament, sport);
   }
 
-  function renderScheduleReadOnly(tournament, sport, entries, publishedMeta) {
+  function renderScheduleReadOnly(tournament, sport, entries, publishedMeta, bracket) {
     if (!entries.length) {
       return '<div class="t-schedule-empty">No fixtures in the published schedule.</div>';
     }
+    const bracketName = bracket && bracket.name;
     const sorted = entries.slice().sort(function (a, b) {
       return (a.scheduledAt || '').localeCompare(b.scheduledAt || '');
     });
@@ -5715,6 +5799,7 @@
       const bName = displayName(tournament, sport.id, e.b);
       return `
         <tr>
+          ${bracketName ? '<td>' + escapeHtml(bracketName) + '</td>' : ''}
           <td><span class="t-badge stage-${escapeHtml(e.stage)}">${escapeHtml(stageLabelOf(sport, e.stage))}</span></td>
           <td class="t-schedule-vs"><b>${escapeHtml(aName)}</b> <span>vs</span> <b>${escapeHtml(bName)}</b></td>
           <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
@@ -5727,7 +5812,7 @@
       ${whenNote}
       <div class="t-schedule-wrap">
         <table class="t-schedule-table">
-          <thead><tr><th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Upcoming</th></tr></thead>
+          <thead><tr>${bracketName ? '<th>Bracket</th>' : ''}<th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Upcoming</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -5764,10 +5849,12 @@
         </table>
       `;
     }
+    const bracketName = scope && scope.bracket && scope.bracket.name;
     const rows = entries.map(function (e) {
       const stageOpts = scheduleStageOptions(sport, scope, e.stage);
       return `
         <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}">
+          ${bracketName ? '<td>' + escapeHtml(bracketName) + '</td>' : ''}
           <td><select class="t-select" data-f="stage">${stageOpts}</select></td>
           <td>${participantSelectHtml(tournament, sport, 'a', e.a, pool)}</td>
           <td class="t-schedule-vs-cell">vs</td>
@@ -5785,6 +5872,7 @@
         <table class="t-schedule-table" id="tScheduleEditor" ${attrs}>
           <thead>
             <tr>
+              ${bracketName ? '<th>Bracket</th>' : ''}
               <th>Stage</th>
               <th>Side A</th>
               <th></th>
