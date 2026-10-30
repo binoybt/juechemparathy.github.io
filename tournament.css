@@ -1199,6 +1199,103 @@ body.t-member-preview .t-admin-switch {
 .t-stage-standing-title:first-child { margin-top: 0; }
 .t-stage-focus + .t-stage-focus { margin-top: 12px; }
 
+/* ── Category champions ── */
+.t-podium-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+.t-podium {
+  background: var(--t-card);
+  border: 1px solid var(--t-border);
+  border-radius: var(--t-r-md);
+  box-shadow: var(--t-shadow-sm);
+  padding: 16px;
+}
+.t-podium-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.t-podium-title small {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 500;
+  font-size: .75rem;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--t-muted);
+  margin-left: 8px;
+}
+.t-podium-top {
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+.t-podium-card {
+  border-radius: var(--t-r-md);
+  padding: 14px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 2px;
+  min-width: 0;
+}
+.t-podium-card.is-champion {
+  background: linear-gradient(180deg, #fff7d6 0%, #fff 72%);
+  border: 1px solid #f5d76e;
+}
+.t-podium-card.is-runner {
+  background: linear-gradient(180deg, #f4f7fb 0%, #fff 72%);
+  border: 1px solid #d5dde8;
+}
+.t-podium-icon { width: 76px; height: 76px; display: block; }
+.t-podium-card.is-runner .t-podium-icon { width: 64px; height: 64px; }
+.t-podium-place {
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: .9rem;
+  font-weight: 700;
+  color: #92400e;
+}
+.t-podium-card.is-runner .t-podium-place { color: #475569; }
+.t-podium-name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 1.25;
+  word-break: break-word;
+}
+.t-podium-card.is-champion .t-podium-name { font-size: 1.25rem; }
+.t-place-list {
+  list-style: none;
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.t-place-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid var(--t-border);
+}
+.t-place-rank {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: .04em;
+  min-width: 2.4rem;
+  color: var(--t-muted);
+}
+.t-place-name { font-weight: 600; }
+
 /* ── Responsive ── */
 @media (max-width: 640px) {
   .t-container { padding: 14px 10px 40px; }
@@ -1216,4 +1313,5 @@ body.t-member-preview .t-admin-switch {
   .t-schedule-table { min-width: 640px; }
   .t-division-row, .t-focus-grid { grid-template-columns: 1fr; }
   .t-points-grid { grid-template-columns: 1fr 1fr; }
+  .t-podium-top { grid-template-columns: 1fr; }
 }
