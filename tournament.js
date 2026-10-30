@@ -32,6 +32,11 @@
  *         id, name, open, maxPlayers
  *         teams[]     { id, name, players[], tags[] }
  *                     tags are optional short labels (seed, home side, group)
+ *         disabledStages[]  sport stage ids that do not apply to this category.
+ *                     missing/empty → every sport stage applies. A smaller
+ *                     category can hide Round of 16 (or any other stage).
+ *                     Brackets already created for a hidden stage stay stored
+ *                     and return when the stage is turned back on.
  *         brackets[]  { id, name, stageId, teamIds[], schedule, complete, walkoverPoints }
  *           stageId   which stage this bracket belongs to (missing = league)
  *           walkoverPoints / walkoverScore
@@ -67,9 +72,9 @@
  *     createdAt / updatedAt / createdBy
  *
  *   Clone copies sports, scoring, table points, stage names, rules, max roster,
- *   and team shells (id / name / wards / tags), plus category teams and bracket
- *   membership. It does not copy matches, schedule, rosters, captains, or
- *   lock state. Clones are always unpublished.
+ *   and team shells (id / name / wards / tags), plus category teams, category
+ *   stage overrides, and bracket membership. It does not copy matches, schedule,
+ *   rosters, captains, or lock state. Clones are always unpublished.
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
@@ -333,6 +338,37 @@
     return out;
   }
 
+  function disabledStagesOf(division) {
+    const raw = (division && Array.isArray(division.disabledStages)) ? division.disabledStages : [];
+    const out = [];
+    raw.forEach(function (id) {
+      const stageId = String(id || '').trim();
+      if (!stageId || out.indexOf(stageId) !== -1) return;
+      out.push(stageId);
+    });
+    return out;
+  }
+
+  function copyDisabledStages(division) {
+    return disabledStagesOf(division).slice();
+  }
+
+  function stageListForDivision(sport, division) {
+    const all = stageListFor(sport);
+    if (!division) return all;
+    const hidden = {};
+    disabledStagesOf(division).forEach(function (id) { hidden[id] = true; });
+    const out = all.filter(function (st) { return !hidden[st.id]; });
+    if (out.length) return out;
+    return all.length ? [all[0]] : [{ id: 'league', name: 'League' }];
+  }
+
+  function resolveDivisionStageId(sport, division, requested) {
+    const stages = stageListForDivision(sport, division);
+    if (requested && stages.some(function (st) { return st.id === requested; })) return requested;
+    return (stages[0] && stages[0].id) || 'league';
+  }
+
   function ensureStageList(sport) {
     if (!sport) return;
     sport.stageList = stageListFor(sport);
@@ -588,7 +624,7 @@
 
   function blankDivision(opts) {
     opts = opts || {};
-    return {
+    const division = {
       id: opts.id || newId('cat'),
       name: opts.name || 'Category',
       open: !!opts.open,
@@ -596,6 +632,9 @@
       teams: opts.teams ? JSON.parse(JSON.stringify(opts.teams)) : [],
       brackets: opts.brackets ? JSON.parse(JSON.stringify(opts.brackets)) : []
     };
+    const disabled = copyDisabledStages(opts);
+    if (disabled.length) division.disabledStages = disabled;
+    return division;
   }
 
   function usesRegistrationCategories(sport) {
@@ -759,7 +798,7 @@
     return (draftSport.divisions || []).map(function (d) {
       const live = liveDivs.find(function (x) { return x.id === d.id; });
       const open = draftSport.categoryMode === 'open';
-      return {
+      const out = {
         id: d.id,
         name: String(d.name || '').trim() || (open ? 'Open' : 'Category'),
         open: open ? true : false,
@@ -770,6 +809,9 @@
         }),
         brackets: (live && Array.isArray(live.brackets)) ? live.brackets : (Array.isArray(d.brackets) ? d.brackets : [])
       };
+      const disabled = copyDisabledStages(live || d);
+      if (disabled.length) out.disabledStages = disabled;
+      return out;
     });
   }
 
@@ -2515,7 +2557,7 @@
         ${rows || '<p class="t-mode-note">Add at least one category.</p>'}
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button type="button" class="t-btn sm" data-div-add>➕ Add category</button>
-          <span class="t-mode-note" style="margin:0;">Registrations, brackets, and schedules belong to each category. Set them up on the tournament page after you save.</span>
+          <span class="t-mode-note" style="margin:0;">Registrations, brackets, and schedules belong to each category. Set them up on the tournament page after you save. A category can also hide a stage that does not apply to it.</span>
         </div>
       `;
     } else {
@@ -2636,7 +2678,7 @@
     return `
       <div class="t-stage-list-editor">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--t-muted);">Stages</div>
-        <p class="t-mode-note">League, semifinal, and final are included. Add a stage between them, such as Round of 32 or Round of 16. Brackets and standings are kept separately for each stage.</p>
+        <p class="t-mode-note">League, semifinal, and final are included. Add a stage between them, such as Round of 32 or Round of 16. Brackets and standings are kept separately for each stage. On the tournament page you can turn a stage off for one category when that category does not have enough teams — other categories keep the full list.</p>
         ${rows}
         <label style="display:inline-flex;align-items:center;gap:8px;color:var(--t-fg);font-weight:600;font-size:.9rem;">
           <input type="checkbox" data-field="hasThirdPlace" ${sport.hasThirdPlace !== false ? 'checked' : ''} />
@@ -2913,7 +2955,7 @@
         categories: Array.isArray(s.categories) ? s.categories.slice() : [],
         categoryMode: s.categoryMode || '',
         divisions: (s.divisions || []).map(function (d) {
-          return {
+          const cloned = {
             id: d.id,
             name: d.name || (d.open ? 'Open' : 'Category'),
             open: !!d.open,
@@ -2937,6 +2979,9 @@
               };
             })
           };
+          const disabled = copyDisabledStages(d);
+          if (disabled.length) cloned.disabledStages = disabled;
+          return cloned;
         }),
         tablePoints: tablePointsFor(s),
         stageList: stageListFor(s),
@@ -3959,6 +4004,45 @@
     await writeSportPatch(t, sportId, { divisions: divisions });
   }
 
+  async function setDivisionStageEnabled(tournamentId, sportId, divisionId, stageId, enabled) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const division = sport ? findDivision(sport, divisionId) : null;
+    if (!t || !sport || !division || !stageId) return;
+    const allIds = stageListFor(sport).map(function (st) { return st.id; });
+    if (allIds.indexOf(stageId) === -1) return;
+    const hidden = disabledStagesOf(division);
+    let next;
+    if (enabled) {
+      next = hidden.filter(function (id) { return id !== stageId; });
+    } else {
+      next = hidden.indexOf(stageId) === -1 ? hidden.concat([stageId]) : hidden.slice();
+      const remaining = allIds.filter(function (id) { return next.indexOf(id) === -1; });
+      if (!remaining.length) {
+        toast('Keep at least one stage for this category.', 'error');
+        return;
+      }
+    }
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        if (next.length) div.disabledStages = next;
+        else delete div.disabledStages;
+      });
+      const nextStageId = resolveDivisionStageId(sport, Object.assign({}, division, {
+        disabledStages: next
+      }), parseUrl().stageId || stageId);
+      toast(enabled ? 'Stage restored for this category' : 'Stage hidden for this category', 'success');
+      navigate({
+        view: 'tournament',
+        tournamentId: tournamentId,
+        sportId: sportId,
+        categoryId: divisionId,
+        stageId: nextStageId
+      });
+    } catch (_) { /* toasted */ }
+  }
+
   function openEntryTeam(tournamentId, sportId, divisionId, teamId) {
     if (!isAdminUi()) return;
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
@@ -4222,7 +4306,7 @@
   function teamFocusHtml(tournament, sport, division, team) {
     const showResults = isAdminUi() || tournamentHasStarted(tournament);
     const players = (team.players || []).filter(function (p) { return String(p || '').trim(); });
-    const stages = stageListFor(sport);
+    const stages = stageListForDivision(sport, division);
     let results = '';
     if (showResults) {
       const stageBlocks = stages.map(function (st) {
@@ -4304,14 +4388,18 @@
       if (located && located.division && located.division.id) division = located.division;
     }
     const teams = division.teams || [];
-    const stages = stageListFor(sport);
+    const allStages = stageListFor(sport);
+    const stages = stageListForDivision(sport, division);
     const requestedBracket = findBracket(division, parsed.bracketId);
-    let stageId = stages[0] ? stages[0].id : 'league';
-    if (parsed.stageId && stages.some(function (st) { return st.id === parsed.stageId; })) stageId = parsed.stageId;
-    if (requestedBracket && (!parsed.stageId || bracketStageId(requestedBracket) === stageId)) {
-      stageId = bracketStageId(requestedBracket);
+    let stageId = resolveDivisionStageId(sport, division, parsed.stageId);
+    if (requestedBracket) {
+      const bracketStage = bracketStageId(requestedBracket);
+      if (stages.some(function (st) { return st.id === bracketStage; })) {
+        if (!parsed.stageId || parsed.stageId === bracketStage) stageId = bracketStage;
+      }
     }
     const stageName = stageLabelOf(sport, stageId);
+    const enabledCount = stages.length;
     const brackets = bracketsInStage(division, stageId);
     const bracket = requestedBracket && bracketStageId(requestedBracket) === stageId ? requestedBracket : null;
     const focusTeam = parsed.teamId ? teams.find(function (tm) { return tm.id === parsed.teamId; }) : null;
@@ -4323,6 +4411,25 @@
       const count = bracketsInStage(division, st.id).length;
       return `<button type="button" class="t-tab ${active ? 'active' : ''}" style="--sport-color:${sport.color || 'var(--t-primary)'}" data-act="select-stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}<span class="count">${count}</span></button>`;
     }).join('')}</div>`;
+    const hidden = {};
+    disabledStagesOf(division).forEach(function (id) { hidden[id] = true; });
+    const stageOverride = isAdminUi() && allStages.length
+      ? `<div class="t-stage-override">
+          <div class="t-stage-override-title">Stages for ${escapeHtml(division.name || 'this category')}</div>
+          <p class="t-mode-note" style="margin:0 0 8px;">Uncheck a stage that this category does not use. Other categories keep their own list. Brackets already created stay stored and come back if you turn the stage on again.</p>
+          <div class="t-stage-override-list">${allStages.map(function (st) {
+            const enabled = !hidden[st.id];
+            const lastOn = enabled && enabledCount <= 1;
+            const kept = hidden[st.id] ? bracketsInStage(division, st.id).length : 0;
+            return `
+              <label class="t-check-line ${lastOn ? 'is-disabled' : ''}">
+                <input type="checkbox" data-stage-enabled="${escapeHtml(st.id)}" ${enabled ? 'checked' : ''} ${lastOn ? 'disabled' : ''} />
+                <span>${escapeHtml(st.name || st.id)}</span>
+                ${kept ? '<em>' + kept + ' bracket' + (kept === 1 ? '' : 's') + ' kept</em>' : ''}
+              </label>`;
+          }).join('')}</div>
+        </div>`
+      : '';
 
     const categoryTabs = sport.categoryMode === 'split'
       ? `<div class="t-tabs t-subtabs">${divisions.map(function (d) {
@@ -4445,6 +4552,7 @@
 
     root.innerHTML = `
       ${categoryTabs}
+      ${stageOverride}
       ${stageTabs}
       ${focusTeam ? teamFocusHtml(tournament, sport, division, focusTeam) : ''}
       ${isAdminUi() ? `
@@ -4523,13 +4631,26 @@
     }
     root.querySelectorAll('[data-act="select-category"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        const nextId = btn.getAttribute('data-category');
+        const nextDiv = findDivision(sport, nextId);
         navigate({
           view: 'tournament',
           tournamentId: tournament.id,
           sportId: sport.id,
-          categoryId: btn.getAttribute('data-category'),
-          stageId: stageId || 'league'
+          categoryId: nextId,
+          stageId: resolveDivisionStageId(sport, nextDiv, stageId)
         });
+      });
+    });
+    root.querySelectorAll('[data-stage-enabled]').forEach(function (input) {
+      input.addEventListener('change', function () {
+        setDivisionStageEnabled(
+          tournament.id,
+          sport.id,
+          division.id,
+          input.getAttribute('data-stage-enabled'),
+          input.checked
+        );
       });
     });
     root.querySelectorAll('[data-act="select-stage"]').forEach(function (btn) {
@@ -7402,7 +7523,7 @@
       rulesText: rulesText(sport.rules),
       teams: (sport.teams || []).map(sanitizePublicTeam).filter(Boolean),
       divisions: (sport.divisions || []).map(function (d) {
-        return {
+        const pub = {
           id: d.id,
           name: d.name || '',
           open: !!d.open,
@@ -7420,6 +7541,9 @@
             };
           })
         };
+        const disabled = copyDisabledStages(d);
+        if (disabled.length) pub.disabledStages = disabled;
+        return pub;
       })
     };
   }
@@ -7855,6 +7979,7 @@
             ]
           }, {
             id: 'mixed', name: 'Mixed doubles', open: false, maxPlayers: 2,
+            disabledStages: ['stg_r16', 'semifinal'],
             teams: [
               { id: 'E', name: 'Rivers', players: ['Ivy', 'Jon'] },
               { id: 'F', name: 'Lake', players: ['Kim', 'Leo'] }
@@ -8383,11 +8508,13 @@
       if (!division && (m.categoryId || m.bracketId)) return false;
       return true;
     });
-    const stages = stageListFor(sport);
+    const stages = division ? stageListForDivision(sport, division) : stageListFor(sport);
     let stageId = params.stageId;
     if (!stages.some(function (st) { return st.id === stageId; })) {
-      const liveHere = pool.find(function (m) { return m.status === 'in_progress'; });
-      stageId = (liveHere && liveHere.stage) || (stages[0] && stages[0].id) || 'league';
+      const liveHere = pool.find(function (m) {
+        return m.status === 'in_progress' && stages.some(function (st) { return st.id === (m.stage || 'league'); });
+      });
+      stageId = (liveHere && liveHere.stage) || resolveDivisionStageId(sport, division, '');
     }
     const stageName = stageLabelOf(sport, stageId);
     const stagePool = pool.filter(function (m) { return (m.stage || 'league') === stageId; });
@@ -8546,7 +8673,11 @@
 
     function goSport(id) { setWatchParams({ sport: id, panel: panel, st: '', cat: '', team: '' }); }
     function goStage(id) { setWatchParams({ sport: sport.id, panel: 'summary', st: id, cat: division ? division.id : '', team: '' }); }
-    function goCat(id) { setWatchParams({ sport: sport.id, panel: 'summary', st: stageId, cat: id, team: '' }); }
+    function goCat(id) {
+      const nextDiv = id ? findDivision(sport, id) : null;
+      const nextStage = nextDiv ? resolveDivisionStageId(sport, nextDiv, stageId) : '';
+      setWatchParams({ sport: sport.id, panel: 'summary', st: nextStage, cat: id, team: '' });
+    }
     function goTeam(id) {
       const found = findEntryTeam(tournament, sport.id, id);
       const categoryId = (found && found.division && found.division.id) || (division && division.id) || '';
