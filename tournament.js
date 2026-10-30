@@ -3923,6 +3923,25 @@
     }];
   }
 
+  function podiumPlayerNames(tournament, sportId, teamId) {
+    const found = findEntryTeam(tournament, sportId, teamId);
+    if (!found || !found.team) return [];
+    const listed = ((found.team.players) || []).map(function (name) {
+      return String(name || '').trim();
+    }).filter(Boolean);
+    if (listed.length) return listed;
+    return teamMembers(found.team).map(function (member) {
+      return [member.firstName, member.middleName, member.lastName].filter(Boolean).join(' ').trim()
+        || String(member.name || '').trim();
+    }).filter(Boolean);
+  }
+
+  function podiumPlayersHtml(tournament, sportId, teamId) {
+    const names = podiumPlayerNames(tournament, sportId, teamId);
+    if (!names.length) return '';
+    return '<b class="t-podium-players">' + names.map(escapeHtml).join(', ') + '</b>';
+  }
+
   function podiumBlockHtml(tournament, sport, block) {
     const ids = block.ids || [];
     const champion = ids[0] ? teamMeta(tournament, sport.id, ids[0]) : null;
@@ -3933,7 +3952,10 @@
       return `
         <li>
           <span class="t-place-rank">${placeLabel(rank)}</span>
-          <span class="t-place-name">${escapeHtml(meta.name)}</span>
+          <span class="t-place-team">
+            <span class="t-place-name">${escapeHtml(meta.name)}</span>
+            ${podiumPlayersHtml(tournament, sport.id, id)}
+          </span>
         </li>
       `;
     }).join('');
@@ -3946,6 +3968,7 @@
               ${championTrophySvg()}
               <div class="t-podium-place">Champion</div>
               <div class="t-podium-name">${escapeHtml(champion.name)}</div>
+              ${podiumPlayersHtml(tournament, sport.id, champion.id)}
             </div>
           ` : ''}
           ${runner ? `
@@ -3953,6 +3976,7 @@
               ${runnerMedalSvg()}
               <div class="t-podium-place">Runner-up</div>
               <div class="t-podium-name">${escapeHtml(runner.name)}</div>
+              ${podiumPlayersHtml(tournament, sport.id, runner.id)}
             </div>
           ` : ''}
         </div>
