@@ -681,14 +681,16 @@
   }
 
   function scheduleBracketPickerHtml(brackets, selectedId) {
-    const options = ['<option value="">Select a bracket…</option>'].concat((brackets || []).map(function (b) {
+    const list = brackets || [];
+    const chosen = list.some(function (b) { return b.id === selectedId; }) ? selectedId : (list[0] && list[0].id);
+    const options = list.map(function (b) {
       const count = bracketScheduleCount(b);
-      return '<option value="' + escapeHtml(b.id) + '"' + (b.id === selectedId ? ' selected' : '') + '>'
+      return '<option value="' + escapeHtml(b.id) + '"' + (b.id === chosen ? ' selected' : '') + '>'
         + escapeHtml(b.name || 'Bracket')
         + (count ? ' · ' + count + ' fixture' + (count === 1 ? '' : 's') : '')
         + (bracketIsComplete(b) ? ' · Complete' : '')
         + '</option>';
-    })).join('');
+    }).join('');
     return '<label class="t-schedule-picker">Bracket <select class="t-select" data-act="schedule-bracket">' + options + '</select></label>';
   }
 
@@ -4615,7 +4617,7 @@
     const prevStage = previousStageBefore(sport, division, stageId);
     const stageName = stageLabelOf(sport, stageId);
     const brackets = bracketsInStage(division, stageId);
-    const bracket = requestedBracket && bracketStageId(requestedBracket) === stageId ? requestedBracket : null;
+    const bracket = (requestedBracket && bracketStageId(requestedBracket) === stageId ? requestedBracket : null) || brackets[0] || null;
     const focusTeam = parsed.teamId ? teams.find(function (tm) { return tm.id === parsed.teamId; }) : null;
     const showBoard = isAdminUi() || tournamentHasStarted(tournament);
     const emptyStage = 'No ' + stageName + ' matches completed yet.';
@@ -4751,9 +4753,7 @@
             <div id="tScheduleActions" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
           </div>
         </div>
-        <div class="t-card"><div class="t-card-body" id="tScheduleBody">${bracket
-          ? '<p class="t-empty">Loading…</p>'
-          : '<p class="t-mode-note" style="margin:0;">Select a bracket to see its schedule. Each bracket keeps its own fixtures.</p>'}</div></div>
+        <div class="t-card"><div class="t-card-body" id="tScheduleBody"><p class="t-empty">Loading…</p></div></div>
       </section>
     ` : `
       <section class="t-section">
