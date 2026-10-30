@@ -1176,6 +1176,18 @@ body.t-member-preview .t-admin-switch {
   margin: 8px 0;
 }
 .t-stage-row .t-input { flex: 1; min-width: 140px; }
+.t-stage-skip { margin: 4px 0 14px; }
+.t-stage-skip-label {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  font-size: .85rem;
+  color: var(--t-muted);
+}
+.t-stage-skip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.t-standings-table td.t-advance-cell { text-align: right; white-space: nowrap; }
+.t-advance-btn { white-space: nowrap; }
 .t-stage-standing-title {
   font-family: 'Barlow Condensed', sans-serif;
   font-size: 1.05rem;
