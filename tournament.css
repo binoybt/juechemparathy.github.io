@@ -239,7 +239,7 @@ body.t-member-preview .t-admin-switch {
 .t-card-body { padding: 16px 18px; }
 
 .t-standings-scroll { width: 100%; overflow-x: auto; }
-.t-standings-table { width: 100%; min-width: 560px; border-collapse: collapse; }
+.t-standings-table { width: 100%; min-width: 640px; border-collapse: collapse; }
 .t-standings-table th, .t-standings-table td {
   padding: 10px 12px; text-align: left; border-bottom: 1px solid #f1f5f9; font-size: .9rem;
 }

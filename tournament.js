@@ -33,10 +33,11 @@
  *         skippedStages[]  stage ids this category leaves out. Order still
  *                     comes from the sport's stageList. At least one stage stays.
  *         advanced    { [stageId]: teamId[] } teams sent into that stage from
- *                     the previous stage this category still uses. The first
- *                     stage includes every registered team. Later stages only
- *                     list advanced teams, and their brackets are filled from
- *                     that list.
+ *                     the previous stage this category still uses, ordered by
+ *                     that previous stage's overall ranking across groups.
+ *                     The first stage includes every registered team. Later
+ *                     stages only list advanced teams, Seed 1 is the best
+ *                     previous rank, and brackets are filled from that list.
  *         teams[]     { id, name, players[], tags[] }
  *                     tags are optional short labels (seed, home side, group)
  *         brackets[]  { id, name, stageId, teamIds[], schedule, complete, walkoverPoints }
@@ -57,8 +58,9 @@
  *                     plus any stages the admin inserts (Round of 16, …)
  *                     this is the stage order for every category in the sport
  *                     standings are one table per stage, and one per bracket
- *                     a category can skip a stage; Advance on its points table
- *                     sends a team to the next stage it still uses
+ *                     a category can skip a stage; Advance on the overall
+ *                     ranking across groups sends a team to the next stage
+ *                     it still uses, seeded from that ranking
  *                     when that category's last stage other than 3rd place is
  *                     finished, the summary shows a champion and a runner-up,
  *                     then 3rd and 4th from the 3rd-place match or the stage
@@ -461,7 +463,9 @@
     const all = (division && division.teams) || [];
     if (isEntryStage(sport, division, stageId)) return all.slice();
     const ids = advancedTeamIds(division, stageId);
-    return all.filter(function (tm) { return tm && ids.indexOf(tm.id) !== -1; });
+    return ids.map(function (id) {
+      return all.find(function (tm) { return tm && tm.id === id; });
+    }).filter(Boolean);
   }
 
   function teamsOfferedInStage(division, sport, stageId) {
@@ -1967,18 +1971,89 @@
     });
 
     const rows = Object.values(table);
-    rows.sort(function (x, y) {
-      if (y.points !== x.points) return y.points - x.points;
-      if (scope.bracketId) {
-        const xDiff = x.pointsFor - x.pointsAgainst;
-        const yDiff = y.pointsFor - y.pointsAgainst;
-        if (yDiff !== xDiff) return yDiff - xDiff;
-      }
+    rows.sort(compareStandingRows);
+    return rows;
+  }
+
+  function compareStandingRows(x, y) {
+    if ((y.points || 0) !== (x.points || 0)) return (y.points || 0) - (x.points || 0);
+    const xDiff = (x.pointsFor || 0) - (x.pointsAgainst || 0);
+    const yDiff = (y.pointsFor || 0) - (y.pointsAgainst || 0);
+    if (yDiff !== xDiff) return yDiff - xDiff;
+    if (x.h2h && y.h2h) {
       if (x.h2h[y.id] === 'W' && y.h2h[x.id] !== 'W') return -1;
       if (y.h2h[x.id] === 'W' && x.h2h[y.id] !== 'W') return 1;
-      return String(x.id).localeCompare(String(y.id));
+    }
+    return String(x.id).localeCompare(String(y.id));
+  }
+
+  function computeStageRanking(tournament, matches, sport, division, stageId) {
+    if (!tournament || !sport || !division) return [];
+    const groups = bracketsInStage(division, stageId).filter(bracketHasTeams);
+    if (!groups.length) {
+      const stageTeamIds = teamsForStage(division, sport, stageId).map(function (tm) { return tm.id; });
+      return computeStandings(tournament, matches, sport.id, {
+        categoryId: division.id,
+        stageId: stageId,
+        teamIds: stageTeamIds.length ? stageTeamIds : undefined,
+        useTeams: true
+      }).map(function (row, i) {
+        return Object.assign({}, row, { rank: i + 1, groupName: '', groupRank: i + 1 });
+      });
+    }
+    const byTeam = {};
+    groups.forEach(function (bracket) {
+      const rows = computeStandings(tournament, matches, sport.id, {
+        categoryId: division.id,
+        bracketId: bracket.id,
+        teamIds: bracketTeamIds(bracket),
+        stageId: stageId,
+        useTeams: true
+      });
+      rows.forEach(function (row, i) {
+        byTeam[row.id] = Object.assign({}, row, {
+          groupName: bracket.name || 'Group',
+          groupRank: i + 1,
+          groupComplete: !!bracket.complete
+        });
+      });
     });
-    return rows;
+    const list = Object.keys(byTeam).map(function (id) { return byTeam[id]; });
+    list.sort(compareStandingRows);
+    return list.map(function (row, i) { return Object.assign({}, row, { rank: i + 1 }); });
+  }
+
+  function isSeedTag(tag) {
+    return /^seed\s+\d+$/i.test(String(tag || '').trim());
+  }
+
+  function stripSeedTags(tags) {
+    return parseTeamTags(tags).filter(function (tag) { return !isSeedTag(tag); });
+  }
+
+  function rankIdsByPreviousStage(tournament, sport, division, fromStageId, teamIds) {
+    const ranking = computeStageRanking(tournament, state.matches, sport, division, fromStageId);
+    const pos = {};
+    ranking.forEach(function (row) {
+      if (row && row.id) pos[row.id] = row.rank;
+    });
+    return (teamIds || []).slice().sort(function (a, b) {
+      const ra = pos[a] != null ? pos[a] : 9999;
+      const rb = pos[b] != null ? pos[b] : 9999;
+      if (ra !== rb) return ra - rb;
+      return String(a).localeCompare(String(b));
+    });
+  }
+
+  function applyAdvanceSeeds(division, orderedIds) {
+    const assigned = {};
+    (orderedIds || []).forEach(function (id, i) { assigned[id] = i + 1; });
+    (division.teams || []).forEach(function (tm) {
+      if (!tm || !tm.id) return;
+      if (assigned[tm.id]) {
+        tm.tags = stripSeedTags(tm.tags).concat(['Seed ' + assigned[tm.id]]);
+      }
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -2779,7 +2854,7 @@
     return `
       <div class="t-stage-list-editor">
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;color:var(--t-muted);">Stages</div>
-        <p class="t-mode-note">This order applies to every category in the sport. League, semifinal, and final are included. Add a stage between them, such as Round of 32 or Round of 16. On a category, skip any stage that category does not play. Advance on that category's points table sends a team into the next stage it still uses, and brackets there are built from those teams.</p>
+        <p class="t-mode-note">This order applies to every category in the sport. League, semifinal, and final are included. Add a stage between them, such as Round of 32 or Round of 16. On a category, skip any stage that category does not play. Advance on that category's overall ranking sends a team into the next stage it still uses, seeded by previous-stage rank (best remaining rank is Seed 1), and brackets there are built from those teams.</p>
         ${rows}
         <label style="display:inline-flex;align-items:center;gap:8px;color:var(--t-fg);font-weight:600;font-size:.9rem;">
           <input type="checkbox" data-field="hasThirdPlace" ${sport.hasThirdPlace !== false ? 'checked' : ''} />
@@ -4280,7 +4355,8 @@
   function rankOf(rows, id) {
     const index = (rows || []).findIndex(function (r) { return r.id === id; });
     if (index < 0) return null;
-    return { rank: index + 1, row: rows[index] };
+    const row = rows[index];
+    return { rank: row.rank || index + 1, row: row };
   }
 
   function standingLine(rank) {
@@ -4782,6 +4858,14 @@
     const team = (division.teams || []).find(function (tm) { return tm.id === teamId; });
     if (!team) return;
     const turningOn = !!on;
+    const nextIds = (advancedTeamIds(division, next.id) || []).slice();
+    if (turningOn && nextIds.indexOf(teamId) === -1) nextIds.push(teamId);
+    if (!turningOn) {
+      const drop = nextIds.indexOf(teamId);
+      if (drop >= 0) nextIds.splice(drop, 1);
+    }
+    const rankedPreview = rankIdsByPreviousStage(t, sport, division, fromStageId, nextIds);
+    const seedNo = turningOn ? rankedPreview.indexOf(teamId) + 1 : 0;
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
         const record = advancedRecord(div);
@@ -4789,18 +4873,23 @@
         const idx = list.indexOf(teamId);
         if (turningOn && idx === -1) list.push(teamId);
         if (!turningOn && idx >= 0) list.splice(idx, 1);
-        if (list.length) record[next.id] = list;
+        const ranked = rankIdsByPreviousStage(t, sport, div, fromStageId, list);
+        if (ranked.length) record[next.id] = ranked;
         else delete record[next.id];
         if (!turningOn) {
           (div.brackets || []).forEach(function (b) {
             if (bracketStageId(b) !== next.id) return;
             b.teamIds = (b.teamIds || []).filter(function (id) { return id !== teamId; });
           });
+          (div.teams || []).forEach(function (tm) {
+            if (tm && tm.id === teamId) tm.tags = stripSeedTags(tm.tags);
+          });
         }
+        applyAdvanceSeeds(div, ranked);
         div.advanced = record;
       });
       toast(turningOn
-        ? (team.name || 'Team') + ' advanced to ' + next.name
+        ? (team.name || 'Team') + ' advanced to ' + next.name + (seedNo > 0 ? ' as Seed ' + seedNo : '')
         : (team.name || 'Team') + ' removed from ' + next.name, 'success');
       render();
     } catch (_) { /* toasted */ }
@@ -4835,7 +4924,11 @@
               moving.forEach(function (id) {
                 if (dest.indexOf(id) === -1) dest.push(id);
               });
-              record[next.id] = dest;
+              const from = previousStageBefore(sport, div, next.id);
+              record[next.id] = from
+                ? rankIdsByPreviousStage(t, sport, div, from.id, dest)
+                : dest;
+              applyAdvanceSeeds(div, record[next.id]);
             }
             delete record[stageId];
           }
@@ -4849,24 +4942,27 @@
 
   function standingsTableHtml(tournament, sportId, rows, division, bracketId, emptyLabel, fromStageId) {
     if (!rows.length) return '<p class="t-empty">' + escapeHtml(emptyLabel || 'No matches completed yet.') + '</p>';
-    const showPointBreakdown = !!bracketId;
+    const showGroups = rows.some(function (r) { return r && r.groupName; });
+    const showPointBreakdown = !!bracketId || showGroups || rows.some(function (r) { return r && r.rank; });
     const sport = getSportConfig(tournament, sportId);
     const next = (isAdminUi() && division && fromStageId) ? nextStageAfter(sport, division, fromStageId) : null;
     return `
       <div class="t-standings-scroll"><table class="t-standings-table">
         <thead>
-          <tr><th>#</th><th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">D</th><th class="num">L</th>${showPointBreakdown ? '<th class="num" title="Points for">PF</th><th class="num" title="Points against">PA</th><th class="num" title="Points difference">PD</th>' : ''}<th class="num">Pts</th>${next ? '<th>Next stage</th>' : ''}</tr>
+          <tr><th>#</th>${showGroups ? '<th>Group</th><th class="num" title="Rank in group">Grp</th>' : ''}<th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">D</th><th class="num">L</th>${showPointBreakdown ? '<th class="num" title="Points for">PF</th><th class="num" title="Points against">PA</th><th class="num" title="Points difference">PD</th>' : ''}<th class="num">Pts</th>${next ? '<th>Next stage</th>' : ''}</tr>
         </thead>
         <tbody>
           ${rows.map(function (r, i) {
+            const place = r.rank || (i + 1);
             const meta = teamMeta(tournament, sportId, r.id);
             const already = next ? advancedTeamIds(division, next.id).indexOf(r.id) !== -1 : false;
             const advanceCell = next
               ? '<td class="t-advance-cell"><button type="button" class="t-btn sm t-advance-btn" data-act="advance-team" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '" data-on="' + (already ? '0' : '1') + '">' + escapeHtml(already ? ('In ' + next.name) : ('Advance to ' + next.name)) + '</button></td>'
               : '';
             return `
-              <tr class="rank-${i + 1} is-link" data-open-team="${escapeHtml(r.id)}" data-bracket="${escapeHtml(bracketId || '')}">
-                <td><span class="rank-badge">${i + 1}</span></td>
+              <tr class="rank-${place} is-link" data-open-team="${escapeHtml(r.id)}" data-bracket="${escapeHtml(bracketId || '')}">
+                <td><span class="rank-badge">${place}</span></td>
+                ${showGroups ? '<td>' + escapeHtml(r.groupName || '—') + '</td><td class="num">' + (r.groupRank || '—') + '</td>' : ''}
                 <td>
                   <div class="t-team-cell">
                     <span class="t-team-swatch" style="--team-color:${meta.color}"></span>
@@ -4900,11 +4996,7 @@
     if (showResults) {
       const stageBlocks = stages.map(function (st) {
         const bracket = bracketForTeam(division, team.id, st.id);
-        const overall = computeStandings(tournament, state.matches, sport.id, {
-          categoryId: division.id,
-          stageId: st.id,
-          useTeams: true
-        });
+        const ranking = computeStageRanking(tournament, state.matches, sport, division, st.id);
         const bracketRows = bracket ? computeStandings(tournament, state.matches, sport.id, {
           categoryId: division.id,
           bracketId: bracket.id,
@@ -4917,7 +5009,7 @@
             <div class="t-stage-standing-title">${escapeHtml(st.name)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}</div>
             <div class="t-focus-grid">
               <div><div class="lbl">Bracket standing</div><div class="val">${escapeHtml(bracket ? standingLine(rankOf(bracketRows, team.id)) : 'Not placed in a bracket')}</div></div>
-              ${showsOverallPointsTable(tournament) ? '<div><div class="lbl">Overall standing</div><div class="val">' + escapeHtml(standingLine(rankOf(overall, team.id))) + '</div></div>' : ''}
+              <div><div class="lbl">Overall ranking</div><div class="val">${escapeHtml(standingLine(rankOf(ranking, team.id)))}</div></div>
             </div>
           </div>
         `;
@@ -5008,7 +5100,7 @@
           const skipped = stageIsSkipped(division, st.id);
           return `<button type="button" class="t-btn sm ${skipped ? '' : 'primary'}" data-act="toggle-skip-stage" data-stage="${escapeHtml(st.id)}" data-skipped="${skipped ? '1' : '0'}">${escapeHtml(st.name || st.id)}${skipped ? ' · skipped' : ''}</button>`;
         }).join('')}</div>
-        <p class="t-mode-note">Highlighted stages are included. Stage order is set on Manage tournament. Skip a stage to leave it out of this category. Advance on a points table sends a team to the next stage that is still included.</p>
+        <p class="t-mode-note">Highlighted stages are included. Stage order is set on Manage tournament. Skip a stage to leave it out of this category. Advance on a points table or the overall ranking sends a team to the next stage that is still included, seeded from that overall ranking (rank 2 and rank 6 become Seed 1 and Seed 2).</p>
       </div>
     ` : '';
 
@@ -5109,14 +5201,9 @@
         `;
       }).join('');
     }
-    const showOverall = showBoard && showsOverallPointsTable(tournament);
-    const overallScope = {
-      categoryId: division.id,
-      stageId: stageId,
-      useTeams: true
-    };
-    if (!entryStage) overallScope.teamIds = offeredTeams.map(function (tm) { return tm.id; });
-    const overallRows = showOverall ? computeStandings(tournament, state.matches, sport.id, overallScope) : [];
+    const rankingRows = showBoard ? computeStageRanking(tournament, state.matches, sport, division, stageId) : [];
+    const populatedGroups = brackets.filter(bracketHasTeams);
+    const stageComplete = populatedGroups.length > 0 && populatedGroups.every(bracketIsComplete);
 
     const scheduleBlock = brackets.length ? `
       <section class="t-section" id="tScheduleSection">
@@ -5149,11 +5236,11 @@
         <div class="t-section-header">
           <h2 class="t-section-title">${entryStage
             ? (sport.categoryMode === 'open' ? 'Teams' : escapeHtml(division.name || 'Category')) + ' <small>max ' + clampMaxPlayers(division.maxPlayers) + ' player' + (clampMaxPlayers(division.maxPlayers) === 1 ? '' : 's') + '</small>'
-            : 'Teams in ' + escapeHtml(stageName) + ' <small>' + stageTeams.length + ' advanced' + (prevStage ? ' from ' + escapeHtml(prevStage.name) : '') + '</small>'}</h2>
+            : 'Teams in ' + escapeHtml(stageName) + ' <small>' + stageTeams.length + ' advanced' + (prevStage ? ' from ' + escapeHtml(prevStage.name) : '') + ' · seeded by overall ranking</small>'}</h2>
           ${entryStage ? `<button type="button" class="t-btn sm primary" data-act="add-team">➕ Add team</button>` : ''}
         </div>
-        ${entryStage ? '' : '<p class="t-mode-note">These are the teams advanced into ' + escapeHtml(stageName) + '. Create brackets from this list.</p>'}
-        <div class="t-rosters-grid">${teamCards || '<div class="t-empty">' + (entryStage ? 'No teams yet. Add a team with its name and player names.' : 'No teams advanced into ' + escapeHtml(stageName) + ' yet. Use Advance on the previous stage\'s points table.') + '</div>'}</div>
+        ${entryStage ? '' : '<p class="t-mode-note">These are the teams advanced into ' + escapeHtml(stageName) + ', ordered and tagged as Seed 1, Seed 2, … from the previous stage\'s overall ranking. Create brackets from this list.</p>'}
+        <div class="t-rosters-grid">${teamCards || '<div class="t-empty">' + (entryStage ? 'No teams yet. Add a team with its name and player names.' : 'No teams advanced into ' + escapeHtml(stageName) + ' yet. Use Advance on the previous stage\'s overall ranking.') + '</div>'}</div>
       </section>
       <section class="t-section">
         <div class="t-section-header">
@@ -5162,7 +5249,7 @@
           ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket">➕ Create bracket</button>` : ''}
         </div>
         <p class="t-mode-note">${entryStage
-          ? 'A team can sit in one bracket of ' + escapeHtml(stageName) + '. Advance teams from the points table into ' + escapeHtml(nextStage ? nextStage.name : 'the next stage') + '. Generate round-robin asks which bracket to fill and skips any bracket marked complete.'
+          ? 'A team can sit in one bracket of ' + escapeHtml(stageName) + '. Advance teams from the overall ranking into ' + escapeHtml(nextStage ? nextStage.name : 'the next stage') + ', which seeds them in that rank order. Generate round-robin asks which bracket to fill and skips any bracket marked complete.'
           : 'Brackets in ' + escapeHtml(stageName) + ' are filled from the teams advanced into this stage. A team can sit in one bracket here, and in a different bracket in another stage.'}</p>
         <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.</div>'}</div>
       </section>
@@ -5175,12 +5262,16 @@
           <div class="t-match-list" id="tUpcomingList"></div>
         </section>
         ${bracketTables}
-        ${showOverall ? `
         <section class="t-section">
-          <div class="t-section-header"><h2 class="t-section-title">Overall points table <small>${escapeHtml(stageName)}</small></h2></div>
-          <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, overallRows, division, '', emptyStage, stageId)}</div></div>
+          <div class="t-section-header"><h2 class="t-section-title">Overall ranking <small>${escapeHtml(stageName)}${stageComplete ? ' · Stage complete' : ''}</small></h2></div>
+          <p class="t-mode-note">${populatedGroups.length
+            ? 'This ranking is across every group in ' + escapeHtml(stageName) + '.'
+            : 'This ranking is for every team in ' + escapeHtml(stageName) + '.'}
+            ${nextStage
+              ? ' Advance uses this order to seed ' + escapeHtml(nextStage.name) + ' — rank 2 and rank 6 become Seed 1 and Seed 2.'
+              : ''}</p>
+          <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rankingRows, division, '', emptyStage, stageId)}</div></div>
         </section>
-        ` : ''}
         ${isAdminUi() ? `
         <section class="t-section" id="tCompletedSection" style="display:none;">
           <div class="t-section-header"><h2 class="t-section-title">Completed</h2></div>
@@ -8847,17 +8938,20 @@
 
   function watchTableHtml(tournament, sportId, rows, emptyLabel, opts) {
     if (!rows.length) return '<p class="w-empty">' + escapeHtml(emptyLabel || 'No matches completed in this stage yet.') + '</p>';
-    const showPointBreakdown = !!(opts && opts.showPointBreakdown);
+    const showGroups = !!(opts && opts.showGroups) || rows.some(function (r) { return r && r.groupName; });
+    const showPointBreakdown = !!(opts && opts.showPointBreakdown) || showGroups;
     return `
       <div class="w-table-scroll"><table class="w-table">
-        <thead><tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th>${showPointBreakdown ? '<th title="Points for">PF</th><th title="Points against">PA</th><th title="Points difference">PD</th>' : ''}<th>Pts</th></tr></thead>
+        <thead><tr><th>#</th>${showGroups ? '<th>Group</th><th>Grp</th>' : ''}<th class="w-team-col">Team</th><th>P</th><th>W</th><th>D</th><th>L</th>${showPointBreakdown ? '<th title="Points for">PF</th><th title="Points against">PA</th><th title="Points difference">PD</th>' : ''}<th>Pts</th></tr></thead>
         <tbody>
           ${rows.map(function (r, i) {
+            const place = r.rank || (i + 1);
             const meta = teamMeta(tournament, sportId, r.id);
             return `
-              <tr class="rank-${i + 1}" data-act="team" data-team="${escapeHtml(r.id)}" data-sport="${escapeHtml(sportId)}">
-                <td><span class="w-rank">${i + 1}</span></td>
-                <td><span class="w-team"><span class="w-swatch sm" style="background:${meta.color}"></span><span><span>${escapeHtml(meta.name)}</span>${teamTagsHtml(meta.tags, 'watch')}</span></span></td>
+              <tr class="rank-${place}" data-act="team" data-team="${escapeHtml(r.id)}" data-sport="${escapeHtml(sportId)}">
+                <td><span class="w-rank">${place}</span></td>
+                ${showGroups ? '<td>' + escapeHtml(r.groupName || '—') + '</td><td>' + (r.groupRank || '—') + '</td>' : ''}
+                <td class="w-team-col"><span class="w-team"><span class="w-swatch sm" style="background:${meta.color}"></span><span><span>${escapeHtml(meta.name)}</span>${teamTagsHtml(meta.tags, 'watch')}</span></span></td>
                 <td>${r.played}</td><td>${r.won}</td><td>${r.drawn || 0}</td><td>${r.lost}</td>${showPointBreakdown ? '<td>' + (r.pointsFor || 0) + '</td><td>' + (r.pointsAgainst || 0) + '</td><td>' + ((r.pointsFor || 0) - (r.pointsAgainst || 0)) + '</td>' : ''}<td class="pts">${r.points}</td>
               </tr>
             `;
@@ -9209,7 +9303,8 @@
     if (division) standScope.categoryId = division.id;
     const brackets = division ? bracketsInStage(division, stageId) : [];
     const populatedBrackets = brackets.filter(bracketHasTeams);
-    const showOverallTable = showsOverallPointsTable(tournament) || !brackets.length;
+    const rankingRows = division ? computeStageRanking(tournament, matches, sport, division, stageId) : [];
+    const showOverallTable = !division && (showsOverallPointsTable(tournament) || !brackets.length);
     const overall = showOverallTable ? computeStandings(tournament, matches, sport.id, standScope) : [];
     const bracketBlocks = populatedBrackets.map(function (b) {
       const rows = computeStandings(tournament, matches, sport.id, {
@@ -9224,9 +9319,7 @@
 
     let focus = '';
     if (params.teamId) {
-      const rowsForTeam = division
-        ? (brackets.length ? null : overall)
-        : overall;
+      const ranking = division ? rankingRows : overall;
       const bracket = division ? bracketForTeam(division, params.teamId, stageId) : null;
       const bracketRows = bracket ? computeStandings(tournament, matches, sport.id, {
         stageId: stageId, categoryId: division.id, bracketId: bracket.id, teamIds: bracket.teamIds || [], useTeams: true
@@ -9245,7 +9338,7 @@
           </div>
           <div class="w-follow-stats">
             <div><span>Bracket</span><b>${escapeHtml(bracket ? standingLine(rankOf(bracketRows, params.teamId)) : 'Not in a bracket this stage')}</b></div>
-            ${showsOverallPointsTable(tournament) ? '<div><span>Overall</span><b>' + escapeHtml(standingLine(rankOf(bracket ? overall : (rowsForTeam || overall), params.teamId))) + '</b></div>' : ''}
+            ${division || showsOverallPointsTable(tournament) ? '<div><span>Overall</span><b>' + escapeHtml(standingLine(rankOf(ranking, params.teamId))) + '</b></div>' : ''}
           </div>
           <div class="w-follow-matches">${mine.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') || '<p class="w-empty">No matches for this team yet.</p>'}</div>
         </section>
@@ -9272,9 +9365,16 @@
         </div>
         <div class="w-col">
           ${bracketBlocks}
+          ${division ? `
+          <section class="w-panel">
+            <h3>Overall ranking <small>${escapeHtml(stageName)}</small></h3>
+            <p class="w-hint">${populatedBrackets.length ? 'Across every group in ' + escapeHtml(stageName) + '.' : 'Every team in ' + escapeHtml(stageName) + '.'} Teams advanced from here are seeded in this order.</p>
+            ${watchTableHtml(tournament, sport.id, rankingRows, 'No ' + stageName + ' matches completed yet.', { showPointBreakdown: true, showGroups: populatedBrackets.length > 0 })}
+          </section>
+          ` : ''}
           ${showOverallTable ? `
           <section class="w-panel">
-            <h3>${categorized ? (brackets.length ? 'Overall points table' : 'Points table') : (brackets.length ? 'Overall' : 'Standing')} <small>${escapeHtml(stageName)}</small></h3>
+            <h3>${brackets.length ? 'Overall' : 'Standing'} <small>${escapeHtml(stageName)}</small></h3>
             ${watchTableHtml(tournament, sport.id, overall, 'No ' + stageName + ' matches completed yet.')}
           </section>
           ` : ''}
