@@ -199,6 +199,10 @@ body.watch {
   font-size: .68rem;
   font-weight: 700;
 }
+.w-tag.w-seed-tag {
+  background: rgba(251, 191, 36, .22);
+  color: #fde68a;
+}
 .w-swatch { width: 8px; height: 36px; border-radius: 99px; flex: none; }
 .w-swatch.sm { width: 7px; height: 16px; }
 .w-score-num, .w-vs {
