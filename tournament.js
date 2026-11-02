@@ -40,8 +40,9 @@
  *                     The first stage includes every registered team. Later
  *                     stages only list advanced teams, Seed 1 is the best
  *                     previous rank, and brackets are filled from that list.
- *         teams[]     { id, name, players[], tags[] }
+ *         teams[]     { id, name, players[], tags[], here, hereAt, hereBy }
  *                     tags are optional short labels (seed, home side, group)
+ *                     here is a registration check-in flag (team has arrived)
  *         brackets[]  { id, name, stageId, teamIds[], schedule, complete, walkoverPoints }
  *           stageId   which stage this bracket belongs to (missing = league)
  *           walkoverPoints / walkoverScore
@@ -87,7 +88,7 @@
  *   Clone copies sports, scoring, table points, stage names, rules, max roster,
  *   and team shells (id / name / wards / tags), plus category teams, category
  *   stage overrides, and bracket membership. It does not copy matches, schedule,
- *   rosters, captains, or lock state. Clones are always unpublished.
+ *   rosters, captains, lock state, or Here check-in. Clones are always unpublished.
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
@@ -1552,6 +1553,51 @@
     if (team.captainEmail && state.user.email
         && team.captainEmail.toLowerCase() === (state.user.email || '').toLowerCase()) return true;
     return false;
+  }
+
+  function teamIsHere(team) {
+    return !!(team && team.here);
+  }
+
+  function canMarkTeamHere(team) {
+    if (!team) return false;
+    if (isAdminUi()) return true;
+    return isCaptainOf(team) || isRosterMemberOf(team);
+  }
+
+  function canClearTeamHere(team) {
+    return !!(isAdminUi() && teamIsHere(team));
+  }
+
+  function teamHereTitle(team) {
+    if (!teamIsHere(team)) return 'Not checked in at registration';
+    const bits = ['Checked in'];
+    if (team.hereAt) bits.push(fmtDateTime(team.hereAt));
+    if (team.hereBy) bits.push(team.hereBy);
+    return bits.join(' · ');
+  }
+
+  function teamHereControlsHtml(team) {
+    if (!team) return '';
+    if (teamIsHere(team)) {
+      return '<span class="t-here-row">'
+        + '<span class="t-badge here" title="' + escapeHtml(teamHereTitle(team)) + '">Here</span>'
+        + (canClearTeamHere(team)
+          ? '<button type="button" class="t-btn sm" data-act="here" data-team="' + escapeHtml(team.id) + '" data-on="0">Undo</button>'
+          : '')
+        + '</span>';
+    }
+    if (!canMarkTeamHere(team)) {
+      return '<span class="t-here-row"><span class="t-badge not-here" title="Not checked in at registration">Not here</span></span>';
+    }
+    return '<span class="t-here-row">'
+      + '<span class="t-badge not-here">Not here</span>'
+      + '<button type="button" class="t-btn success sm" data-act="here" data-team="' + escapeHtml(team.id) + '" data-on="1">Here</button>'
+      + '</span>';
+  }
+
+  function teamHereSuffix(team) {
+    return teamIsHere(team) ? ' · Here' : '';
   }
 
   function isRosterLocked(team) { return !!(team && team.locked); }
@@ -3306,7 +3352,10 @@
           locked:   typeof liveTeam.locked   === 'boolean' ? liveTeam.locked   : !!tm.locked,
           lockedAt: liveTeam.lockedAt || tm.lockedAt || null,
           lockedBy: liveTeam.lockedBy || tm.lockedBy || null,
-          roster: Array.isArray(liveTeam.roster) ? liveTeam.roster : (tm.roster || [])
+          roster: Array.isArray(liveTeam.roster) ? liveTeam.roster : (tm.roster || []),
+          here: !!liveTeam.here,
+          hereAt: liveTeam.hereAt || tm.hereAt || null,
+          hereBy: liveTeam.hereBy || tm.hereBy || null
         });
       });
       let divisions;
@@ -3874,6 +3923,7 @@
   window.__tournament.openRoster = openRoster;
   window.__tournament.openMemberPicker = openMemberPicker;
   window.__tournament.setRosterLock = setRosterLock;
+  window.__tournament.setTeamHere = setTeamHere;
   window.__tournament.addScheduleRow = addScheduleRow;
   window.__tournament.removeScheduleRow = removeScheduleRow;
   window.__tournament.generateLeagueSchedule = generateLeagueSchedule;
@@ -5391,6 +5441,7 @@
           <div class="t-card-body">
             <div class="t-section-header" style="margin-bottom:8px;">
               <h2 class="t-section-title">${escapeHtml(team.name || 'Team')} <small>${escapeHtml(division.name || '')}</small></h2>
+              ${teamHereControlsHtml(team)}
               <button type="button" class="t-btn sm" data-act="close-team">Close</button>
             </div>
             <div class="t-player-list">${players.map(function (p) { return '<span>' + escapeHtml(p) + '</span>'; }).join('') || '<span>No players listed</span>'}</div>
@@ -5469,13 +5520,15 @@
         }).join('')}</div>`
       : `<div class="t-open-banner"><b>Open category.</b> ${escapeHtml(division.name || 'Open')} is open to everyone. This sport is not split into separate categories.</div>`;
 
-    const teamCards = (entryStage ? teams : offeredTeams).map(function (team) {
+    const listedTeams = entryStage ? teams : offeredTeams;
+    const hereCount = listedTeams.filter(teamIsHere).length;
+    const teamCards = listedTeams.map(function (team) {
       const meta = teamMeta(tournament, sport.id, team.id);
       const owned = bracketForTeam(division, team.id, stageId);
       const players = teamPlayersLabel(team);
       const advancedTo = nextStage && advancedTeamIds(division, nextStage.id).indexOf(team.id) !== -1;
       return `
-        <div class="t-roster-card is-link" data-open-team="${escapeHtml(team.id)}" style="--team-color:${meta.color}">
+        <div class="t-roster-card is-link ${teamIsHere(team) ? 'is-here' : ''}" data-open-team="${escapeHtml(team.id)}" style="--team-color:${meta.color}">
           <div class="t-roster-card-head">
             <div class="t-roster-team">
               <span class="t-roster-dot" style="background:${meta.color};"></span>
@@ -5484,6 +5537,7 @@
                 ${teamLabelsHtml(team.tags, stageSeedOf(division, sport, stageId, team.id))}
               </div>
             </div>
+            ${teamHereControlsHtml(team)}
           </div>
           <div class="t-roster-card-body">
             <div class="t-roster-line"><span class="lbl">Players:</span><span class="val t-roster-player-names">${players ? escapeHtml(players) : 'No players yet'}</span></div>
@@ -5511,7 +5565,8 @@
         return `
           <label class="t-check-line">
             <input type="checkbox" data-bracket-team data-bracket="${escapeHtml(b.id)}" data-team="${escapeHtml(tm.id)}" ${checked ? 'checked' : ''} ${isAdminUi() ? '' : 'disabled'} />
-            <span>${escapeHtml(tm.name || tm.id)}</span>
+            <span>${escapeHtml(tm.name || tm.id)}${teamHereSuffix(tm)}</span>
+            ${teamIsHere(tm) ? '<span class="t-badge here">Here</span>' : '<span class="t-badge not-here">Not here</span>'}
             ${elsewhere ? '<em>In ' + escapeHtml(owner.name || 'another bracket') + ' — check to pull in</em>' : ''}
           </label>
         `;
@@ -5595,11 +5650,11 @@
       <section class="t-section">
         <div class="t-section-header">
           <h2 class="t-section-title">${entryStage
-            ? (sport.categoryMode === 'open' ? 'Teams' : escapeHtml(division.name || 'Category')) + ' <small>max ' + clampMaxPlayers(division.maxPlayers) + ' player' + (clampMaxPlayers(division.maxPlayers) === 1 ? '' : 's') + '</small>'
-            : 'Teams in ' + escapeHtml(stageName) + ' <small>' + stageTeams.length + ' advanced' + (prevStage ? ' from ' + escapeHtml(prevStage.name) : '') + ' · seeded by overall ranking</small>'}</h2>
+            ? (sport.categoryMode === 'open' ? 'Teams' : escapeHtml(division.name || 'Category')) + ' <small>max ' + clampMaxPlayers(division.maxPlayers) + ' player' + (clampMaxPlayers(division.maxPlayers) === 1 ? '' : 's') + ' · ' + hereCount + ' here</small>'
+            : 'Teams in ' + escapeHtml(stageName) + ' <small>' + stageTeams.length + ' advanced' + (prevStage ? ' from ' + escapeHtml(prevStage.name) : '') + ' · seeded by overall ranking · ' + hereCount + ' here</small>'}</h2>
           ${entryStage ? `<button type="button" class="t-btn sm primary" data-act="add-team">➕ Add team</button>` : ''}
         </div>
-        ${entryStage ? '' : '<p class="t-mode-note">These are the teams advanced into ' + escapeHtml(stageName) + ', ordered and tagged as Seed 1, Seed 2, … from the previous stage\'s overall ranking. Create brackets from this list.</p>'}
+        ${entryStage ? '<p class="t-mode-note">Mark <b>Here</b> when a team checks in at registration. Use that flag when you schedule games for teams that have arrived.</p>' : '<p class="t-mode-note">These are the teams advanced into ' + escapeHtml(stageName) + ', ordered and tagged as Seed 1, Seed 2, … from the previous stage\'s overall ranking. Create brackets from this list.</p>'}
         <div class="t-rosters-grid">${teamCards || '<div class="t-empty">' + (entryStage ? 'No teams yet. Add a team with its name and player names.' : 'No teams advanced into ' + escapeHtml(stageName) + ' yet. Use Advance on the previous stage\'s overall ranking.') + '</div>'}</div>
       </section>
       <section class="t-section">
@@ -5731,6 +5786,7 @@
         setTeamAdvanced(tournament.id, sport.id, division.id, prev.id, btn.getAttribute('data-team'), false);
       });
     });
+    bindTeamHereButtons(root, tournament, sport.id);
     root.querySelectorAll('[data-act="add-team"]').forEach(function (btn) {
       btn.addEventListener('click', function () { openEntryTeam(tournament.id, sport.id, division.id, ''); });
     });
@@ -5860,7 +5916,7 @@
         ? '<span class="t-badge locked" title="Locked ' + escapeHtml(team.lockedAt || '') + '">🔒 Locked</span>'
         : '<span class="t-badge unlocked">🔓 Open</span>';
       return `
-        <div class="t-roster-card ${locked ? 'is-locked' : ''}" style="--team-color:${meta.color || '#3b82f6'}">
+        <div class="t-roster-card ${locked ? 'is-locked' : ''} ${teamIsHere(team) ? 'is-here' : ''}" style="--team-color:${meta.color || '#3b82f6'}">
           <div class="t-roster-card-head">
             <div class="t-roster-team">
               <span class="t-roster-dot" style="background:${meta.color || '#3b82f6'};"></span>
@@ -5870,7 +5926,10 @@
                 ${teamTagsHtml(team.tags)}
               </div>
             </div>
-            ${canManage ? `<button class="t-btn sm" onclick="window.__tournament.openCaptainPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">${captainAssigned ? 'Change captain' : 'Assign captain'}</button>` : ''}
+            <div class="t-here-row">
+              ${teamHereControlsHtml(team)}
+              ${canManage ? `<button class="t-btn sm" onclick="window.__tournament.openCaptainPicker('${tournament.id}','${sport.id}','${escapeHtml(team.id)}')">${captainAssigned ? 'Change captain' : 'Assign captain'}</button>` : ''}
+            </div>
           </div>
           <div class="t-roster-card-body">
             <div class="t-roster-line"><span class="lbl">Captain</span><span class="val">${captainName}</span></div>
@@ -5887,6 +5946,7 @@
         </div>
       `;
     }).join('');
+    bindTeamHereButtons(wrap, tournament, sport.id);
   }
 
   function renderStandingsFor(tournament, sportId) {
@@ -6555,7 +6615,7 @@
         const label = teamPublicName(tm);
         const extra = (tm.id && label !== tm.id) ? ' (' + tm.id + ')' : '';
         return '<option value="' + escapeHtml(tm.id) + '"' + (tm.id === selected ? ' selected' : '') + '>'
-          + escapeHtml(label) + escapeHtml(extra)
+          + escapeHtml(label) + escapeHtml(extra) + escapeHtml(teamHereSuffix(tm))
           + '</option>';
       }));
       return '<select class="t-select" data-f="' + field + '">' + opts.join('') + '</select>';
@@ -6638,13 +6698,15 @@
         + (publishedMeta.publishedBy ? ' by ' + escapeHtml(publishedMeta.publishedBy) : '') + '</div>'
       : '';
     const rows = sorted.map(function (e) {
+      const aFound = findEntryTeam(tournament, sport.id, e.a);
+      const bFound = findEntryTeam(tournament, sport.id, e.b);
       const aName = displayName(tournament, sport.id, e.a);
       const bName = displayName(tournament, sport.id, e.b);
       return `
         <tr>
           ${bracketName ? '<td>' + escapeHtml(bracketName) + '</td>' : ''}
           <td><span class="t-badge stage-${escapeHtml(e.stage)}">${escapeHtml(stageLabelOf(sport, e.stage))}</span></td>
-          <td class="t-schedule-vs"><b>${escapeHtml(aName)}</b> <span>vs</span> <b>${escapeHtml(bName)}</b></td>
+          <td class="t-schedule-vs"><b>${escapeHtml(aName)}</b>${escapeHtml(teamHereSuffix(aFound && aFound.team))} <span>vs</span> <b>${escapeHtml(bName)}</b>${escapeHtml(teamHereSuffix(bFound && bFound.team))}</td>
           <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
           <td>${courtOf(e) ? escapeHtml(courtOf(e)) : '—'}</td>
           <td>${e.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : '—'}</td>
@@ -6937,6 +6999,52 @@
     }
     toast(where + ' round-robin generated — save draft or publish when ready');
     return true;
+  }
+
+  function bindTeamHereButtons(root, tournament, sportId) {
+    if (!root || !tournament) return;
+    root.querySelectorAll('[data-act="here"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setTeamHere(tournament.id, sportId, btn.getAttribute('data-team'), btn.getAttribute('data-on') !== '0');
+      });
+    });
+  }
+
+  async function setTeamHere(tournamentId, sportId, teamId, on) {
+    on = !!on;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const found = t ? findEntryTeam(t, sportId, teamId) : null;
+    if (!found || !found.team) return;
+    const team = found.team;
+    if (on) {
+      if (teamIsHere(team)) return;
+      if (!canMarkTeamHere(team)) return toast('Only this team or an admin can check in.', 'error');
+    } else if (!canClearTeamHere(team)) {
+      return toast('Only an admin can undo check-in.', 'error');
+    }
+    const stamp = {
+      here: on,
+      hereAt: on ? new Date().toISOString() : null,
+      hereBy: on ? (signedInDisplayName() || '') : null
+    };
+    try {
+      if (found.division) {
+        await mutateDivision(tournamentId, sportId, found.division.id, function (div) {
+          (div.teams || []).forEach(function (tm) {
+            if (!tm || tm.id !== teamId) return;
+            tm.here = stamp.here;
+            tm.hereAt = stamp.hereAt;
+            tm.hereBy = stamp.hereBy;
+          });
+        });
+        toast(on ? ((team.name || 'Team') + ' is here') : ((team.name || 'Team') + ' check-in cleared'), 'success');
+        render();
+      } else {
+        await writeTeamPatch(t, sportId, teamId, stamp);
+        toast(on ? ((teamPublicName(team) || 'Team') + ' is here') : ((teamPublicName(team) || 'Team') + ' check-in cleared'), 'success');
+      }
+    } catch (_) { /* already toasted */ }
   }
 
   async function writeSportPatch(tournament, sportId, patch) {

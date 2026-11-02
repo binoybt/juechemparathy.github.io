@@ -988,6 +988,19 @@ body.t-member-preview .t-admin-switch {
 .t-badge.locked { background: #fee2e2; color: #991b1b; margin-left: 6px; }
 .t-badge.unlocked { background: #e0f2fe; color: #075985; margin-left: 6px; }
 .t-badge.upcoming { background: #dbeafe; color: #1d4ed8; }
+.t-badge.here { background: #dcfce7; color: #166534; }
+.t-badge.not-here { background: #f1f5f9; color: var(--t-muted); }
+.t-here-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex: none;
+}
+.t-roster-card.is-here {
+  box-shadow: inset 3px 0 0 #16a34a;
+  background: #f7fef9;
+}
 .t-tag-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .t-tag {
   display: inline-flex;
