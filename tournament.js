@@ -32,13 +32,13 @@
  *         id, name, open, maxPlayers
  *         skippedStages[]  stage ids this category leaves out. Order still
  *                     comes from the sport's stageList. At least one stage stays.
+ *                     disabledStages[] is still read for older category docs
+ *                     and treated as the same skip list.
  *         advanced    { [stageId]: teamId[] } teams sent into that stage from
  *                     the previous stage this category still uses. The first
  *                     stage includes every registered team. Later stages only
  *                     list advanced teams, and their brackets are filled from
  *                     that list.
- *         teams[]     { id, name, players[], tags[] }
- *                     tags are optional short labels (seed, home side, group)
  *         brackets[]  { id, name, stageId, teamIds[], schedule, complete, walkoverPoints }
  *           stageId   which stage this bracket belongs to (missing = league)
  *           walkoverPoints / walkoverScore
@@ -81,9 +81,9 @@
  *     createdAt / updatedAt / createdBy
  *
  *   Clone copies sports, scoring, table points, stage names, rules, max roster,
- *   and team shells (id / name / wards / tags), plus category teams and bracket
- *   membership. It does not copy matches, schedule, rosters, captains, or
- *   lock state. Clones are always unpublished.
+ *   and team shells (id / name / wards / tags), plus category teams, category
+ *   stage overrides, and bracket membership. It does not copy matches, schedule,
+ *   rosters, captains, or lock state. Clones are always unpublished.
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
@@ -347,6 +347,40 @@
     return out;
   }
 
+  function disabledStagesOf(division) {
+    const raw = (division && Array.isArray(division.disabledStages)) ? division.disabledStages : [];
+    const out = [];
+    raw.forEach(function (id) {
+      const stageId = String(id || '').trim();
+      if (!stageId || out.indexOf(stageId) !== -1) return;
+      out.push(stageId);
+    });
+    return out;
+  }
+
+  function copyDisabledStages(division) {
+    return disabledStagesOf(division).slice();
+  }
+
+  function stageListForDivision(sport, division) {
+    return categoryStages(sport, division);
+  }
+
+  function resolveDivisionStageId(sport, division, requested) {
+    const stages = stageListForDivision(sport, division);
+    if (requested && stages.some(function (st) { return st.id === requested; })) return requested;
+    return (stages[0] && stages[0].id) || 'league';
+  }
+
+  function matchStageApplies(sport, match) {
+    if (!sport || !match) return true;
+    if (!usesRegistrationCategories(sport) || !match.categoryId) return true;
+    const division = findDivision(sport, match.categoryId);
+    if (!division) return true;
+    const stageId = match.stage || 'league';
+    return stageListForDivision(sport, division).some(function (st) { return st.id === stageId; });
+  }
+
   function ensureStageList(sport) {
     if (!sport) return;
     sport.stageList = stageListFor(sport);
@@ -391,9 +425,11 @@
   }
 
   function skippedStageIds(division) {
-    const raw = (division && division.skippedStages) || [];
+    const raw = []
+      .concat((division && division.skippedStages) || [])
+      .concat((division && division.disabledStages) || []);
     const out = [];
-    (Array.isArray(raw) ? raw : []).forEach(function (id) {
+    raw.forEach(function (id) {
       id = String(id || '').trim();
       if (!id || out.indexOf(id) !== -1) return;
       out.push(id);
@@ -406,8 +442,11 @@
   }
 
   function categoryStages(sport, division) {
+    const all = stageListFor(sport);
     const skip = skippedStageIds(division);
-    return stageListFor(sport).filter(function (st) { return skip.indexOf(st.id) === -1; });
+    const out = all.filter(function (st) { return skip.indexOf(st.id) === -1; });
+    if (out.length) return out;
+    return all.length ? [all[0]] : [{ id: 'league', name: 'League' }];
   }
 
   function advancedRecord(division) {
@@ -722,7 +761,7 @@
 
   function blankDivision(opts) {
     opts = opts || {};
-    return {
+    const division = {
       id: opts.id || newId('cat'),
       name: opts.name || 'Category',
       open: !!opts.open,
@@ -730,6 +769,9 @@
       teams: opts.teams ? JSON.parse(JSON.stringify(opts.teams)) : [],
       brackets: opts.brackets ? JSON.parse(JSON.stringify(opts.brackets)) : []
     };
+    const skipped = skippedStageIds(opts);
+    if (skipped.length) division.skippedStages = skipped;
+    return division;
   }
 
   function usesRegistrationCategories(sport) {
@@ -893,7 +935,7 @@
     return (draftSport.divisions || []).map(function (d) {
       const live = liveDivs.find(function (x) { return x.id === d.id; });
       const open = draftSport.categoryMode === 'open';
-      return {
+      const out = {
         id: d.id,
         name: String(d.name || '').trim() || (open ? 'Open' : 'Category'),
         open: open ? true : false,
@@ -906,6 +948,7 @@
         skippedStages: skippedStageIds(live || d),
         advanced: advancedRecord(live || d)
       };
+      return out;
     });
   }
 
@@ -2658,7 +2701,7 @@
         ${rows || '<p class="t-mode-note">Add at least one category.</p>'}
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
           <button type="button" class="t-btn sm" data-div-add>➕ Add category</button>
-          <span class="t-mode-note" style="margin:0;">Registrations, brackets, and schedules belong to each category. Set them up on the tournament page after you save.</span>
+          <span class="t-mode-note" style="margin:0;">Registrations, brackets, and schedules belong to each category. Set them up on the tournament page after you save. A category can also hide a stage that does not apply to it.</span>
         </div>
       `;
     } else {
@@ -3056,7 +3099,7 @@
         categories: Array.isArray(s.categories) ? s.categories.slice() : [],
         categoryMode: s.categoryMode || '',
         divisions: (s.divisions || []).map(function (d) {
-          return {
+          const cloned = {
             id: d.id,
             name: d.name || (d.open ? 'Open' : 'Category'),
             open: !!d.open,
@@ -3082,6 +3125,7 @@
               };
             })
           };
+          return cloned;
         }),
         tablePoints: tablePointsFor(s),
         stageList: stageListFor(s),
@@ -4530,6 +4574,46 @@
     await writeSportPatch(t, sportId, { divisions: divisions });
   }
 
+  async function setDivisionStageEnabled(tournamentId, sportId, divisionId, stageId, enabled) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const division = sport ? findDivision(sport, divisionId) : null;
+    if (!t || !sport || !division || !stageId) return;
+    const allIds = stageListFor(sport).map(function (st) { return st.id; });
+    if (allIds.indexOf(stageId) === -1) return;
+    const hidden = disabledStagesOf(division);
+    let next;
+    if (enabled) {
+      next = hidden.filter(function (id) { return id !== stageId; });
+    } else {
+      next = hidden.indexOf(stageId) === -1 ? hidden.concat([stageId]) : hidden.slice();
+      const remaining = allIds.filter(function (id) { return next.indexOf(id) === -1; });
+      if (!remaining.length) {
+        toast('Keep at least one stage for this category.', 'error');
+        return;
+      }
+    }
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        if (next.length) div.disabledStages = next;
+        else delete div.disabledStages;
+      });
+      const nextStageId = resolveDivisionStageId(sport, Object.assign({}, division, {
+        disabledStages: next
+      }), parseUrl().stageId || stageId);
+      toast(enabled ? 'Stage restored for this category' : 'Stage hidden for this category', 'success');
+      schedulePublicBoardSync(tournamentId);
+      navigate({
+        view: 'tournament',
+        tournamentId: tournamentId,
+        sportId: sportId,
+        categoryId: divisionId,
+        stageId: nextStageId
+      });
+    } catch (_) { /* toasted */ }
+  }
+
   function openEntryTeam(tournamentId, sportId, divisionId, teamId) {
     if (!isAdminUi()) return;
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
@@ -4663,7 +4747,12 @@
         }
         div.brackets.splice(insertAt, 0, bracket);
       });
-      toast('Bracket created. Pull teams into it, then build the schedule.', 'success');
+      toast(
+        (division.teams || []).length < 2
+          ? 'Bracket created in ' + stageLabelOf(sport, stage) + '. Add teams, then pull them in.'
+          : 'Bracket created in ' + stageLabelOf(sport, stage) + '. Pull teams into it, then build the schedule.',
+        'success'
+      );
       navigate({
         view: 'tournament',
         tournamentId: tournamentId,
@@ -5001,6 +5090,13 @@
       const count = bracketsInStage(division, st.id).length;
       return `<button type="button" class="t-tab ${active ? 'active' : ''}" style="--sport-color:${sport.color || 'var(--t-primary)'}" data-act="select-stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}<span class="count">${count}</span></button>`;
     }).join('')}</div>`;
+    const stageToolbar = isAdminUi()
+      ? `<div class="t-stage-toolbar">
+          <div class="t-stage-toolbar-label"><b>${escapeHtml(stageName)}</b> · ${brackets.length} bracket${brackets.length === 1 ? '' : 's'} in this category</div>
+          <button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>
+          <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ${escapeHtml(stageName)}</button>
+        </div>`
+      : '';
     const stageSkip = isAdminUi() ? `
       <div class="t-stage-skip">
         <div class="t-stage-skip-label">Stages for this category</div>
@@ -5141,8 +5237,9 @@
 
     root.innerHTML = `
       ${categoryTabs}
-      ${stageTabs}
       ${stageSkip}
+      ${stageTabs}
+      ${stageToolbar}
       ${focusTeam ? teamFocusHtml(tournament, sport, division, focusTeam) : ''}
       ${isAdminUi() ? `
       <section class="t-section">
@@ -5159,12 +5256,12 @@
         <div class="t-section-header">
           <h2 class="t-section-title">Brackets <small>${escapeHtml(stageName)} — pull teams in, then schedule inside the bracket</small></h2>
           ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>` : ''}
-          ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket">➕ Create bracket</button>` : ''}
+          ${isAdminUi() ? `<button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ${escapeHtml(stageName)}</button>` : ''}
         </div>
         <p class="t-mode-note">${entryStage
           ? 'A team can sit in one bracket of ' + escapeHtml(stageName) + '. Advance teams from the points table into ' + escapeHtml(nextStage ? nextStage.name : 'the next stage') + '. Generate round-robin asks which bracket to fill and skips any bracket marked complete.'
           : 'Brackets in ' + escapeHtml(stageName) + ' are filled from the teams advanced into this stage. A team can sit in one bracket here, and in a different bracket in another stage.'}</p>
-        <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.</div>'}</div>
+        <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.' + (isAdminUi() ? ' <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ' + escapeHtml(stageName) + '</button>' : '') + '</div>'}</div>
       </section>
       ${scheduleBlock}
       ` : ''}
@@ -5225,13 +5322,26 @@
     }
     root.querySelectorAll('[data-act="select-category"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
+        const nextId = btn.getAttribute('data-category');
+        const nextDiv = findDivision(sport, nextId);
         navigate({
           view: 'tournament',
           tournamentId: tournament.id,
           sportId: sport.id,
-          categoryId: btn.getAttribute('data-category'),
-          stageId: stageId || 'league'
+          categoryId: nextId,
+          stageId: resolveDivisionStageId(sport, nextDiv, stageId)
         });
+      });
+    });
+    root.querySelectorAll('[data-stage-enabled]').forEach(function (input) {
+      input.addEventListener('change', function () {
+        setDivisionStageEnabled(
+          tournament.id,
+          sport.id,
+          division.id,
+          input.getAttribute('data-stage-enabled'),
+          input.checked
+        );
       });
     });
     root.querySelectorAll('[data-act="select-stage"]').forEach(function (btn) {
@@ -8142,7 +8252,7 @@
       rulesText: rulesText(sport.rules),
       teams: (sport.teams || []).map(sanitizePublicTeam).filter(Boolean),
       divisions: (sport.divisions || []).map(function (d) {
-        return {
+        const pub = {
           id: d.id,
           name: d.name || '',
           open: !!d.open,
@@ -8162,6 +8272,7 @@
             };
           })
         };
+        return pub;
       })
     };
   }
@@ -8213,6 +8324,7 @@
     if (!match) return false;
     const sport = getSportConfig(tournament, match.sport);
     if (!sport) return false;
+    if (!matchStageApplies(sport, match)) return false;
     if (match.fromSchedule || match.scheduleEntryId) {
       if (match.bracketId) {
         const division = findDivision(sport, match.categoryId);
@@ -8500,7 +8612,16 @@
 
   function watchBoardKey(board) {
     if (!board) return '';
-    return JSON.stringify((board.matches || []).map(function (match) {
+    const stages = (board.sports || []).map(function (sport) {
+      return [
+        sport.id,
+        (sport.stageList || []).map(function (st) { return st && st.id; }),
+        (sport.divisions || []).map(function (d) {
+          return [d && d.id, skippedStageIds(d)];
+        })
+      ];
+    });
+    const matches = (board.matches || []).map(function (match) {
       return [
         match.id,
         match.status,
@@ -8512,9 +8633,12 @@
         match.showUpcoming,
         match.scheduledAt,
         match.court,
-        match.venue
+        match.venue,
+        match.stage,
+        match.categoryId
       ];
-    }));
+    });
+    return JSON.stringify([stages, matches]);
   }
 
   function publicWatchIsOpen(data) {
@@ -8597,6 +8721,7 @@
             ]
           }, {
             id: 'mixed', name: 'Mixed doubles', open: false, maxPlayers: 2,
+            disabledStages: ['stg_r16', 'semifinal'],
             teams: [
               { id: 'E', name: 'Rivers', players: ['Ivy', 'Jon'] },
               { id: 'F', name: 'Lake', players: ['Kim', 'Leo'] }
@@ -8638,6 +8763,8 @@
         { id: 'm10', sport: 'volleyball', stage: 'league', status: 'scheduled', showUpcoming: true, teamA: 'G1', teamB: 'G4', scheduledAt: '2026-10-19T19:45:00.000Z' },
         { id: 'm7', sport: 'volleyball', stage: 'semifinal', status: 'completed', teamA: 'G1', teamB: 'G3', winner: 'B', resultType: 'walkover', venue: 'Hall', scheduledAt: '2026-10-19T21:00:00.000Z', sets: [{ a: 0, b: 15 }] },
         { id: 'm11', sport: 'badminton', categoryId: 'mixed', bracketId: 'b4', stage: 'league', status: 'completed', teamA: 'E', teamB: 'F', winner: 'B', resultType: 'played', court: 'Court 3', venue: 'Court 3', scheduledAt: '2026-10-19T16:40:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 19, b: 21 }, { a: 16, b: 21 }], winner: 'B' }] },
+        { id: 'm13', sport: 'badminton', categoryId: 'mixed', stage: 'stg_r16', status: 'completed', teamA: 'E', teamB: 'F', winner: 'A', resultType: 'played', court: 'Court 3', venue: 'Court 3', scheduledAt: '2026-10-19T17:00:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 21, b: 12 }], winner: 'A' }] },
+        { id: 'm14', sport: 'badminton', categoryId: 'mixed', stage: 'stg_r16', status: 'in_progress', teamA: 'E', teamB: 'F', court: 'Court 4', venue: 'Court 4', scheduledAt: '2026-10-19T18:10:00.000Z', games: [{ category: 'MX', playersA: 'Ivy / Jon', playersB: 'Kim / Leo', sets: [{ a: 8, b: 5 }], winner: null }] },
         { id: 'm12', sport: 'badminton', categoryId: 'open', bracketId: 'b1', stage: 'league', status: 'completed', teamA: 'A', teamB: 'D', winner: 'A', resultType: 'walkover', court: 'Court 2', venue: 'Court 2', scheduledAt: '2026-10-19T15:20:00.000Z', games: [{ category: 'OD1', playersA: 'Ann / Ben', playersB: 'Gia / Hugo', sets: [{ a: 15, b: 0 }], winner: 'A' }] }
       ]
     };
@@ -9059,9 +9186,11 @@
     });
   }
 
-  function completedMatchesForCategory(matches, sportId, categoryId) {
+  function completedMatchesForCategory(matches, sport, categoryId) {
+    const sportId = sport && sport.id;
     return (matches || []).filter(function (m) {
-      return m.sport === sportId && m.status === 'completed' && m.categoryId === categoryId;
+      if (m.sport !== sportId || m.status !== 'completed' || m.categoryId !== categoryId) return false;
+      return matchStageApplies(sport, m);
     }).sort(sortMatches).reverse();
   }
 
@@ -9117,7 +9246,9 @@
     const categorized = usesRegistrationCategories(sport);
     const division = categorized && params.categoryId ? findDivision(sport, params.categoryId) : null;
     const categorySummary = categorized && !division;
-    const sportPool = matches.filter(function (m) { return m.sport === sport.id; });
+    const sportPool = matches.filter(function (m) {
+      return m.sport === sport.id && matchStageApplies(sport, m);
+    });
     const pool = sportPool.filter(function (m) {
       if (m.sport !== sport.id) return false;
       if (division && m.categoryId !== division.id) return false;
@@ -9128,8 +9259,10 @@
     const stages = division ? categoryStages(sport, division) : stageListFor(sport);
     let stageId = params.stageId;
     if (!stages.some(function (st) { return st.id === stageId; })) {
-      const liveHere = pool.find(function (m) { return m.status === 'in_progress'; });
-      stageId = (liveHere && liveHere.stage) || (stages[0] && stages[0].id) || 'league';
+      const liveHere = pool.find(function (m) {
+        return m.status === 'in_progress' && stages.some(function (st) { return st.id === (m.stage || 'league'); });
+      });
+      stageId = (liveHere && liveHere.stage) || resolveDivisionStageId(sport, division, '');
     }
     const stageName = stageLabelOf(sport, stageId);
     const stagePool = pool.filter(function (m) { return (m.stage || 'league') === stageId; });
@@ -9139,13 +9272,13 @@
     const upcoming = stagePool.filter(function (m) { return m.status === 'scheduled' && m.showUpcoming; }).sort(sortMatches);
     const done = stagePool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
     const categoryDone = division
-      ? completedMatchesForCategory(sportPool, sport.id, division.id)
+      ? completedMatchesForCategory(sportPool, sport, division.id)
       : [];
     const completedByCategory = categorized
       ? divisions.map(function (d) {
         return {
           division: d,
-          matches: completedMatchesForCategory(sportPool, sport.id, d.id)
+          matches: completedMatchesForCategory(sportPool, sport, d.id)
         };
       }).filter(function (group) { return group.matches.length; })
       : [];
@@ -9170,7 +9303,9 @@
     document.title = (tournament.name || 'Live') + ' — ' + (sport.label || 'Scores');
     const sportPills = sports.map(function (s) {
       const on = s.id === sport.id;
-      const n = matches.filter(function (m) { return m.sport === s.id && m.status === 'in_progress'; }).length;
+      const n = matches.filter(function (m) {
+        return m.sport === s.id && m.status === 'in_progress' && matchStageApplies(s, m);
+      }).length;
       return `<button type="button" class="w-pill ${on ? 'is-on' : ''}" style="--accent:${s.color || '#3b82f6'}" data-act="sport" data-sport="${escapeHtml(s.id)}">${escapeHtml((s.emoji || '') + ' ' + (s.label || s.id))}${n ? '<i>' + n + '</i>' : ''}</button>`;
     }).join('');
     top.innerHTML = `
@@ -9232,7 +9367,7 @@
         stageId: stageId, categoryId: division.id, bracketId: bracket.id, teamIds: bracket.teamIds || [], useTeams: true
       }) : [];
       const mine = matches.filter(function (m) {
-        if (m.sport !== sport.id) return false;
+        if (m.sport !== sport.id || !matchStageApplies(sport, m)) return false;
         const p = participantsOf(m, tournament);
         return p.a === params.teamId || p.b === params.teamId;
       }).sort(sortMatches);
@@ -9288,7 +9423,11 @@
 
     function goSport(id) { setWatchParams({ sport: id, panel: panel, st: '', cat: '', team: '' }); }
     function goStage(id) { setWatchParams({ sport: sport.id, panel: 'summary', st: id, cat: division ? division.id : '', team: '' }); }
-    function goCat(id) { setWatchParams({ sport: sport.id, panel: 'summary', st: stageId, cat: id, team: '' }); }
+    function goCat(id) {
+      const nextDiv = id ? findDivision(sport, id) : null;
+      const nextStage = nextDiv ? resolveDivisionStageId(sport, nextDiv, stageId) : '';
+      setWatchParams({ sport: sport.id, panel: 'summary', st: nextStage, cat: id, team: '' });
+    }
     function goTeam(id) {
       const found = findEntryTeam(tournament, sport.id, id);
       const categoryId = (found && found.division && found.division.id) || (division && division.id) || '';
