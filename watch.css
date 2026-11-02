@@ -252,7 +252,7 @@ body.watch {
 .w-fix-mid { font-family: 'Barlow Condensed', sans-serif; font-size: 1.25rem; letter-spacing: .04em; color: var(--w-gold); }
 
 .w-table-scroll { width: 100%; overflow-x: auto; }
-.w-table { width: 100%; min-width: 520px; border-collapse: collapse; }
+.w-table { width: 100%; min-width: 600px; border-collapse: collapse; }
 .w-table th, .w-table td { padding: 8px 6px; text-align: center; border-bottom: 1px solid var(--w-line); font-variant-numeric: tabular-nums; }
 .w-table th {
   font-family: 'Barlow Condensed', sans-serif;
@@ -262,7 +262,8 @@ body.watch {
   color: var(--w-muted);
   font-weight: 700;
 }
-.w-table th:nth-child(2), .w-table td:nth-child(2) { text-align: left; }
+.w-table th:nth-child(2), .w-table td:nth-child(2),
+.w-table .w-team-col { text-align: left; }
 .w-table tr { cursor: pointer; }
 .w-table tr:hover td { background: rgba(255,255,255,.03); }
 .w-table tr.rank-1 td { background: rgba(251, 191, 36, .08); }
