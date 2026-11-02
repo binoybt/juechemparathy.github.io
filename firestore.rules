@@ -92,8 +92,9 @@ service cloud.firestore {
         && resource.data.status in ['in_progress', 'completed']
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['ackAUid', 'ackAName', 'ackAAt', 'updatedAt'])
-        && resource.data.get('ackAUid', '') == ''
-        && request.resource.data.ackAUid == request.auth.uid;
+        && resource.data.get('ackAName', '') == ''
+        && request.resource.data.ackAName is string
+        && request.resource.data.ackAName.size() > 0;
     }
 
     function captainAckB() {
@@ -101,8 +102,9 @@ service cloud.firestore {
         && resource.data.status in ['in_progress', 'completed']
         && request.resource.data.diff(resource.data).affectedKeys()
           .hasOnly(['ackBUid', 'ackBName', 'ackBAt', 'updatedAt'])
-        && resource.data.get('ackBUid', '') == ''
-        && request.resource.data.ackBUid == request.auth.uid;
+        && resource.data.get('ackBName', '') == ''
+        && request.resource.data.ackBName is string
+        && request.resource.data.ackBName.size() > 0;
     }
 
     function keptExistingAck(field) {
@@ -224,8 +226,8 @@ service cloud.firestore {
           'ackBName',
           'ackBAt'
         ])
-        && keptExistingAck('ackAUid')
-        && keptExistingAck('ackBUid')
+        && keptExistingAck('ackAName')
+        && keptExistingAck('ackBName')
         && request.resource.data.status in ['in_progress', 'completed']
         && (
           (

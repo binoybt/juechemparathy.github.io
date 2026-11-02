@@ -694,6 +694,27 @@ body.t-member-preview .t-admin-switch {
   text-transform: uppercase;
   letter-spacing: .04em;
 }
+.t-ack-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 12px 0;
+}
+.t-ack-pick .t-btn { width: 100%; justify-content: flex-start; text-align: left; }
+.t-ack-pick-note {
+  margin: 0;
+  color: var(--t-muted);
+  font-size: .86rem;
+  line-height: 1.4;
+}
+.t-ack-other {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--t-muted);
+}
 .t-modal-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 16px 22px; border-bottom: 1px solid var(--t-border);
@@ -976,6 +997,10 @@ body.t-member-preview .t-admin-switch {
   color: #075985;
   font-size: .68rem;
   font-weight: 700;
+}
+.t-tag.t-seed-tag {
+  background: #fef3c7;
+  color: #92400e;
 }
 .t-schedule-flag { white-space: nowrap; }
 .t-schedule-flag .t-check-line { margin: 0; }

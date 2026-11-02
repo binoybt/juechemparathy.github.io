@@ -111,10 +111,11 @@
  *     winner        'A' | 'B' | 'tie' | null
  *     scorerUid / scorerName / scorerEmail — admin-assigned match scorer
  *     captainAUid / captainAEmail / captainBUid / captainBEmail
- *                     captain of each side, copied from the team so a captain
- *                     can acknowledge the score without a users-table read
- *     ackAUid / ackAName / ackAAt / ackBUid / ackBName / ackBAt
- *                     captain (or scorer) acknowledgement after the match
+ *                     captain of each side, copied from the team
+ *     ackAName / ackAAt / ackBName / ackBAt
+ *                     acknowledgement after the match. Name is the selected
+ *                     player, not the signed-in scorer. Older docs may still
+ *                     have ackAUid / ackBUid; those are no longer written.
  *     scoringConfig snapshot of the stage's scoring rules at match-creation time
  *
  *     Racket sports:  games[]  { category, playersA, playersB, sets[{a,b}], status, winner }
@@ -514,6 +515,20 @@
     }).filter(Boolean);
   }
 
+  // Seed on a later stage is the team's order in advanced[stageId]
+  // (previous-stage overall rank). Seed 1 is the best remaining rank.
+  function stageSeedOf(division, sport, stageId, teamId) {
+    if (!division || !teamId || isEntryStage(sport, division, stageId)) return 0;
+    const idx = advancedTeamIds(division, stageId).indexOf(teamId);
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+  function teamLabelsHtml(tags, seedNo, kind) {
+    const chips = [];
+    if (seedNo > 0) chips.push('Seed ' + seedNo);
+    return teamTagsHtml(chips.concat(stripSeedTags(tags)), kind);
+  }
+
   function teamsOfferedInStage(division, sport, stageId) {
     const pool = teamsForStage(division, sport, stageId);
     const seen = {};
@@ -626,6 +641,12 @@
       roster.unshift(cap);
     }
     return roster;
+  }
+
+  function personDisplayName(person) {
+    if (!person) return '';
+    return [person.firstName, person.middleName, person.lastName].filter(Boolean).join(' ').trim()
+      || String(person.name || '').trim();
   }
 
   function rosterCountOf(team) {
@@ -869,7 +890,8 @@
     const row = kind === 'watch' ? 'w-tags' : 't-tag-row';
     const chip = kind === 'watch' ? 'w-tag' : 't-tag';
     return '<span class="' + row + '">' + list.map(function (tag) {
-      return '<span class="' + chip + '">' + escapeHtml(tag) + '</span>';
+      const extra = isSeedTag(tag) ? (kind === 'watch' ? ' w-seed-tag' : ' t-seed-tag') : '';
+      return '<span class="' + chip + extra + '">' + escapeHtml(tag) + '</span>';
     }).join('') + '</span>';
   }
 
@@ -1288,14 +1310,48 @@
 
   function matchAckOf(match, side) {
     if (!match) return null;
-    const uid = match['ack' + side + 'Uid'];
+    const name = String(match['ack' + side + 'Name'] || '').trim();
     const at = match['ack' + side + 'At'];
-    if (!uid && !at) return null;
+    const uid = match['ack' + side + 'Uid'];
+    if (!name && !at && !uid) return null;
     return {
       uid: uid || '',
-      name: match['ack' + side + 'Name'] || '',
+      name: name,
       at: at || ''
     };
+  }
+
+  function uniquePlayerNames(list) {
+    const seen = {};
+    const out = [];
+    (list || []).forEach(function (raw) {
+      const name = String(raw || '').replace(/\s+/g, ' ').trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (seen[key]) return;
+      seen[key] = true;
+      out.push(name);
+    });
+    return out;
+  }
+
+  function splitPlayerNameList(raw) {
+    return String(raw || '').split(/\s*(?:,|\/|&| and )\s*/i);
+  }
+
+  function matchSidePlayerNames(tournament, match, side) {
+    const names = [];
+    const team = teamForMatchSide(tournament, match, side);
+    if (team) {
+      (team.players || []).forEach(function (p) { names.push(p); });
+      teamMembers(team).forEach(function (member) { names.push(personDisplayName(member)); });
+    }
+    (match && match.games || []).forEach(function (game) {
+      splitPlayerNameList(side === 'B' ? game.playersB : game.playersA).forEach(function (p) {
+        names.push(p);
+      });
+    });
+    return uniquePlayerNames(names);
   }
 
   function matchSideCaptains(tournament, match) {
@@ -1323,8 +1379,7 @@
     if (!match || (match.status !== 'in_progress' && match.status !== 'completed')) return false;
     if (matchAckOf(match, side)) return false;
     if (isAdminUi()) return true;
-    if (canScoreMatch(match)) return true;
-    return isCaptainOf(teamForMatchSide(tournament, match, side));
+    return canScoreMatch(match);
   }
 
   function canUnackMatchSide(match, side) {
@@ -1351,27 +1406,78 @@
     root.querySelectorAll('[data-act="ack"], [data-act="unack"]').forEach(function (btn) {
       btn.addEventListener('click', function (e) {
         e.stopPropagation();
-        setMatchAck(match, tournament, btn.getAttribute('data-side'), btn.getAttribute('data-act') === 'ack');
+        const side = btn.getAttribute('data-side');
+        if (btn.getAttribute('data-act') === 'ack') openAckPicker(match, tournament, side);
+        else setMatchAck(match, tournament, side, false);
       });
     });
   }
 
-  async function setMatchAck(match, tournament, side, on) {
+  function closeAckPicker() {
+    const modal = document.getElementById('tAckPicker');
+    if (modal) modal.classList.remove('open');
+  }
+
+  function openAckPicker(match, tournament, side) {
+    if (side !== 'A' && side !== 'B') return;
+    const latest = (state.matches || []).find(function (item) { return item.id === match.id; }) || match;
+    if (!canAckMatchSide(latest, tournament, side)) {
+      return toast('Only the assigned scorer or an admin can acknowledge.', 'error');
+    }
+    const team = teamForMatchSide(tournament, latest, side);
+    const teamName = teamPublicName(team) || (side === 'B' ? 'Team B' : 'Team A');
+    const names = matchSidePlayerNames(tournament, latest, side);
+    const shell = getOrCreateModal('tAckPicker', 'Who acknowledged?');
+    shell.body.innerHTML = `
+      <p class="t-ack-pick-note">Select the player from <b>${escapeHtml(teamName)}</b>. This name is stored on the acknowledgement — not the person signed in.</p>
+      <div class="t-ack-pick">
+        ${names.map(function (name) {
+          return '<button type="button" class="t-btn" data-ack-name="' + escapeHtml(name) + '">' + escapeHtml(name) + '</button>';
+        }).join('')}
+      </div>
+      ${names.length ? '' : '<p class="t-empty">No players listed on this side yet.</p>'}
+      <label class="t-ack-other">
+        <span>${names.length ? 'Or type another name' : 'Type the player name'}</span>
+        <input type="text" class="t-input" id="tAckOtherName" maxlength="80" placeholder="Player name" />
+      </label>
+      <div class="t-modal-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
+        <button type="button" class="t-btn" data-ack-cancel>Cancel</button>
+        <button type="button" class="t-btn success" data-ack-typed>Use this name</button>
+      </div>
+    `;
+    shell.body.querySelectorAll('[data-ack-name]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setMatchAck(latest, tournament, side, true, btn.getAttribute('data-ack-name'));
+      });
+    });
+    shell.body.querySelector('[data-ack-cancel]').addEventListener('click', closeAckPicker);
+    shell.body.querySelector('[data-ack-typed]').addEventListener('click', function () {
+      const typed = String((shell.body.querySelector('#tAckOtherName') || {}).value || '').replace(/\s+/g, ' ').trim();
+      if (!typed) return toast('Select or type the player who acknowledged.', 'error');
+      setMatchAck(latest, tournament, side, true, typed);
+    });
+    document.body.appendChild(shell.modal);
+    shell.modal.classList.add('open');
+  }
+
+  async function setMatchAck(match, tournament, side, on, ackName) {
     if (side !== 'A' && side !== 'B') return;
     const latest = (state.matches || []).find(function (item) { return item.id === match.id; }) || match;
     try {
       if (on) {
         if (!canAckMatchSide(latest, tournament, side)) {
-          return toast('Only this team\'s captain, the assigned scorer, or an admin can acknowledge.', 'error');
+          return toast('Only the assigned scorer or an admin can acknowledge.', 'error');
         }
-        const me = state.user || {};
+        const who = String(ackName || '').replace(/\s+/g, ' ').trim();
+        if (!who) return toast('Select the player who acknowledged.', 'error');
         const patch = { updatedAt: FieldValue.serverTimestamp() };
-        patch['ack' + side + 'Uid'] = me.uid || '';
-        patch['ack' + side + 'Name'] = me.displayName || me.email || 'Ack';
+        patch['ack' + side + 'Name'] = who;
         patch['ack' + side + 'At'] = new Date().toISOString();
+        patch['ack' + side + 'Uid'] = FieldValue.delete();
         if (isAdminUi()) Object.assign(patch, matchCaptainPatch(tournament, latest));
         await db.collection('tournament_matches').doc(latest.id).update(patch);
-        toast('Team ' + side + ' acknowledged');
+        closeAckPicker();
+        toast(who + ' acknowledged for team ' + side);
       } else {
         if (!canUnackMatchSide(latest, side)) {
           return toast('Only an admin can remove an acknowledgement.', 'error');
@@ -5214,7 +5320,7 @@
                     <div>
                       <span class="t-team-name">${escapeHtml(meta.name)}</span>
                       ${meta.wards ? '<span class="t-team-wards">' + escapeHtml(meta.wards) + '</span>' : ''}
-                      ${teamTagsHtml(meta.tags)}
+                      ${teamLabelsHtml(meta.tags, division ? stageSeedOf(division, sport, fromStageId, r.id) : 0)}
                     </div>
                   </div>
                 </td>
@@ -5251,7 +5357,7 @@
         }) : [];
         return `
           <div class="t-stage-focus">
-            <div class="t-stage-standing-title">${escapeHtml(st.name)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}</div>
+            <div class="t-stage-standing-title">${escapeHtml(st.name)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}${stageSeedOf(division, sport, st.id, team.id) ? ' · Seed ' + stageSeedOf(division, sport, st.id, team.id) : ''}</div>
             <div class="t-focus-grid">
               <div><div class="lbl">Bracket standing</div><div class="val">${escapeHtml(bracket ? standingLine(rankOf(bracketRows, team.id)) : 'Not placed in a bracket')}</div></div>
               <div><div class="lbl">Overall ranking</div><div class="val">${escapeHtml(standingLine(rankOf(ranking, team.id)))}</div></div>
@@ -5375,12 +5481,13 @@
               <span class="t-roster-dot" style="background:${meta.color};"></span>
               <div>
                 <div class="t-roster-name">${escapeHtml(team.name || team.id)}</div>
-                ${teamTagsHtml(team.tags)}
+                ${teamLabelsHtml(team.tags, stageSeedOf(division, sport, stageId, team.id))}
               </div>
             </div>
           </div>
           <div class="t-roster-card-body">
             <div class="t-roster-line"><span class="lbl">Players:</span><span class="val t-roster-player-names">${players ? escapeHtml(players) : 'No players yet'}</span></div>
+            ${stageSeedOf(division, sport, stageId, team.id) ? '<div class="t-roster-line"><span class="lbl">Seed</span><span class="val">Seed ' + stageSeedOf(division, sport, stageId, team.id) + '</span></div>' : ''}
             <div class="t-roster-line"><span class="lbl">Bracket:</span><span class="val">${owned ? escapeHtml(owned.name || 'Bracket') : 'Unassigned'}</span></div>
             ${advancedTo ? '<div class="t-roster-line"><span class="lbl">Next</span><span class="val">Advanced to ' + escapeHtml(nextStage.name) + '</span></div>' : ''}
           </div>
@@ -5919,6 +6026,8 @@
     const p = participantsOf(match, tournament);
     const aMeta = teamMeta(tournament, match.sport, p.a);
     const bMeta = teamMeta(tournament, match.sport, p.b);
+    const division = findDivision(sport, match.categoryId);
+    const stageId = match.stage || 'league';
     const s = matchScoreDisplay(match, tournament);
     const aWin = match.winner === 'A';
     const bWin = match.winner === 'B';
@@ -5944,7 +6053,7 @@
           <div class="info">
             <div class="name">${match.categoryId && p.a ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.a + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(aMeta.name) + '</button>' : escapeHtml(aMeta.name)}</div>
             ${aMeta.wards ? '<div class="wards">' + escapeHtml(aMeta.wards) + '</div>' : ''}
-            ${teamTagsHtml(aMeta.tags)}
+            ${teamLabelsHtml(aMeta.tags, stageSeedOf(division, sport, stageId, p.a))}
             ${matchSideAckHtml(match, tournament, 'A')}
           </div>
         </div>
@@ -5955,7 +6064,7 @@
           <div class="info">
             <div class="name">${match.categoryId && p.b ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.b + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(bMeta.name) + '</button>' : escapeHtml(bMeta.name)}</div>
             ${bMeta.wards ? '<div class="wards">' + escapeHtml(bMeta.wards) + '</div>' : ''}
-            ${teamTagsHtml(bMeta.tags)}
+            ${teamLabelsHtml(bMeta.tags, stageSeedOf(division, sport, stageId, p.b))}
             ${matchSideAckHtml(match, tournament, 'B')}
           </div>
           <span class="avatar" style="--team-color:${bMeta.color}">${escapeHtml((bMeta.id || bMeta.name || 'B').slice(0, 2).toUpperCase())}</span>
@@ -9223,6 +9332,9 @@
     if (!rows.length) return '<p class="w-empty">' + escapeHtml(emptyLabel || 'No matches completed in this stage yet.') + '</p>';
     const showGroups = !!(opts && opts.showGroups) || rows.some(function (r) { return r && r.groupName; });
     const showPointBreakdown = !!(opts && opts.showPointBreakdown) || showGroups;
+    const sport = getSportConfig(tournament, sportId);
+    const division = opts && opts.division;
+    const stageId = opts && opts.stageId;
     return `
       <div class="w-table-scroll"><table class="w-table">
         <thead><tr><th>#</th>${showGroups ? '<th>Group</th><th>Grp</th>' : ''}<th class="w-team-col">Team</th><th>P</th><th>W</th><th>D</th><th>L</th>${showPointBreakdown ? '<th title="Points for">PF</th><th title="Points against">PA</th><th title="Points difference">PD</th>' : ''}<th>Pts</th></tr></thead>
@@ -9234,7 +9346,7 @@
               <tr class="rank-${place}" data-act="team" data-team="${escapeHtml(r.id)}" data-sport="${escapeHtml(sportId)}">
                 <td><span class="w-rank">${place}</span></td>
                 ${showGroups ? '<td>' + escapeHtml(r.groupName || '—') + '</td><td>' + (r.groupRank || '—') + '</td>' : ''}
-                <td class="w-team-col"><span class="w-team"><span class="w-swatch sm" style="background:${meta.color}"></span><span><span>${escapeHtml(meta.name)}</span>${teamTagsHtml(meta.tags, 'watch')}</span></span></td>
+                <td class="w-team-col"><span class="w-team"><span class="w-swatch sm" style="background:${meta.color}"></span><span><span>${escapeHtml(meta.name)}</span>${teamLabelsHtml(meta.tags, stageSeedOf(division, sport, stageId, r.id), 'watch')}</span></span></td>
                 <td>${r.played}</td><td>${r.won}</td><td>${r.drawn || 0}</td><td>${r.lost}</td>${showPointBreakdown ? '<td>' + (r.pointsFor || 0) + '</td><td>' + (r.pointsAgainst || 0) + '</td><td>' + ((r.pointsFor || 0) - (r.pointsAgainst || 0)) + '</td>' : ''}<td class="pts">${r.points}</td>
               </tr>
             `;
@@ -9605,7 +9717,7 @@
         teamIds: bracketTeamIds(b),
         useTeams: true
       });
-      return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}${b.complete ? ' · Complete' : ''}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.', { showPointBreakdown: true })}</section>`;
+      return `<section class="w-panel"><h3>${escapeHtml(b.name || 'Bracket')}${b.complete ? ' · Complete' : ''}</h3>${watchTableHtml(tournament, sport.id, rows, 'No results in ' + (b.name || 'this bracket') + ' yet.', { showPointBreakdown: true, division: division, stageId: stageId })}</section>`;
     }).join('');
 
     let focus = '';
@@ -9624,7 +9736,7 @@
       focus = `
         <section class="w-follow">
           <div class="w-follow-head">
-            <div><span class="w-swatch" style="background:${meta.color}"></span><div><b>${escapeHtml(meta.name)}</b>${teamTagsHtml(meta.tags, 'watch')}<small>${escapeHtml(stageName)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}</small></div></div>
+            <div><span class="w-swatch" style="background:${meta.color}"></span><div><b>${escapeHtml(meta.name)}</b>${teamLabelsHtml(meta.tags, stageSeedOf(division, sport, stageId, params.teamId), 'watch')}<small>${escapeHtml(stageName)}${bracket ? ' · ' + escapeHtml(bracket.name || 'Bracket') : ''}${stageSeedOf(division, sport, stageId, params.teamId) ? ' · Seed ' + stageSeedOf(division, sport, stageId, params.teamId) : ''}</small></div></div>
             <button type="button" class="w-copy" data-act="clear-team">Close</button>
           </div>
           <div class="w-follow-stats">
@@ -9660,7 +9772,7 @@
           <section class="w-panel">
             <h3>Overall ranking <small>${escapeHtml(stageName)}</small></h3>
             <p class="w-hint">${populatedBrackets.length ? 'Across every group in ' + escapeHtml(stageName) + '.' : 'Every team in ' + escapeHtml(stageName) + '.'} Teams advanced from here are seeded in this order.</p>
-            ${watchTableHtml(tournament, sport.id, rankingRows, 'No ' + stageName + ' matches completed yet.', { showPointBreakdown: true, showGroups: populatedBrackets.length > 0 })}
+            ${watchTableHtml(tournament, sport.id, rankingRows, 'No ' + stageName + ' matches completed yet.', { showPointBreakdown: true, showGroups: populatedBrackets.length > 0, division: division, stageId: stageId })}
           </section>
           ` : ''}
           ${showOverallTable ? `
