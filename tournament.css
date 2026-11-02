@@ -633,6 +633,67 @@ body.t-member-preview .t-admin-switch {
   overflow: hidden;
 }
 .t-modal-content.wide { max-width: 900px; }
+.t-score-modal {
+  position: relative;
+  max-width: 420px;
+  margin: 10vh auto 24px;
+}
+.t-score-modal .t-modal-body { padding: 12px; }
+.t-score-modal-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 2;
+}
+.t-score-card {
+  background: #fff;
+  border: 1px solid var(--t-border);
+  border-radius: var(--t-r-md);
+  overflow: hidden;
+}
+.t-score-card.t-card { border: 1px solid var(--t-border); }
+.t-score-card > .t-card {
+  border: none;
+  border-top: 1px solid var(--t-border);
+  border-radius: 0;
+  box-shadow: none;
+}
+.t-score-card-head {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  padding: 10px 10px 8px;
+}
+.t-score-card-team {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  min-width: 0;
+}
+.t-score-card-team b { font-size: .92rem; color: var(--t-fg); }
+.t-ack-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.t-match-team:not(.right) .t-ack-row { justify-content: flex-start; }
+.t-match-team.right .t-ack-row { justify-content: flex-end; }
+.t-ack-done {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: .7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
 .t-modal-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 16px 22px; border-bottom: 1px solid var(--t-border);

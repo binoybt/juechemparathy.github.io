@@ -106,6 +106,11 @@
  *     status        'scheduled' | 'in_progress' | 'completed'
  *     winner        'A' | 'B' | 'tie' | null
  *     scorerUid / scorerName / scorerEmail — admin-assigned match scorer
+ *     captainAUid / captainAEmail / captainBUid / captainBEmail
+ *                     captain of each side, copied from the team so a captain
+ *                     can acknowledge the score without a users-table read
+ *     ackAUid / ackAName / ackAAt / ackBUid / ackBName / ackBAt
+ *                     captain (or scorer) acknowledgement after the match
  *     scoringConfig snapshot of the stage's scoring rules at match-creation time
  *
  *     Racket sports:  games[]  { category, playersA, playersB, sets[{a,b}], status, winner }
@@ -1218,6 +1223,119 @@
     if (!isTournamentScorer(tournament)) throw new Error('You are no longer assigned as a scorer for this tournament.');
     if (target.status !== 'in_progress') throw new Error('Scoring is available only after an admin starts the match and before it is completed.');
     return target;
+  }
+
+  function teamForMatchSide(tournament, match, side) {
+    const p = participantsOf(match, tournament);
+    const id = side === 'B' ? p.b : p.a;
+    if (!id) return null;
+    const found = findEntryTeam(tournament, match.sport, id);
+    if (found && found.team) return found.team;
+    return (teamsFor(tournament, match.sport) || []).find(function (tm) { return tm && tm.id === id; }) || null;
+  }
+
+  function matchAckOf(match, side) {
+    if (!match) return null;
+    const uid = match['ack' + side + 'Uid'];
+    const at = match['ack' + side + 'At'];
+    if (!uid && !at) return null;
+    return {
+      uid: uid || '',
+      name: match['ack' + side + 'Name'] || '',
+      at: at || ''
+    };
+  }
+
+  function matchSideCaptains(tournament, match) {
+    const a = teamForMatchSide(tournament, match, 'A');
+    const b = teamForMatchSide(tournament, match, 'B');
+    return {
+      captainAUid: (a && a.captainUid) || '',
+      captainAEmail: String((a && a.captainEmail) || '').trim().toLowerCase(),
+      captainBUid: (b && b.captainUid) || '',
+      captainBEmail: String((b && b.captainEmail) || '').trim().toLowerCase()
+    };
+  }
+
+  function matchCaptainPatch(tournament, match) {
+    const caps = matchSideCaptains(tournament, match);
+    const out = {};
+    if (caps.captainAUid) out.captainAUid = caps.captainAUid;
+    if (caps.captainAEmail) out.captainAEmail = caps.captainAEmail;
+    if (caps.captainBUid) out.captainBUid = caps.captainBUid;
+    if (caps.captainBEmail) out.captainBEmail = caps.captainBEmail;
+    return out;
+  }
+
+  function canAckMatchSide(match, tournament, side) {
+    if (!match || (match.status !== 'in_progress' && match.status !== 'completed')) return false;
+    if (matchAckOf(match, side)) return false;
+    if (isAdminUi()) return true;
+    if (canScoreMatch(match)) return true;
+    return isCaptainOf(teamForMatchSide(tournament, match, side));
+  }
+
+  function canUnackMatchSide(match, side) {
+    return !!(isAdminUi() && matchAckOf(match, side));
+  }
+
+  function matchSideAckHtml(match, tournament, side) {
+    const ack = matchAckOf(match, side);
+    if (ack) {
+      const who = ack.name ? ' · ' + escapeHtml(ack.name) : '';
+      return '<span class="t-ack-row">'
+        + '<span class="t-ack-done">Acked' + who + '</span>'
+        + (canUnackMatchSide(match, side)
+          ? '<button type="button" class="t-btn sm" data-act="unack" data-side="' + side + '">Unack</button>'
+          : '')
+        + '</span>';
+    }
+    if (!canAckMatchSide(match, tournament, side)) return '';
+    return '<span class="t-ack-row"><button type="button" class="t-btn success sm" data-act="ack" data-side="' + side + '">Ack</button></span>';
+  }
+
+  function bindMatchAckButtons(root, match, tournament) {
+    if (!root) return;
+    root.querySelectorAll('[data-act="ack"], [data-act="unack"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        setMatchAck(match, tournament, btn.getAttribute('data-side'), btn.getAttribute('data-act') === 'ack');
+      });
+    });
+  }
+
+  async function setMatchAck(match, tournament, side, on) {
+    if (side !== 'A' && side !== 'B') return;
+    const latest = (state.matches || []).find(function (item) { return item.id === match.id; }) || match;
+    try {
+      if (on) {
+        if (!canAckMatchSide(latest, tournament, side)) {
+          return toast('Only this team\'s captain, the assigned scorer, or an admin can acknowledge.', 'error');
+        }
+        const me = state.user || {};
+        const patch = { updatedAt: FieldValue.serverTimestamp() };
+        patch['ack' + side + 'Uid'] = me.uid || '';
+        patch['ack' + side + 'Name'] = me.displayName || me.email || 'Ack';
+        patch['ack' + side + 'At'] = new Date().toISOString();
+        if (isAdminUi()) Object.assign(patch, matchCaptainPatch(tournament, latest));
+        await db.collection('tournament_matches').doc(latest.id).update(patch);
+        toast('Team ' + side + ' acknowledged');
+      } else {
+        if (!canUnackMatchSide(latest, side)) {
+          return toast('Only an admin can remove an acknowledgement.', 'error');
+        }
+        const patch = { updatedAt: FieldValue.serverTimestamp() };
+        patch['ack' + side + 'Uid'] = FieldValue.delete();
+        patch['ack' + side + 'Name'] = FieldValue.delete();
+        patch['ack' + side + 'At'] = FieldValue.delete();
+        await db.collection('tournament_matches').doc(latest.id).update(patch);
+        toast('Acknowledgement removed');
+      }
+      render();
+    } catch (err) {
+      console.error(err);
+      toast('Could not update acknowledgement: ' + (err.message || err.code || 'unknown'), 'error');
+    }
   }
 
   function tournamentOpenToEveryone() {
@@ -5588,6 +5706,7 @@
             <div class="name">${match.categoryId && p.a ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.a + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(aMeta.name) + '</button>' : escapeHtml(aMeta.name)}</div>
             ${aMeta.wards ? '<div class="wards">' + escapeHtml(aMeta.wards) + '</div>' : ''}
             ${teamTagsHtml(aMeta.tags)}
+            ${matchSideAckHtml(match, tournament, 'A')}
           </div>
         </div>
         <div class="t-match-score">${s.label === 'Points'
@@ -5598,6 +5717,7 @@
             <div class="name">${match.categoryId && p.b ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.b + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(bMeta.name) + '</button>' : escapeHtml(bMeta.name)}</div>
             ${bMeta.wards ? '<div class="wards">' + escapeHtml(bMeta.wards) + '</div>' : ''}
             ${teamTagsHtml(bMeta.tags)}
+            ${matchSideAckHtml(match, tournament, 'B')}
           </div>
           <span class="avatar" style="--team-color:${bMeta.color}">${escapeHtml((bMeta.id || bMeta.name || 'B').slice(0, 2).toUpperCase())}</span>
         </div>
@@ -5802,6 +5922,7 @@
       });
       node.appendChild(actions);
     }
+    bindMatchAckButtons(node, match, tournament);
     return node;
   }
 
@@ -5838,7 +5959,7 @@
         }
         toast('Match deleted');
       } else if (act === 'start') {
-        const update = { status: 'in_progress', updatedAt: FieldValue.serverTimestamp() };
+        const update = Object.assign({ status: 'in_progress', updatedAt: FieldValue.serverTimestamp() }, matchCaptainPatch(tournament, match));
         if (sport.kind === 'racket' && (!match.games || !match.games.length)) {
           const bestOf = (getStageScoring(tournament, match.sport, match.stage) || {}).bestOf || 1;
           update.games = racketGamesForMatch(match, tournament, sport).map(function (game) {
@@ -5860,12 +5981,12 @@
       } else if (act === 'complete') {
         const winner = matchWinner(match, tournament);
         if (!winner && !confirm('No clear winner detected. Mark complete anyway?')) return;
-        await updateMatchAndPublicScore(match, tournament, {
+        await updateMatchAndPublicScore(match, tournament, Object.assign({
           status: 'completed',
           winner: winner || null,
           resultType: 'played',
           updatedAt: FieldValue.serverTimestamp()
-        });
+        }, isAdminUi() ? matchCaptainPatch(tournament, match) : {}));
         toast('Match completed');
       } else if (act === 'draw') {
         await updateMatchAndPublicScore(match, tournament, {
@@ -6680,7 +6801,7 @@
     if (sport.kind === 'racket') data.games = [];
     else if (sport.kind === 'volleyball') data.sets = [];
     else if (sport.kind === 'basketball') data.quarters = [];
-    return data;
+    return Object.assign(data, matchCaptainPatch(tournament, data));
   }
 
   async function syncPublishedMatches(tournament, sport, entries, scope) {
@@ -6724,6 +6845,7 @@
           patch.playerA = e.a;
           patch.playerB = e.b;
         }
+        Object.assign(patch, matchCaptainPatch(tournament, Object.assign({}, found, patch)));
         // Don't clobber scores on matches that have already started.
         if (found.status === 'scheduled') {
           await col.doc(found.id).update(patch);
@@ -7516,15 +7638,9 @@
     if (modal) return modal;
     modal = el('div', { class: 't-modal', id: 'tScorerModal' });
     modal.innerHTML = `
-      <div class="t-modal-content wide">
-        <div class="t-modal-head">
-          <h3 id="tScorerTitle">Score entry</h3>
-          <button class="t-modal-close" onclick="document.getElementById('tScorerModal').classList.remove('open');">×</button>
-        </div>
+      <div class="t-modal-content t-score-modal">
+        <button class="t-modal-close t-score-modal-close" type="button" onclick="document.getElementById('tScorerModal').classList.remove('open');">×</button>
         <div class="t-modal-body" id="tScorerBody"></div>
-        <div class="t-modal-foot">
-          <button class="t-btn" onclick="document.getElementById('tScorerModal').classList.remove('open');">Close</button>
-        </div>
       </div>
     `;
     document.body.appendChild(modal);
@@ -7616,51 +7732,58 @@
     }
   }
 
-  function createScoreAutosaver(statusNode) {
+  function createScoreAutosaver() {
     let chain = Promise.resolve();
-    let revision = 0;
     return function (write) {
-      const current = ++revision;
-      statusNode.textContent = 'Saving…';
-      statusNode.classList.remove('is-error');
-      chain = chain
-        .catch(function () {})
-        .then(write)
-        .then(function () {
-          if (current === revision) statusNode.textContent = 'Saved automatically';
-        })
-        .catch(function (err) {
-          console.error(err);
-          if (current === revision) {
-            statusNode.textContent = 'Save failed — change the score to retry';
-            statusNode.classList.add('is-error');
-          }
-        });
+      chain = chain.catch(function () {}).then(write).catch(function (err) {
+        console.error(err);
+        toast('Could not save score: ' + (err.message || err.code || 'unknown'), 'error');
+      });
     };
+  }
+
+  function scoreCardHeaderEl(match, tournament) {
+    const p = participantsOf(match, tournament);
+    const a = teamMeta(tournament, match.sport, p.a);
+    const b = teamMeta(tournament, match.sport, p.b);
+    const head = el('div', { class: 't-score-card-head' });
+    head.innerHTML = `
+      <div class="t-score-card-team">
+        <span class="t-team-swatch" style="--team-color:${a.color}"></span>
+        <b>${escapeHtml(a.name)}</b>
+        ${matchSideAckHtml(match, tournament, 'A')}
+      </div>
+      <div class="t-score-card-team">
+        <span class="t-team-swatch" style="--team-color:${b.color}"></span>
+        <b>${escapeHtml(b.name)}</b>
+        ${matchSideAckHtml(match, tournament, 'B')}
+      </div>
+    `;
+    bindMatchAckButtons(head, match, tournament);
+    return head;
   }
 
   function openScorer(match, tournament) {
     assertCanScoreMatch(match);
     const sport = getSportConfig(tournament, match.sport);
     const modal = getScorerModal();
-    const p = participantsOf(match, tournament);
-    modal.querySelector('#tScorerTitle').textContent =
-      (sport.emoji || '🏅') + ' ' + displayName(tournament, match.sport, p.a) + ' vs ' + displayName(tournament, match.sport, p.b) + ' — ' + stageLabelOf(sport, match.stage);
     const body = modal.querySelector('#tScorerBody');
-    body.innerHTML = scorerParticipantsHtml(match, tournament);
+    body.innerHTML = '';
     if (sport.kind === 'racket') body.appendChild(buildRacketScorer(match, tournament, sport));
     else if (sport.kind === 'volleyball') body.appendChild(buildVolleyballScorer(match, tournament, sport));
     else if (sport.kind === 'basketball') body.appendChild(buildBasketballScorer(match, tournament, sport));
     modal.classList.add('open');
   }
 
-  function scoreMatchStatePatch(match, winner) {
+  function scoreMatchStatePatch(match, winner, tournament) {
     const keepCompleted = isAdminUi() && match.status === 'completed';
-    return {
+    const patch = {
       winner: winner || null,
       status: keepCompleted ? 'completed' : 'in_progress',
       resultType: keepCompleted && winner ? 'played' : null
     };
+    if (isAdminUi() && tournament) Object.assign(patch, matchCaptainPatch(tournament, match));
+    return patch;
   }
 
   function buildRacketScorer(match, tournament, sport) {
@@ -7675,13 +7798,9 @@
     const canChangeStructure = isAdminUi();
     const games = racketGamesForMatch(match, tournament, sport);
 
-    const wrap = el('div');
-    const banner = el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
-      `Best of ${cfg.bestOf || 1} sets, target ${cfg.target || 21} (cap ${cfg.cap || 25}). Use +/- or type values directly.`);
-    wrap.appendChild(banner);
-    const saveStatus = el('div', { class: 't-score-autosave' }, 'Scores save automatically');
-    wrap.appendChild(saveStatus);
-    const autoSave = createScoreAutosaver(saveStatus);
+    const wrap = el('div', { class: 't-score-card' });
+    wrap.appendChild(scoreCardHeaderEl(match, tournament));
+    const autoSave = createScoreAutosaver();
 
     function queueGamesSave() {
       games.forEach(function (game) {
@@ -7702,7 +7821,7 @@
       const patch = Object.assign({
         games: fresh,
         updatedAt: FieldValue.serverTimestamp()
-      }, scoreMatchStatePatch(match, overall));
+      }, scoreMatchStatePatch(match, overall, tournament));
       autoSave(function () {
         assertCanScoreMatch(match);
         return updateMatchAndPublicScore(match, tournament, patch);
@@ -7827,13 +7946,12 @@
     const canChangeStructure = isAdminUi();
     const sets = (match.sets && match.sets.length) ? match.sets.map(function (s) { return Object.assign({}, s); }) : [{ a: 0, b: 0 }];
 
-    const wrap = el('div');
-    wrap.appendChild(el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
-      `Best of ${bestOf} sets. Normal set to ${cfg.target || 21} (cap ${cfg.cap || 25}), deciding set to ${cfg.decidingTarget || 15} (cap ${cfg.decidingCap || 20}).`));
-    const saveStatus = el('div', { class: 't-score-autosave' }, 'Scores save automatically');
-    wrap.appendChild(saveStatus);
-    const autoSave = createScoreAutosaver(saveStatus);
-    const setsBox = el('div'); wrap.appendChild(setsBox);
+    const wrap = el('div', { class: 't-score-card t-card' });
+    wrap.appendChild(scoreCardHeaderEl(match, tournament));
+    const body = el('div', { class: 't-card-body' });
+    wrap.appendChild(body);
+    const autoSave = createScoreAutosaver();
+    const setsBox = el('div'); body.appendChild(setsBox);
     let controls = null;
     if (canChangeStructure) {
       controls = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
@@ -7841,7 +7959,7 @@
         <button class="t-btn sm" data-act="add-set">+ Add set</button>
         <button class="t-btn sm danger" data-act="remove-set">− Remove last set</button>
       `;
-      wrap.appendChild(controls);
+      body.appendChild(controls);
     }
 
     function queueScoreSave() {
@@ -7850,7 +7968,7 @@
       const patch = Object.assign({
         sets: snapshot,
         updatedAt: FieldValue.serverTimestamp()
-      }, scoreMatchStatePatch(match, winner));
+      }, scoreMatchStatePatch(match, winner, tournament));
       autoSave(function () {
         assertCanScoreMatch(match);
         return updateMatchAndPublicScore(match, tournament, patch);
@@ -7931,15 +8049,14 @@
     const canChangeStructure = isAdminUi();
     const quarters = (match.quarters && match.quarters.length) ? match.quarters.map(function (q) { return Object.assign({}, q); }) : [{ a: 0, b: 0 }];
 
-    const wrap = el('div');
-    wrap.appendChild(el('div', { style: { marginBottom: '10px', color: 'var(--t-muted)', fontSize: '.88rem' } },
-      totalQuarters + ' quarters × ' + (cfg.quarterMinutes || 7) + ' min. Use +/− or type values directly.'));
-    const saveStatus = el('div', { class: 't-score-autosave' }, 'Scores save automatically');
-    wrap.appendChild(saveStatus);
-    const autoSave = createScoreAutosaver(saveStatus);
-    const totalsBox = el('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', margin: '12px 0 18px', fontFamily: 'Barlow Condensed, sans-serif' } });
-    wrap.appendChild(totalsBox);
-    const quartersBox = el('div'); wrap.appendChild(quartersBox);
+    const wrap = el('div', { class: 't-score-card t-card' });
+    wrap.appendChild(scoreCardHeaderEl(match, tournament));
+    const body = el('div', { class: 't-card-body' });
+    wrap.appendChild(body);
+    const autoSave = createScoreAutosaver();
+    const totalsBox = el('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', margin: '8px 0 12px', fontFamily: 'Barlow Condensed, sans-serif' } });
+    body.appendChild(totalsBox);
+    const quartersBox = el('div'); body.appendChild(quartersBox);
     let controls = null;
     if (canChangeStructure) {
       controls = el('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '10px' } });
@@ -7947,7 +8064,7 @@
         <button class="t-btn sm" data-act="add-q">+ Add quarter</button>
         <button class="t-btn sm danger" data-act="remove-q">− Remove last quarter</button>
       `;
-      wrap.appendChild(controls);
+      body.appendChild(controls);
     }
 
     function queueScoreSave() {
@@ -7956,7 +8073,7 @@
       const patch = Object.assign({
         quarters: snapshot,
         updatedAt: FieldValue.serverTimestamp()
-      }, scoreMatchStatePatch(match, winner));
+      }, scoreMatchStatePatch(match, winner, tournament));
       autoSave(function () {
         assertCanScoreMatch(match);
         return updateMatchAndPublicScore(match, tournament, patch);
