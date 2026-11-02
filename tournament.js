@@ -4513,6 +4513,14 @@
     });
   }
 
+  function listedAdmins() {
+    return (state.adminDirectory || []).slice().sort(sortScorers);
+  }
+
+  function listedRoleScorers() {
+    return (state.scorerDirectory || []).slice().sort(sortScorers);
+  }
+
   function availableMatchScorers(tournament) {
     const byUid = {};
     function put(scorer) {
@@ -4525,10 +4533,13 @@
         admin: !!(scorer.admin || prev.admin)
       };
     }
-    (state.scorerDirectory || []).forEach(put);
-    (state.adminDirectory || []).forEach(put);
+    listedAdmins().forEach(put);
+    listedRoleScorers().forEach(put);
     ((tournament && tournament.scorers) || []).forEach(put);
-    return Object.keys(byUid).map(function (uid) { return byUid[uid]; }).sort(sortScorers);
+    return Object.keys(byUid).map(function (uid) { return byUid[uid]; }).sort(function (a, b) {
+      if (!!a.admin !== !!b.admin) return a.admin ? -1 : 1;
+      return sortScorers(a, b);
+    });
   }
 
   async function ensureTournamentHasScorer(tournament, scorer) {
@@ -4557,18 +4568,24 @@
     body.innerHTML = '<p class="t-mode-note" style="margin-top:0;">Loading registered scorers…</p>';
     modal.classList.add('open');
     try {
-      const candidates = await loadScorerDirectory(true);
+      await loadScorerDirectory(true);
+      const admins = listedAdmins();
+      const roleScorers = listedRoleScorers();
+      const candidates = admins.concat(roleScorers);
       const selected = {};
       (tournament.scorers || []).forEach(function (scorer) { if (scorer && scorer.uid) selected[scorer.uid] = true; });
+      function personRow(scorer, locked) {
+        return `<label class="t-scorer-person">
+          <input type="checkbox" data-scorer-uid="${escapeHtml(scorer.uid)}" ${locked || selected[scorer.uid] ? 'checked' : ''} ${locked ? 'disabled' : ''} />
+          <span><b>${escapeHtml(scorer.name || scorer.email || (locked ? 'Admin' : 'Registered scorer'))}${locked ? ' (Admin)' : ''}</b>${scorer.email ? '<small>' + escapeHtml(scorer.email) + '</small>' : ''}</span>
+        </label>`;
+      }
       body.innerHTML = `
-        <p class="t-mode-note" style="margin-top:0;">These members have the scorer role. Admins can score any game without being added here. Save scorers here, or pick one on a match — that also adds them to this tournament.</p>
+        <p class="t-mode-note" style="margin-top:0;">Admins are always scorers and must be assignable on a game. Members with the scorer role can be added here, or picked on a match — that also adds them to this tournament.</p>
         <div class="t-scorer-list">
-          ${candidates.length ? candidates.map(function (scorer) {
-            return `<label class="t-scorer-person">
-              <input type="checkbox" data-scorer-uid="${escapeHtml(scorer.uid)}" ${selected[scorer.uid] ? 'checked' : ''} />
-              <span><b>${escapeHtml(scorer.name || scorer.email || 'Registered scorer')}</b>${scorer.email ? '<small>' + escapeHtml(scorer.email) + '</small>' : ''}</span>
-            </label>`;
-          }).join('') : '<div class="t-empty" style="padding:18px;">No members have the scorer role. Grant it from Members &amp; Admins first.</div>'}
+          ${admins.map(function (scorer) { return personRow(scorer, true); }).join('')}
+          ${roleScorers.map(function (scorer) { return personRow(scorer, false); }).join('')}
+          ${candidates.length ? '' : '<div class="t-empty" style="padding:18px;">No admins or scorers yet. Grant a role from Members &amp; Admins first.</div>'}
         </div>
         <div class="t-modal-foot" style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px;">
           <button type="button" class="t-btn" data-close-scorers>Cancel</button>
@@ -4582,13 +4599,16 @@
           save.disabled = true;
           save.textContent = 'Saving…';
           const chosen = {};
+          admins.forEach(function (scorer) { chosen[scorer.uid] = true; });
           body.querySelectorAll('[data-scorer-uid]:checked').forEach(function (input) {
             chosen[input.getAttribute('data-scorer-uid')] = true;
           });
           const next = candidates.filter(function (scorer) { return chosen[scorer.uid]; });
           const removed = {};
           (tournament.scorers || []).forEach(function (scorer) {
-            if (scorer && scorer.uid && !chosen[scorer.uid]) removed[scorer.uid] = true;
+            if (scorer && scorer.uid && !chosen[scorer.uid] && !admins.some(function (admin) { return admin.uid === scorer.uid; })) {
+              removed[scorer.uid] = true;
+            }
           });
           try {
             const batch = db.batch();
@@ -5850,7 +5870,7 @@
     });
     const emptyHint = scorers.length
       ? ''
-      : '<span class="t-mode-note" style="margin:0;">Admins can score any game. Add a scorer role on Members &amp; Admins to assign someone else.</span>';
+      : '<span class="t-mode-note" style="margin:0;">No scorers loaded yet. Admins should appear here so they can be assigned to the game.</span>';
     return `<label class="t-match-scorer"><span>Match scorer</span><select class="t-select sm" data-scorer-select>${options.join('')}</select><button type="button" class="t-btn sm" data-act="tournament-scorers">Choose tournament scorers</button>${emptyHint}</label>`;
   }
 
