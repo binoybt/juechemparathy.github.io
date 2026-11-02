@@ -67,6 +67,49 @@ service cloud.firestore {
         && publicBoardIsOpen(publicId);
     }
 
+    function authEmail() {
+      return request.auth != null && request.auth.token.email is string
+        ? request.auth.token.email.lower()
+        : '';
+    }
+
+    function isMatchCaptainA() {
+      return isSignedIn() && (
+        resource.data.get('captainAUid', '') == request.auth.uid
+        || (authEmail() != '' && resource.data.get('captainAEmail', '') == authEmail())
+      );
+    }
+
+    function isMatchCaptainB() {
+      return isSignedIn() && (
+        resource.data.get('captainBUid', '') == request.auth.uid
+        || (authEmail() != '' && resource.data.get('captainBEmail', '') == authEmail())
+      );
+    }
+
+    function captainAckA() {
+      return isMatchCaptainA()
+        && resource.data.status in ['in_progress', 'completed']
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['ackAUid', 'ackAName', 'ackAAt', 'updatedAt'])
+        && resource.data.get('ackAUid', '') == ''
+        && request.resource.data.ackAUid == request.auth.uid;
+    }
+
+    function captainAckB() {
+      return isMatchCaptainB()
+        && resource.data.status in ['in_progress', 'completed']
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['ackBUid', 'ackBName', 'ackBAt', 'updatedAt'])
+        && resource.data.get('ackBUid', '') == ''
+        && request.resource.data.ackBUid == request.auth.uid;
+    }
+
+    function keptExistingAck(field) {
+      return resource.data.get(field, '') == ''
+        || request.resource.data.get(field, '') != '';
+    }
+
     match /users/{uid} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.auth.uid == uid;
@@ -161,7 +204,7 @@ service cloud.firestore {
     match /tournament_matches/{docId} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();
-      allow update: if isAdmin() || (
+      allow update: if isAdmin() || captainAckA() || captainAckB() || (
         isScorer()
         && resource.data.scorerUid == request.auth.uid
         && resource.data.status == 'in_progress'
@@ -173,8 +216,16 @@ service cloud.firestore {
           'status',
           'winner',
           'resultType',
-          'updatedAt'
+          'updatedAt',
+          'ackAUid',
+          'ackAName',
+          'ackAAt',
+          'ackBUid',
+          'ackBName',
+          'ackBAt'
         ])
+        && keptExistingAck('ackAUid')
+        && keptExistingAck('ackBUid')
         && request.resource.data.status in ['in_progress', 'completed']
         && (
           (
