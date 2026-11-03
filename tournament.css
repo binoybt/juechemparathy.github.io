@@ -1331,6 +1331,25 @@ body.t-member-preview .t-admin-switch {
 .t-stage-skip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .t-standings-table td.t-advance-cell { text-align: right; white-space: nowrap; }
 .t-advance-btn { white-space: nowrap; }
+.t-rank-cell { display: flex; align-items: center; gap: 6px; }
+.t-rank-edit { display: inline-flex; flex-direction: column; gap: 2px; }
+.t-rank-btn { min-width: 28px; padding: 0 6px; line-height: 1.2; }
+.t-winner-edit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  align-items: end;
+}
+.t-winner-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--t-muted);
+  min-width: 180px;
+}
+.t-winner-edit .t-select { width: 100%; }
 .t-stage-standing-title {
   font-family: 'Barlow Condensed', sans-serif;
   font-size: 1.05rem;
@@ -1466,4 +1485,6 @@ body.t-member-preview .t-admin-switch {
   .t-division-row, .t-focus-grid { grid-template-columns: 1fr; }
   .t-points-grid { grid-template-columns: 1fr 1fr; }
   .t-podium-top { grid-template-columns: 1fr; }
+  .t-winner-edit label { min-width: 100%; }
+  .t-rank-cell { flex-wrap: wrap; }
 }
