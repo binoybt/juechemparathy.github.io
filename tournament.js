@@ -549,13 +549,11 @@
   }
 
   function placesOverride(division) {
-    const known = {};
-    ((division && division.teams) || []).forEach(function (tm) { if (tm && tm.id) known[tm.id] = true; });
     const winnerId = String((division && division.winnerId) || '').trim();
     const runnerId = String((division && division.runnerId) || '').trim();
     const ids = [];
-    if (winnerId && known[winnerId]) ids.push(winnerId);
-    if (runnerId && known[runnerId] && runnerId !== winnerId) ids.push(runnerId);
+    if (winnerId) ids.push(winnerId);
+    if (runnerId && runnerId !== winnerId) ids.push(runnerId);
     return ids;
   }
 
@@ -4210,8 +4208,17 @@
     return main.length ? main[main.length - 1] : null;
   }
 
+  function sportMatchPool(tournament, sportId) {
+    if (tournament && Array.isArray(tournament.matches)) {
+      return tournament.matches.filter(function (match) {
+        return !sportId || match.sport === sportId;
+      });
+    }
+    return visibleMatchesFor(tournament, sportId);
+  }
+
   function matchesForPlacement(tournament, sport, division, stageId) {
-    return visibleMatchesFor(tournament, sport.id).filter(function (match) {
+    return sportMatchPool(tournament, sport.id).filter(function (match) {
       if ((match.stage || 'league') !== stageId) return false;
       if (division) return match.categoryId === division.id;
       return !match.categoryId && !match.bracketId;
@@ -4319,10 +4326,36 @@
     return null;
   }
 
+  function categoryPlaceIdsFromDecider(tournament, sport, division) {
+    const champ = championshipStage(sport, division);
+    if (!champ) return null;
+    const completed = matchesForPlacement(tournament, sport, division, champ.id)
+      .filter(function (match) { return match.status === 'completed'; });
+    if (!isKnockoutDecider(completed, tournament)) return null;
+    const decided = firstDecisive(completed, tournament);
+    if (!decided) return null;
+    const ids = [];
+    pushPlace(ids, decided.winnerId);
+    pushPlace(ids, decided.loserId);
+    return ids.length ? ids : null;
+  }
+
+  function categoryRankingPlaceIds(tournament, sport, division) {
+    const champ = championshipStage(sport, division);
+    if (!champ || !division) return [];
+    const edited = rankingIdsForStage(division, champ.id);
+    if (edited.length) return edited;
+    const brackets = bracketsInStage(division, champ.id).filter(bracketHasTeams);
+    if (!brackets.length || !brackets.every(bracketIsComplete)) return [];
+    return computeStageRanking(tournament, sportMatchPool(tournament, sport.id), sport, division, champ.id)
+      .filter(function (row) { return (row.played || 0) > 0; })
+      .map(function (row) { return row.id; });
+  }
+
   function categoryPlaceIdsFromResults(tournament, sport, division) {
     const champ = championshipStage(sport, division);
     if (!champ || !stageIsFinished(tournament, sport, division, champ.id)) return null;
-    const visible = visibleMatchesFor(tournament, sport.id);
+    const visible = sportMatchPool(tournament, sport.id);
     const matches = matchesForPlacement(tournament, sport, division, champ.id);
     const placed = [];
     if (isKnockoutDecider(matches, tournament)) {
@@ -4380,12 +4413,16 @@
   }
 
   function categoryPlaceIds(tournament, sport, division) {
-    const auto = categoryPlaceIdsFromResults(tournament, sport, division);
     const override = placesOverride(division);
-    if (!override.length) return auto;
+    const auto = categoryPlaceIdsFromResults(tournament, sport, division);
+    const decider = categoryPlaceIdsFromDecider(tournament, sport, division);
+    const ranked = categoryRankingPlaceIds(tournament, sport, division);
+    if (!override.length && !auto && !decider && !ranked.length) return null;
     const placed = [];
     override.forEach(function (id) { pushPlace(placed, id); });
     if (auto) auto.forEach(function (id) { pushPlace(placed, id); });
+    else if (decider) decider.forEach(function (id) { pushPlace(placed, id); });
+    ranked.forEach(function (id) { pushPlace(placed, id); });
     return placed.length ? placed : null;
   }
 
@@ -4495,11 +4532,11 @@
     return '<b class="t-podium-players">' + names.map(escapeHtml).join(', ') + '</b>';
   }
 
-  function podiumBlockHtml(tournament, sport, block) {
+  function podiumBlockHtml(tournament, sport, block, opts) {
     const ids = block.ids || [];
     const champion = ids[0] ? teamMeta(tournament, sport.id, ids[0]) : null;
     const runner = ids[1] ? teamMeta(tournament, sport.id, ids[1]) : null;
-    const rest = ids.slice(2).map(function (id, index) {
+    const rest = (opts && opts.topOnly) ? '' : ids.slice(2).map(function (id, index) {
       const meta = teamMeta(tournament, sport.id, id);
       const rank = index + 3;
       return `
@@ -4550,7 +4587,7 @@
     }
     if (section) section.style.display = '';
     root.innerHTML = '<div class="t-podium-grid">' + blocks.map(function (block) {
-      return podiumBlockHtml(tournament, sport, block);
+      return podiumBlockHtml(tournament, sport, block, { topOnly: true });
     }).join('') + '</div>';
   }
 
@@ -9493,7 +9530,7 @@
         sport.id,
         (sport.stageList || []).map(function (st) { return st && st.id; }),
         (sport.divisions || []).map(function (d) {
-          return [d && d.id, skippedStageIds(d), completedStageIds(d)];
+          return [d && d.id, skippedStageIds(d), completedStageIds(d), d && d.winnerId, d && d.runnerId, rankingRecord(d)];
         })
       ];
     });
