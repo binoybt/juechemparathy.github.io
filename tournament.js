@@ -47,7 +47,8 @@
  *         completedStages[]  stage ids the admin marked complete. Every match
  *                     in that stage must already be completed. The next stage
  *                     cannot start (advance, brackets, schedule, start match)
- *                     until the previous stage is marked complete.
+ *                     until the previous stage is marked complete, or every
+ *                     bracket in that stage is marked complete with no open matches.
  *         teams[]     { id, name, players[], tags[], here, hereAt, hereBy }
  *                     tags are optional short labels (seed, home side, group)
  *                     here is a registration check-in flag (team has arrived)
@@ -62,7 +63,9 @@
  *           a team is in at most one bracket per stage
  *           schedule  { draft, published } — fixtures for this bracket only
  *           complete  admin marked the bracket finished. Generate round-robin
- *                     skips it until the bracket is reopened
+ *                     skips it until the bracket is reopened. Completing every
+ *                     bracket in a stage (with every match finished) also
+ *                     completes that stage for Advance.
  *       tablePoints   { win, draw, walkover, noResult }
  *                     missing on older sports → win 1, draw 0, walkover 1, no result 0
  *                     new sports default to win 2, draw 1, walkover 2, no result 0
@@ -655,9 +658,31 @@
     return matches.length > 0 && !unfinishedStageMatches(tournament, sport, division, stageId).length;
   }
 
+  function allBracketsCompleteInStage(division, stageId) {
+    const brackets = bracketsInStage(division, stageId);
+    return brackets.length > 0 && brackets.every(bracketIsComplete);
+  }
+
+  // Stage toolbar "Mark stage complete" OR every bracket in the stage marked
+  // complete with every match finished. Bracket complete alone is not enough
+  // if other brackets or matches in the stage are still open.
+  function stageIsClosed(tournament, sport, division, stageId) {
+    if (stageIsMarkedComplete(division, stageId)) return true;
+    if (!allBracketsCompleteInStage(division, stageId)) return false;
+    if (!tournament) return true;
+    return stageMatchesAreComplete(tournament, sport, division, stageId);
+  }
+
+  function writeStageCompleteFlag(div, stageId, complete) {
+    const ids = completedStageIds(div).filter(function (id) { return id !== stageId; });
+    if (complete) ids.push(stageId);
+    if (ids.length) div.completedStages = ids;
+    else delete div.completedStages;
+  }
+
   function stageAdvanceBlockedReason(tournament, sport, division, fromStageId) {
     if (!sport || !division || !fromStageId) return 'Choose the stage you are advancing from.';
-    if (stageIsMarkedComplete(division, fromStageId)) return '';
+    if (stageIsClosed(tournament, sport, division, fromStageId)) return '';
     const label = stageLabelOf(sport, fromStageId);
     const matches = stageMatchList(tournament, sport, division, fromStageId);
     const leftover = unfinishedStageMatches(tournament, sport, division, fromStageId);
@@ -666,28 +691,34 @@
     }
     if (leftover.length) {
       return leftover.length + ' match' + (leftover.length === 1 ? '' : 'es') + ' in ' + label
-        + ' still open. Finish every match and mark the stage complete before advancing.';
+        + ' still open. Finish every match, then click Mark stage complete before advancing.';
     }
-    return 'Mark ' + label + ' complete before advancing teams to the next stage.';
+    return 'Click “Mark stage complete” for ' + label
+      + ' before advancing. Completing a bracket does not unlock the next stage.';
   }
 
-  function previousStageUnlocked(sport, division, stageId) {
+  function previousStageUnlocked(sport, division, stageId, tournament) {
     const prev = previousStageBefore(sport, division, stageId);
     if (!prev) return true;
-    return stageIsMarkedComplete(division, prev.id);
+    return stageIsClosed(tournament, sport, division, prev.id);
   }
 
-  function stageStartBlockedReason(sport, division, stageId) {
+  function stageStartBlockedReason(sport, division, stageId, tournament) {
     const prev = previousStageBefore(sport, division, stageId);
     if (!prev) return '';
-    if (stageIsMarkedComplete(division, prev.id)) return '';
+    if (stageIsClosed(tournament, sport, division, prev.id)) return '';
     return 'Mark ' + (prev.name || 'the previous stage') + ' complete before starting '
       + stageLabelOf(sport, stageId) + '. Every match in that stage must be finished first.';
   }
 
-  function scheduleStageBlockedReason(sport, scope) {
+  function scheduleStageBlockedReason(sport, scope, tournament) {
     if (!sport || !scope || !scope.categoryId || !scope.bracket) return '';
-    return stageStartBlockedReason(sport, findDivision(sport, scope.categoryId), bracketStageId(scope.bracket));
+    return stageStartBlockedReason(
+      sport,
+      findDivision(sport, scope.categoryId),
+      bracketStageId(scope.bracket),
+      tournament
+    );
   }
 
   function copyDivisionResultFields(src, out) {
@@ -5448,7 +5479,7 @@
     const division = sport ? findDivision(sport, divisionId) : null;
     if (!division) return;
     const stage = stageId || 'league';
-    const blocked = stageStartBlockedReason(sport, division, stage);
+    const blocked = stageStartBlockedReason(sport, division, stage, t);
     if (blocked) return toast(blocked, 'error');
     const pool = teamsForStage(division, sport, stage);
     if (pool.length < 2) {
@@ -5579,7 +5610,7 @@
     const target = findBracket(division, bracketId);
     if (!division || !target) return;
     const stage = bracketStageId(target);
-    const blocked = stageStartBlockedReason(sport, division, stage);
+    const blocked = stageStartBlockedReason(sport, division, stage, t);
     if (on && blocked) return toast(blocked, 'error');
     if (on && teamsForStage(division, sport, stage).every(function (tm) { return tm.id !== teamId; })) {
       return toast('Pull in a team that belongs in ' + stageLabelOf(sport, stage) + '. Later stages only list teams advanced into them.', 'error');
@@ -5744,6 +5775,9 @@
         }
         applyAdvanceSeeds(div, ranked);
         div.advanced = record;
+        if (turningOn && stageIsClosed(t, sport, div, fromStageId)) {
+          writeStageCompleteFlag(div, fromStageId, true);
+        }
       });
       toast(turningOn
         ? (team.name || 'Team') + ' advanced to ' + next.name + (seedNo > 0 ? ' as Seed ' + seedNo : '')
@@ -5983,14 +6017,14 @@
     const stageMatchCount = stageMatchList(tournament, sport, division, stageId).length;
     const leftoverCount = unfinishedStageMatches(tournament, sport, division, stageId).length;
     const stageMarked = stageIsMarkedComplete(division, stageId);
-    const stageLocked = !previousStageUnlocked(sport, division, stageId);
+    const stageLocked = !previousStageUnlocked(sport, division, stageId, tournament);
     const canMarkStage = stageMatchCount > 0 && leftoverCount === 0;
 
     const stageTabs = `<div class="t-tabs t-subtabs">${stages.map(function (st) {
       const active = st.id === stageId;
       const count = bracketsInStage(division, st.id).length;
       const done = stageIsMarkedComplete(division, st.id);
-      const locked = !previousStageUnlocked(sport, division, st.id);
+      const locked = !previousStageUnlocked(sport, division, st.id, tournament);
       return `<button type="button" class="t-tab ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" style="--sport-color:${sport.color || 'var(--t-primary)'}" data-act="select-stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${done ? ' · Done' : ''}${locked ? ' · Locked' : ''}<span class="count">${count}</span></button>`;
     }).join('')}</div>`;
     const stageToolbar = isAdminUi()
@@ -6013,7 +6047,7 @@
           const skipped = stageIsSkipped(division, st.id);
           return `<button type="button" class="t-btn sm ${skipped ? '' : 'primary'}" data-act="toggle-skip-stage" data-stage="${escapeHtml(st.id)}" data-skipped="${skipped ? '1' : '0'}">${escapeHtml(st.name || st.id)}${skipped ? ' · skipped' : ''}</button>`;
         }).join('')}</div>
-        <p class="t-mode-note">Highlighted stages are included. Stage order is set on Manage tournament. Skip a stage to leave it out of this category. Mark a stage complete after every match in it is finished. Advance and the next stage stay locked until then.</p>
+        <p class="t-mode-note">Highlighted stages are included. Stage order is set on Manage tournament. Skip a stage to leave it out of this category. After every match is finished, click <b>Mark stage complete</b> (or mark every bracket in this stage complete). Completing one bracket is not enough. Advance and the next stage stay locked until the stage is complete.</p>
       </div>
     ` : '';
 
@@ -6208,7 +6242,7 @@
             ${nextStage
               ? (stageMarked
                 ? ' Advance uses this order to seed ' + escapeHtml(nextStage.name) + ' — rank 2 and rank 6 become Seed 1 and Seed 2.'
-                : ' Mark this stage complete after every match is finished. Then Advance can seed ' + escapeHtml(nextStage.name) + '.')
+                : ' Click “Mark stage complete” after every match is finished (the bracket Complete badge is not enough). Then Advance can seed ' + escapeHtml(nextStage.name) + '.')
               : ''}</p>
           <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rankingRows, division, '', emptyStage, stageId)}</div></div>
         </section>
@@ -6873,7 +6907,7 @@
       } else {
         if (match.status === 'scheduled') {
           const startBlock = match.categoryId
-            ? stageStartBlockedReason(getSportConfig(tournament, match.sport), findDivision(getSportConfig(tournament, match.sport), match.categoryId), match.stage || 'league')
+            ? stageStartBlockedReason(getSportConfig(tournament, match.sport), findDivision(getSportConfig(tournament, match.sport), match.categoryId), match.stage || 'league', tournament)
             : '';
           btns.push(startBlock
             ? '<button class="t-btn sm" disabled title="' + escapeHtml(startBlock) + '">▶ Start after previous stage</button>'
@@ -6954,7 +6988,7 @@
         toast('Match deleted');
       } else if (act === 'start') {
         if (match.categoryId) {
-          const blocked = stageStartBlockedReason(sport, findDivision(sport, match.categoryId), match.stage || 'league');
+          const blocked = stageStartBlockedReason(sport, findDivision(sport, match.categoryId), match.stage || 'league', tournament);
           if (blocked) return toast(blocked, 'error');
         }
         const update = Object.assign({ status: 'in_progress', updatedAt: FieldValue.serverTimestamp() }, matchCaptainPatch(tournament, match));
@@ -7526,7 +7560,7 @@
     if (!t || !sport) return;
     const scope = scheduleScope(categoryId, bracketId, sport);
     if (scope.categoryId && !scope.bracket) return toast('Create a bracket and open it before adding matches', 'error');
-    const blocked = scheduleStageBlockedReason(sport, scope);
+    const blocked = scheduleStageBlockedReason(sport, scope, t);
     if (blocked) return toast(blocked, 'error');
     const entries = readWorkingEntries(t, sport, scope).slice();
     const teams = scope.categoryId ? teamsInBracket(sport, scope.categoryId, scope.bracketId) : teamsFor(t, sport);
@@ -7562,7 +7596,7 @@
     const division = findDivision(sport, categoryId);
     if (!division) return toast('Open a category before generating a round-robin', 'error');
     const stage = stageId || 'league';
-    const blocked = stageStartBlockedReason(sport, division, stage);
+    const blocked = stageStartBlockedReason(sport, division, stage, t);
     if (blocked) return toast(blocked, 'error');
     const stageName = stageLabelOf(sport, stage);
     const all = bracketsInStage(division, stage);
@@ -7630,12 +7664,22 @@
       }
       if (!confirm('Mark "' + (bracket.name || 'this bracket') + '" complete? It stays on the page. Generate round-robin will skip it until you reopen it.')) return;
     }
+    const label = stageLabelOf(sport, stage);
+    let stageClosed = false;
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
         const target = (div.brackets || []).find(function (b) { return b.id === bracketId; });
         if (target) target.complete = next;
+        if (next && target && stageIsClosed(t, sport, div, stage)) {
+          writeStageCompleteFlag(div, stage, true);
+          stageClosed = true;
+        }
       });
-      toast(next ? 'Bracket marked complete' : 'Bracket reopened', 'success');
+      toast(next
+        ? (stageClosed
+          ? 'Bracket marked complete. ' + label + ' is complete — you can Advance teams.'
+          : 'Bracket marked complete. Click “Mark stage complete” on ' + label + ' to Advance teams.')
+        : 'Bracket reopened', 'success');
       render();
     } catch (_) { /* toasted */ }
   }
@@ -7663,10 +7707,7 @@
     }
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
-        const ids = completedStageIds(div).filter(function (id) { return id !== stageId; });
-        if (next) ids.push(stageId);
-        if (ids.length) div.completedStages = ids;
-        else delete div.completedStages;
+        writeStageCompleteFlag(div, stageId, next);
         if (next) {
           (div.brackets || []).forEach(function (b) {
             if (bracketStageId(b) === stageId) b.complete = true;
@@ -7684,7 +7725,7 @@
     if (!t || !sport) return;
     const scope = scheduleScope(categoryId, bracketId, sport);
     if (scope.categoryId && !scope.bracket) return toast('Choose a bracket before generating a round-robin', 'error');
-    const blocked = scheduleStageBlockedReason(sport, scope);
+    const blocked = scheduleStageBlockedReason(sport, scope, t);
     if (blocked) return toast(blocked, 'error');
     if (scope.bracket && bracketIsComplete(scope.bracket)) {
       return toast((scope.bracket.name || 'This bracket') + ' is marked complete. Reopen it before generating a round-robin.', 'error');
@@ -7886,7 +7927,7 @@
     if (!t || !sport) return;
     const scope = scheduleScope(categoryId, bracketId, sport);
     if (scope.categoryId && !scope.bracket) return toast('Open a bracket before publishing its schedule', 'error');
-    const blocked = scheduleStageBlockedReason(sport, scope);
+    const blocked = scheduleStageBlockedReason(sport, scope, t);
     if (blocked) return toast(blocked, 'error');
     const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport, scope));
     if (!entries.length) return toast('Add at least one match before publishing', 'error');
