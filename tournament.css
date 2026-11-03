@@ -1266,6 +1266,19 @@ body.t-member-preview .t-admin-switch {
 }
 .t-check-line.is-disabled { opacity: .65; }
 .t-check-line em { margin-left: auto; font-style: normal; color: var(--t-muted); font-size: .75rem; }
+.t-check-main { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.t-sched-tag-input { width: 5.5rem; flex: 0 0 auto; }
+.t-sched-tag {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #334155;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
 .t-roster-card.is-link, .t-standings-table tr.is-link { cursor: pointer; }
 .t-standings-table tr.is-link:hover td { background: #f8fafc; }
 .t-player-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
