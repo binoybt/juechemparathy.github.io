@@ -8,7 +8,8 @@
  *   /tournament.html?t=<id>&sport=<id>&cat=<id>&bracket=<id>&team=<id>&st=<stageId>
  *                                         → category, bracket, stage, or team detail
  *   /tournament.html?t=<id>&manage=1          → edit tournament config (admin)
- *   /watch.html?s=<token>                     → public spectator board (no sign-in)
+ *   /watch.html?s=<token>                     → spectator board, one-shot read (share this)
+ *   /watch.html?s=<token>&live=1              → spectator board with live listeners (venue screens)
  *                                             one unique token per tournament; disabled
  *                                             links do not read public score data
  *   /watch.html?s=<token>&cat=<id>&panel=teams → category Teams tab (name, players, team tags)
@@ -91,7 +92,9 @@
  *                           (existing docs without the field stay unpublished)
  *     scorers[]     { uid, name, email } — scorer-role members assigned by admin
  *     scorerUids[]  string — mirrored UIDs used by Firestore authorization
- *     spectatorToken one unique public-board key; reused when the link is re-enabled
+ *     spectatorToken one unique public-board key; reused when the link is re-enabled.
+ *                     Share URL is watch.html?s=token (one-shot read). Live display
+ *                     URL is watch.html?s=token&live=1 (onSnapshot auto-refresh).
  *     publicBoard   bool — spectator link is on only while this is true
  *     clonedFrom    string — source tournament id when created via Clone
  *     createdAt / updatedAt / createdBy
@@ -9420,12 +9423,16 @@
     return file === 'watch.html';
   }
 
-  function spectatorUrl(tournament) {
+  function spectatorUrl(tournament, opts) {
     const token = typeof tournament === 'string'
       ? (state.tournaments.find(function (item) { return item.id === tournament; }) || {}).spectatorToken
       : publicBoardDocId(tournament);
     if (!token) return '';
-    return new URL('watch.html?s=' + encodeURIComponent(token), location.href).href;
+    const url = new URL('watch.html', location.href);
+    url.search = '';
+    url.searchParams.set('s', token);
+    if (opts && opts.live) url.searchParams.set('live', '1');
+    return url.href;
   }
 
   function sanitizePublicTeam(team) {
@@ -9654,39 +9661,54 @@
     publicSyncKeys[t.id] = key;
   }
 
-  function copySpectatorLink(tournament) {
-    const url = spectatorUrl(tournament);
+  function copySpectatorLink(tournament, opts) {
+    const url = spectatorUrl(tournament, opts);
     if (!url) return toast('Enable the spectator link first', 'error');
+    const label = (opts && opts.live) ? 'Live display link copied' : 'Share link copied';
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(function () {
-        toast('Spectator link copied');
+        toast(label);
       }).catch(function () {
-        prompt('Copy this spectator link', url);
+        prompt(label.replace(' copied', ''), url);
       });
       return;
     }
-    prompt('Copy this spectator link', url);
+    prompt(label.replace(' copied', ''), url);
   }
 
   function bindSpectatorLinkModal(t) {
     const { modal, body } = getOrCreateModal('tShareBoard', 'Spectator link', { wide: false });
-    const url = spectatorUrl(t);
+    const shareUrl = spectatorUrl(t);
+    const liveUrl = spectatorUrl(t, { live: true });
     body.innerHTML = `
-      <p class="t-mode-note" style="margin-top:0;">This tournament has one spectator link. Disable it to expire the link and stop all public reads. Enable it again later to turn the same link back on.</p>
+      <p class="t-mode-note" style="margin-top:0;">This tournament has one spectator token and two links. Share the refresh link with everyone. Use the live display link on venue screens. Disable either to expire both and stop public reads. Enable again later to turn the same links back on.</p>
       <div class="t-form-field">
-        <label>Spectator link</label>
-        <input type="text" class="t-input" id="tSpectatorUrl" readonly value="${escapeHtml(url)}" />
+        <label>Share link — people refresh for the latest scores</label>
+        <input type="text" class="t-input" id="tSpectatorShareUrl" readonly value="${escapeHtml(shareUrl)}" />
+      </div>
+      <div class="t-modal-foot" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <a class="t-btn" href="${escapeHtml(shareUrl)}" target="_blank" rel="noopener">Open</a>
+        <button type="button" class="t-btn primary" data-copy-share>Copy share link</button>
+      </div>
+      <div class="t-form-field" style="margin-top:16px;">
+        <label>Live display — auto-refresh for venue screens</label>
+        <input type="text" class="t-input" id="tSpectatorLiveUrl" readonly value="${escapeHtml(liveUrl)}" />
+      </div>
+      <div class="t-modal-foot" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:8px;">
+        <a class="t-btn" href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener">Open live</a>
+        <button type="button" class="t-btn primary" data-copy-live>Copy live link</button>
       </div>
       <div class="t-modal-foot" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:14px;">
         <button type="button" class="t-btn danger" data-stop-share>Disable spectator link</button>
-        <a class="t-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open</a>
-        <button type="button" class="t-btn primary" data-copy-share>Copy link</button>
       </div>
     `;
     modal.classList.add('open');
-    const input = body.querySelector('#tSpectatorUrl');
-    if (input) input.addEventListener('focus', function () { input.select(); });
+    const shareInput = body.querySelector('#tSpectatorShareUrl');
+    const liveInput = body.querySelector('#tSpectatorLiveUrl');
+    if (shareInput) shareInput.addEventListener('focus', function () { shareInput.select(); });
+    if (liveInput) liveInput.addEventListener('focus', function () { liveInput.select(); });
     body.querySelector('[data-copy-share]').addEventListener('click', function () { copySpectatorLink(t); });
+    body.querySelector('[data-copy-live]').addEventListener('click', function () { copySpectatorLink(t, { live: true }); });
     body.querySelector('[data-stop-share]').addEventListener('click', function () { stopLiveBoard(t.id); });
   }
 
@@ -9793,6 +9815,8 @@
     expired: false,
     error: null,
     preview: false,
+    autoRefresh: false,
+    reload: null,
     completedOpen: {},
     completedPage: {}
   };
@@ -10032,19 +10056,25 @@
       panel: params.get('panel') === 'rules' || params.get('panel') === 'teams' ? params.get('panel') : 'summary',
       stageId: params.get('st') || '',
       categoryId: params.get('cat') || '',
-      teamId: params.get('team') || ''
+      teamId: params.get('team') || '',
+      live: params.get('live') === '1'
     };
   }
 
   function setWatchParams(next) {
     const params = new URLSearchParams(location.search);
     const token = params.get('s');
+    const liveOn = Object.prototype.hasOwnProperty.call(next, 'live')
+      ? !!next.live
+      : params.get('live') === '1';
     ['sport', 'panel', 'st', 'cat', 'team'].forEach(function (key) {
       if (next[key]) params.set(key, next[key]);
       else params.delete(key);
     });
     if (token) params.set('s', token);
     else params.delete('s');
+    if (liveOn) params.set('live', '1');
+    else params.delete('live');
     params.delete('t');
     const qs = params.toString();
     history.replaceState(null, '', 'watch.html' + (qs ? '?' + qs : ''));
@@ -10528,20 +10558,30 @@
       </section>`;
   }
 
+  function bindWatchToolbar(scope) {
+    const shell = scope || document.body;
+    shell.querySelectorAll('[data-act="reload-watch"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (typeof watch.reload === 'function') watch.reload();
+      });
+    });
+  }
+
   function renderPublicWatch() {
     const top = document.getElementById('wTop');
     const root = document.getElementById('wContent');
     if (!top || !root) return;
     if (!watch.ready && !watch.preview) {
       document.title = 'Live scores';
-      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>Live</span></div>';
-      root.innerHTML = '<div class="w-status">Loading the live board…</div>';
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + (watch.autoRefresh ? 'Live' : 'Scores') + '</span></div>';
+      root.innerHTML = '<div class="w-status">Loading scores…</div>';
       return;
     }
     if (watch.missing || watch.closed || watch.expired || watch.error || !watch.board) {
       document.title = watch.expired ? 'Link expired' : 'Live scores';
       const params = watchParams();
-      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + (watch.expired ? 'Expired' : 'Live') + '</span></div>';
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + (watch.expired ? 'Expired' : (watch.autoRefresh ? 'Live' : 'Scores')) + '</span></div>'
+        + (watch.preview || watch.autoRefresh || !params.token ? '' : '<button type="button" class="w-copy" data-act="reload-watch">Refresh</button>');
       const heading = watch.expired
         ? 'This spectator link has expired'
         : 'Scores stay here';
@@ -10558,6 +10598,7 @@
           ${params.tournamentId ? '<a class="w-quiet" href="tournament.html?t=' + encodeURIComponent(params.tournamentId) + '">Organizer sign-in</a>' : ''}
         </section>
       `;
+      bindWatchToolbar();
       return;
     }
 
@@ -10646,9 +10687,11 @@
       }).length;
       return `<button type="button" class="w-pill ${on ? 'is-on' : ''}" style="--accent:${s.color || '#3b82f6'}" data-act="sport" data-sport="${escapeHtml(s.id)}">${escapeHtml((s.emoji || '') + ' ' + (s.label || s.id))}${n ? '<i>' + n + '</i>' : ''}</button>`;
     }).join('');
+    const modeNote = watch.preview ? ' · Sample' : (watch.autoRefresh ? ' · Live' : ' · Refresh for latest');
     top.innerHTML = `
-      <div class="w-brand"><img src="icons/smash-logo.png" alt="" /><div><b>${escapeHtml(tournament.name || 'Live')}</b><small>${escapeHtml(watchUpdatedLabel(tournament))}${watch.preview ? ' · Sample' : ''}</small></div></div>
+      <div class="w-brand"><img src="icons/smash-logo.png" alt="" /><div><b>${escapeHtml(tournament.name || 'Live')}</b><small>${escapeHtml(watchUpdatedLabel(tournament))}${modeNote}</small></div></div>
       <div class="w-pills">${sportPills}</div>
+      ${watch.preview || watch.autoRefresh ? '' : '<button type="button" class="w-copy" data-act="reload-watch">Refresh</button>'}
       <button type="button" class="w-copy" data-act="copy">Copy link</button>
     `;
 
@@ -10837,6 +10880,7 @@
       btn.addEventListener('click', function () { goStage(stageId); });
     });
     bindWatchCompletedControls(root);
+    bindWatchToolbar(shell);
     shell.querySelectorAll('[data-act="copy"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         const url = location.href;
@@ -10854,18 +10898,57 @@
     const params = new URLSearchParams(location.search);
     if (params.get('preview') === '1') {
       watch.preview = true;
+      watch.autoRefresh = false;
       watch.ready = true;
       watch.board = sampleWatchBoard();
       renderPublicWatch();
       return;
     }
     const token = params.get('s');
+    const autoRefresh = params.get('live') === '1';
+    watch.autoRefresh = autoRefresh;
+    watch.reload = null;
     if (!token) {
       watch.ready = true;
       watch.expired = true;
       watch.closed = true;
       watch.board = null;
       renderPublicWatch();
+      return;
+    }
+    function failWatch() {
+      watch.ready = true;
+      watch.parentBoard = null;
+      watch.board = null;
+      watch.liveMatches = [];
+      watch.error = null;
+      watch.closed = true;
+      watch.expired = true;
+      renderPublicWatch();
+    }
+    async function loadWatchOnce() {
+      watch.ready = false;
+      watch.renderKey = '';
+      renderPublicWatch();
+      try {
+        const snap = await db.collection('tournament_public').doc(token).get();
+        watch.ready = true;
+        applyWatchParent(snap);
+        if (publicWatchIsOpen(watch.parentBoard)) {
+          const matchesSnap = await db.collection('tournament_public').doc(token).collection('matches').get();
+          watch.liveMatches = liveMatchesFromSnapshot(matchesSnap);
+        } else {
+          watch.liveMatches = [];
+        }
+        publishWatchBoard();
+      } catch (err) {
+        console.error('[watch]', err);
+        failWatch();
+      }
+    }
+    watch.reload = loadWatchOnce;
+    if (!autoRefresh) {
+      loadWatchOnce();
       return;
     }
     watch.ready = false;
@@ -10897,14 +10980,8 @@
       publishWatchBoard();
     }, function (err) {
       console.error('[watch]', err);
-      watch.ready = true;
-      watch.parentBoard = null;
-      watch.board = null;
-      watch.error = null;
-      watch.closed = true;
-      watch.expired = true;
       stopWatchMatches();
-      renderPublicWatch();
+      failWatch();
     });
   }
 
