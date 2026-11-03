@@ -44,6 +44,10 @@
  *                     across groups for that stage. Empty/missing uses points.
  *         winnerId    admin-set champion for the category (optional)
  *         runnerId    admin-set runner-up for the category (optional)
+ *         completedStages[]  stage ids the admin marked complete. Every match
+ *                     in that stage must already be completed. The next stage
+ *                     cannot start (advance, brackets, schedule, start match)
+ *                     until the previous stage is marked complete.
  *         teams[]     { id, name, players[], tags[], here, hereAt, hereBy }
  *                     tags are optional short labels (seed, home side, group)
  *                     here is a registration check-in flag (team has arrived)
@@ -545,14 +549,70 @@
   }
 
   function placesOverride(division) {
-    const known = {};
-    ((division && division.teams) || []).forEach(function (tm) { if (tm && tm.id) known[tm.id] = true; });
     const winnerId = String((division && division.winnerId) || '').trim();
     const runnerId = String((division && division.runnerId) || '').trim();
     const ids = [];
-    if (winnerId && known[winnerId]) ids.push(winnerId);
-    if (runnerId && known[runnerId] && runnerId !== winnerId) ids.push(runnerId);
+    if (winnerId) ids.push(winnerId);
+    if (runnerId && runnerId !== winnerId) ids.push(runnerId);
     return ids;
+  }
+
+  function completedStageIds(division) {
+    const raw = (division && division.completedStages) || [];
+    const out = [];
+    (Array.isArray(raw) ? raw : []).forEach(function (id) {
+      id = String(id || '').trim();
+      if (!id || out.indexOf(id) !== -1) return;
+      out.push(id);
+    });
+    return out;
+  }
+
+  function stageIsMarkedComplete(division, stageId) {
+    return completedStageIds(division).indexOf(stageId) !== -1;
+  }
+
+  function stageMatchList(tournament, sport, division, stageId) {
+    const sportId = sport && sport.id;
+    const categoryId = division && division.id;
+    const stage = stageId || 'league';
+    return (state.matches || []).filter(function (match) {
+      if (!match || match.sport !== sportId) return false;
+      if ((match.stage || 'league') !== stage) return false;
+      if (categoryId) return match.categoryId === categoryId;
+      return !match.categoryId;
+    });
+  }
+
+  function unfinishedStageMatches(tournament, sport, division, stageId, bracketId) {
+    return stageMatchList(tournament, sport, division, stageId).filter(function (match) {
+      if (bracketId && match.bracketId !== bracketId) return false;
+      return match.status !== 'completed';
+    });
+  }
+
+  function stageMatchesAreComplete(tournament, sport, division, stageId) {
+    const matches = stageMatchList(tournament, sport, division, stageId);
+    return matches.length > 0 && !unfinishedStageMatches(tournament, sport, division, stageId).length;
+  }
+
+  function previousStageUnlocked(sport, division, stageId) {
+    const prev = previousStageBefore(sport, division, stageId);
+    if (!prev) return true;
+    return stageIsMarkedComplete(division, prev.id);
+  }
+
+  function stageStartBlockedReason(sport, division, stageId) {
+    const prev = previousStageBefore(sport, division, stageId);
+    if (!prev) return '';
+    if (stageIsMarkedComplete(division, prev.id)) return '';
+    return 'Mark ' + (prev.name || 'the previous stage') + ' complete before starting '
+      + stageLabelOf(sport, stageId) + '. Every match in that stage must be finished first.';
+  }
+
+  function scheduleStageBlockedReason(sport, scope) {
+    if (!sport || !scope || !scope.categoryId || !scope.bracket) return '';
+    return stageStartBlockedReason(sport, findDivision(sport, scope.categoryId), bracketStageId(scope.bracket));
   }
 
   function copyDivisionResultFields(src, out) {
@@ -562,6 +622,8 @@
     const runnerId = String((src && src.runnerId) || '').trim();
     if (winnerId) out.winnerId = winnerId;
     if (runnerId) out.runnerId = runnerId;
+    const completed = completedStageIds(src);
+    if (completed.length) out.completedStages = completed;
     return out;
   }
 
@@ -4146,8 +4208,17 @@
     return main.length ? main[main.length - 1] : null;
   }
 
+  function sportMatchPool(tournament, sportId) {
+    if (tournament && Array.isArray(tournament.matches)) {
+      return tournament.matches.filter(function (match) {
+        return !sportId || match.sport === sportId;
+      });
+    }
+    return visibleMatchesFor(tournament, sportId);
+  }
+
   function matchesForPlacement(tournament, sport, division, stageId) {
-    return visibleMatchesFor(tournament, sport.id).filter(function (match) {
+    return sportMatchPool(tournament, sport.id).filter(function (match) {
       if ((match.stage || 'league') !== stageId) return false;
       if (division) return match.categoryId === division.id;
       return !match.categoryId && !match.bracketId;
@@ -4255,10 +4326,36 @@
     return null;
   }
 
+  function categoryPlaceIdsFromDecider(tournament, sport, division) {
+    const champ = championshipStage(sport, division);
+    if (!champ) return null;
+    const completed = matchesForPlacement(tournament, sport, division, champ.id)
+      .filter(function (match) { return match.status === 'completed'; });
+    if (!isKnockoutDecider(completed, tournament)) return null;
+    const decided = firstDecisive(completed, tournament);
+    if (!decided) return null;
+    const ids = [];
+    pushPlace(ids, decided.winnerId);
+    pushPlace(ids, decided.loserId);
+    return ids.length ? ids : null;
+  }
+
+  function categoryRankingPlaceIds(tournament, sport, division) {
+    const champ = championshipStage(sport, division);
+    if (!champ || !division) return [];
+    const edited = rankingIdsForStage(division, champ.id);
+    if (edited.length) return edited;
+    const brackets = bracketsInStage(division, champ.id).filter(bracketHasTeams);
+    if (!brackets.length || !brackets.every(bracketIsComplete)) return [];
+    return computeStageRanking(tournament, sportMatchPool(tournament, sport.id), sport, division, champ.id)
+      .filter(function (row) { return (row.played || 0) > 0; })
+      .map(function (row) { return row.id; });
+  }
+
   function categoryPlaceIdsFromResults(tournament, sport, division) {
     const champ = championshipStage(sport, division);
     if (!champ || !stageIsFinished(tournament, sport, division, champ.id)) return null;
-    const visible = visibleMatchesFor(tournament, sport.id);
+    const visible = sportMatchPool(tournament, sport.id);
     const matches = matchesForPlacement(tournament, sport, division, champ.id);
     const placed = [];
     if (isKnockoutDecider(matches, tournament)) {
@@ -4316,12 +4413,16 @@
   }
 
   function categoryPlaceIds(tournament, sport, division) {
-    const auto = categoryPlaceIdsFromResults(tournament, sport, division);
     const override = placesOverride(division);
-    if (!override.length) return auto;
+    const auto = categoryPlaceIdsFromResults(tournament, sport, division);
+    const decider = categoryPlaceIdsFromDecider(tournament, sport, division);
+    const ranked = categoryRankingPlaceIds(tournament, sport, division);
+    if (!override.length && !auto && !decider && !ranked.length) return null;
     const placed = [];
     override.forEach(function (id) { pushPlace(placed, id); });
     if (auto) auto.forEach(function (id) { pushPlace(placed, id); });
+    else if (decider) decider.forEach(function (id) { pushPlace(placed, id); });
+    ranked.forEach(function (id) { pushPlace(placed, id); });
     return placed.length ? placed : null;
   }
 
@@ -4431,11 +4532,11 @@
     return '<b class="t-podium-players">' + names.map(escapeHtml).join(', ') + '</b>';
   }
 
-  function podiumBlockHtml(tournament, sport, block) {
+  function podiumBlockHtml(tournament, sport, block, opts) {
     const ids = block.ids || [];
     const champion = ids[0] ? teamMeta(tournament, sport.id, ids[0]) : null;
     const runner = ids[1] ? teamMeta(tournament, sport.id, ids[1]) : null;
-    const rest = ids.slice(2).map(function (id, index) {
+    const rest = (opts && opts.topOnly) ? '' : ids.slice(2).map(function (id, index) {
       const meta = teamMeta(tournament, sport.id, id);
       const rank = index + 3;
       return `
@@ -4486,7 +4587,7 @@
     }
     if (section) section.style.display = '';
     root.innerHTML = '<div class="t-podium-grid">' + blocks.map(function (block) {
-      return podiumBlockHtml(tournament, sport, block);
+      return podiumBlockHtml(tournament, sport, block, { topOnly: true });
     }).join('') + '</div>';
   }
 
@@ -5199,6 +5300,8 @@
     const division = sport ? findDivision(sport, divisionId) : null;
     if (!division) return;
     const stage = stageId || 'league';
+    const blocked = stageStartBlockedReason(sport, division, stage);
+    if (blocked) return toast(blocked, 'error');
     const pool = teamsForStage(division, sport, stage);
     if (pool.length < 2) {
       return toast(isEntryStage(sport, division, stage)
@@ -5327,8 +5430,11 @@
     const division = sport ? findDivision(sport, divisionId) : null;
     const target = findBracket(division, bracketId);
     if (!division || !target) return;
-    if (on && teamsForStage(division, sport, bracketStageId(target)).every(function (tm) { return tm.id !== teamId; })) {
-      return toast('Pull in a team that belongs in ' + stageLabelOf(sport, bracketStageId(target)) + '. Later stages only list teams advanced into them.', 'error');
+    const stage = bracketStageId(target);
+    const blocked = stageStartBlockedReason(sport, division, stage);
+    if (on && blocked) return toast(blocked, 'error');
+    if (on && teamsForStage(division, sport, stage).every(function (tm) { return tm.id !== teamId; })) {
+      return toast('Pull in a team that belongs in ' + stageLabelOf(sport, stage) + '. Later stages only list teams advanced into them.', 'error');
     }
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
@@ -5426,6 +5532,9 @@
     if (!division) return;
     const next = nextStageAfter(sport, division, fromStageId);
     if (!next) return toast('This category has no later stage. Stage order is set on Manage tournament.', 'error');
+    if (on && !stageIsMarkedComplete(division, fromStageId)) {
+      return toast('Mark ' + stageLabelOf(sport, fromStageId) + ' complete first. Every match in that stage must be finished.', 'error');
+    }
     const team = (division.teams || []).find(function (tm) { return tm.id === teamId; });
     if (!team) return;
     const turningOn = !!on;
@@ -5517,6 +5626,7 @@
     const showPointBreakdown = !!bracketId || showGroups || rows.some(function (r) { return r && r.rank; });
     const sport = getSportConfig(tournament, sportId);
     const next = (isAdminUi() && division && fromStageId) ? nextStageAfter(sport, division, fromStageId) : null;
+    const canAdvance = !!(next && stageIsMarkedComplete(division, fromStageId));
     const canRank = !!(isAdminUi() && division && fromStageId && !bracketId && rows.length > 1);
     return `
       <div class="t-standings-scroll"><table class="t-standings-table">
@@ -5528,9 +5638,11 @@
             const place = r.rank || (i + 1);
             const meta = teamMeta(tournament, sportId, r.id);
             const already = next ? advancedTeamIds(division, next.id).indexOf(r.id) !== -1 : false;
-            const advanceCell = next
-              ? '<td class="t-advance-cell"><button type="button" class="t-btn sm t-advance-btn" data-act="advance-team" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '" data-on="' + (already ? '0' : '1') + '">' + escapeHtml(already ? ('In ' + next.name) : ('Advance to ' + next.name)) + '</button></td>'
-              : '';
+            const advanceCell = !next
+              ? ''
+              : (canAdvance || already
+                ? '<td class="t-advance-cell"><button type="button" class="t-btn sm t-advance-btn" data-act="advance-team" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '" data-on="' + (already ? '0' : '1') + '">' + escapeHtml(already ? ('In ' + next.name) : ('Advance to ' + next.name)) + '</button></td>'
+                : '<td class="t-advance-cell"><button type="button" class="t-btn sm" disabled title="Mark this stage complete after every match is finished">Advance after stage complete</button></td>');
             const rankControls = canRank
               ? '<div class="t-rank-edit"><button type="button" class="t-btn sm t-rank-btn" data-act="rank-up" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '"' + (i === 0 ? ' disabled' : '') + '>↑</button><button type="button" class="t-btn sm t-rank-btn" data-act="rank-down" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '"' + (i === rows.length - 1 ? ' disabled' : '') + '>↓</button></div>'
               : '';
@@ -5690,18 +5802,31 @@
     const focusTeam = parsed.teamId ? teams.find(function (tm) { return tm.id === parsed.teamId; }) : null;
     const showBoard = isAdminUi() || tournamentHasStarted(tournament);
     const emptyStage = 'No ' + stageName + ' matches completed yet.';
+    const stageMatchCount = stageMatchList(tournament, sport, division, stageId).length;
+    const leftoverCount = unfinishedStageMatches(tournament, sport, division, stageId).length;
+    const stageMarked = stageIsMarkedComplete(division, stageId);
+    const stageLocked = !previousStageUnlocked(sport, division, stageId);
+    const canMarkStage = stageMatchCount > 0 && leftoverCount === 0;
 
     const stageTabs = `<div class="t-tabs t-subtabs">${stages.map(function (st) {
       const active = st.id === stageId;
       const count = bracketsInStage(division, st.id).length;
-      return `<button type="button" class="t-tab ${active ? 'active' : ''}" style="--sport-color:${sport.color || 'var(--t-primary)'}" data-act="select-stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}<span class="count">${count}</span></button>`;
+      const done = stageIsMarkedComplete(division, st.id);
+      const locked = !previousStageUnlocked(sport, division, st.id);
+      return `<button type="button" class="t-tab ${active ? 'active' : ''} ${locked ? 'is-locked' : ''}" style="--sport-color:${sport.color || 'var(--t-primary)'}" data-act="select-stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${done ? ' · Done' : ''}${locked ? ' · Locked' : ''}<span class="count">${count}</span></button>`;
     }).join('')}</div>`;
     const stageToolbar = isAdminUi()
       ? `<div class="t-stage-toolbar">
-          <div class="t-stage-toolbar-label"><b>${escapeHtml(stageName)}</b> · ${brackets.length} bracket${brackets.length === 1 ? '' : 's'} in this category</div>
-          <button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>
-          <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ${escapeHtml(stageName)}</button>
-        </div>`
+          <div class="t-stage-toolbar-label"><b>${escapeHtml(stageName)}</b> · ${brackets.length} bracket${brackets.length === 1 ? '' : 's'} in this category${stageMarked ? ' · complete' : ''}</div>
+          ${stageLocked ? '' : '<button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>'}
+          ${stageLocked ? '' : '<button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ' + escapeHtml(stageName) + '</button>'}
+          ${stageMarked
+            ? '<button type="button" class="t-btn sm" data-act="toggle-stage-complete" data-on="0">Reopen stage</button>'
+            : '<button type="button" class="t-btn sm' + (canMarkStage ? ' primary' : '') + '" data-act="toggle-stage-complete" data-on="1"' + (canMarkStage ? '' : ' disabled title="Finish every match in this stage first"') + '>Mark stage complete</button>'}
+        </div>
+        ${stageLocked ? '<p class="t-mode-note">This stage is locked until ' + escapeHtml(prevStage ? prevStage.name : 'the previous stage') + ' is marked complete. Finish every match there first.</p>' : ''}
+        ${!stageMarked && leftoverCount ? '<p class="t-mode-note">' + leftoverCount + ' match' + (leftoverCount === 1 ? '' : 'es') + ' in ' + escapeHtml(stageName) + ' still open. Finish them before marking this stage complete.</p>' : ''}
+        ${!stageMarked && !leftoverCount && !stageMatchCount && !stageLocked ? '<p class="t-mode-note">Complete every match in ' + escapeHtml(stageName) + ' before marking this stage complete. The next stage stays locked until then.</p>' : ''}`
       : '';
     const stageSkip = isAdminUi() ? `
       <div class="t-stage-skip">
@@ -5710,7 +5835,7 @@
           const skipped = stageIsSkipped(division, st.id);
           return `<button type="button" class="t-btn sm ${skipped ? '' : 'primary'}" data-act="toggle-skip-stage" data-stage="${escapeHtml(st.id)}" data-skipped="${skipped ? '1' : '0'}">${escapeHtml(st.name || st.id)}${skipped ? ' · skipped' : ''}</button>`;
         }).join('')}</div>
-        <p class="t-mode-note">Highlighted stages are included. Stage order is set on Manage tournament. Skip a stage to leave it out of this category. Advance on a points table or the overall ranking sends a team to the next stage that is still included, seeded from that overall ranking (rank 2 and rank 6 become Seed 1 and Seed 2).</p>
+        <p class="t-mode-note">Highlighted stages are included. Stage order is set on Manage tournament. Skip a stage to leave it out of this category. Mark a stage complete after every match in it is finished. Advance and the next stage stay locked until then.</p>
       </div>
     ` : '';
 
@@ -5765,7 +5890,7 @@
         const elsewhere = !!(owner && owner.id !== b.id);
         return `
           <label class="t-check-line">
-            <input type="checkbox" data-bracket-team data-bracket="${escapeHtml(b.id)}" data-team="${escapeHtml(tm.id)}" ${checked ? 'checked' : ''} ${isAdminUi() ? '' : 'disabled'} />
+            <input type="checkbox" data-bracket-team data-bracket="${escapeHtml(b.id)}" data-team="${escapeHtml(tm.id)}" ${checked ? 'checked' : ''} ${isAdminUi() && !stageLocked ? '' : 'disabled'} />
             <span>${escapeHtml(tm.name || tm.id)}${teamHereSuffix(tm)}</span>
             ${teamIsHere(tm) ? '<span class="t-badge here">Here</span>' : '<span class="t-badge not-here">Not here</span>'}
             ${elsewhere ? '<em>In ' + escapeHtml(owner.name || 'another bracket') + ' — check to pull in</em>' : ''}
@@ -5781,7 +5906,7 @@
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="move-bracket" data-bracket="${escapeHtml(b.id)}" data-dir="1" ${index === brackets.length - 1 ? 'disabled' : ''}>↓</button>` : ''}
             <button type="button" class="t-btn sm ${selected ? 'primary' : ''}" data-act="select-bracket" data-bracket="${escapeHtml(b.id)}">${selected ? 'Viewing schedule' : 'Schedule'}</button>
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="toggle-complete" data-bracket="${escapeHtml(b.id)}">${bracketIsComplete(b) ? 'Reopen' : 'Mark complete'}</button>` : ''}
-            ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="add-bracket-after" data-bracket="${escapeHtml(b.id)}">Add below</button>` : ''}
+            ${isAdminUi() && !stageLocked ? `<button type="button" class="t-btn sm" data-act="add-bracket-after" data-bracket="${escapeHtml(b.id)}">Add below</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn danger sm" data-act="delete-bracket" data-bracket="${escapeHtml(b.id)}">Remove</button>` : ''}
           </div>
           <div class="t-bracket-points">
@@ -5818,7 +5943,7 @@
     }
     const rankingRows = showBoard ? computeStageRanking(tournament, state.matches, sport, division, stageId) : [];
     const populatedGroups = brackets.filter(bracketHasTeams);
-    const stageComplete = populatedGroups.length > 0 && populatedGroups.every(bracketIsComplete);
+    const stageComplete = stageMarked;
 
     const scheduleBlock = brackets.length ? `
       <section class="t-section" id="tScheduleSection">
@@ -5836,7 +5961,9 @@
         <div class="t-card"><div class="t-card-body t-mode-note" style="margin:0;">
           ${entryStage
             ? 'Once the teams are in, create a bracket and pull teams into it. The schedule for those teams lives in that bracket.'
-            : 'Create a bracket from the teams advanced into ' + escapeHtml(stageName) + '. The schedule for those teams lives in that bracket.'}
+            : (stageLocked
+              ? escapeHtml(prevStage ? prevStage.name : 'The previous stage') + ' must be marked complete before you can start ' + escapeHtml(stageName) + '.'
+              : 'Create a bracket from the teams advanced into ' + escapeHtml(stageName) + '. The schedule for those teams lives in that bracket.')}
         </div></div>
       </section>
     `;
@@ -5855,19 +5982,25 @@
             : 'Teams in ' + escapeHtml(stageName) + ' <small>' + stageTeams.length + ' advanced' + (prevStage ? ' from ' + escapeHtml(prevStage.name) : '') + ' · seeded by overall ranking · ' + hereCount + ' here</small>'}</h2>
           ${entryStage ? `<button type="button" class="t-btn sm primary" data-act="add-team">➕ Add team</button>` : ''}
         </div>
-        ${entryStage ? '<p class="t-mode-note">Mark <b>Here</b> when a team checks in at registration. Use that flag when you schedule games for teams that have arrived.</p>' : '<p class="t-mode-note">These are the teams advanced into ' + escapeHtml(stageName) + ', ordered and tagged as Seed 1, Seed 2, … from the previous stage\'s overall ranking. Create brackets from this list.</p>'}
-        <div class="t-rosters-grid">${teamCards || '<div class="t-empty">' + (entryStage ? 'No teams yet. Add a team with its name and player names.' : 'No teams advanced into ' + escapeHtml(stageName) + ' yet. Use Advance on the previous stage\'s overall ranking.') + '</div>'}</div>
+        ${entryStage ? '<p class="t-mode-note">Mark <b>Here</b> when a team checks in at registration. Use that flag when you schedule games for teams that have arrived.</p>' : '<p class="t-mode-note">' + (stageLocked
+          ? escapeHtml(prevStage ? prevStage.name : 'The previous stage') + ' must be marked complete before teams can be advanced into ' + escapeHtml(stageName) + '.'
+          : 'These are the teams advanced into ' + escapeHtml(stageName) + ', ordered and tagged as Seed 1, Seed 2, … from the previous stage\'s overall ranking. Create brackets from this list.') + '</p>'}
+        <div class="t-rosters-grid">${teamCards || '<div class="t-empty">' + (entryStage ? 'No teams yet. Add a team with its name and player names.' : (stageLocked
+          ? 'Locked until ' + escapeHtml(prevStage ? prevStage.name : 'the previous stage') + ' is marked complete.'
+          : 'No teams advanced into ' + escapeHtml(stageName) + ' yet. Mark the previous stage complete, then use Advance on its overall ranking.')) + '</div>'}</div>
       </section>
       <section class="t-section">
         <div class="t-section-header">
           <h2 class="t-section-title">Brackets <small>${escapeHtml(stageName)} — pull teams in, then schedule inside the bracket</small></h2>
-          ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>` : ''}
-          ${isAdminUi() ? `<button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ${escapeHtml(stageName)}</button>` : ''}
+          ${isAdminUi() && !stageLocked ? `<button type="button" class="t-btn sm" data-act="round-robin">↺ Generate round-robin</button>` : ''}
+          ${isAdminUi() && !stageLocked ? `<button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ${escapeHtml(stageName)}</button>` : ''}
         </div>
-        <p class="t-mode-note">${entryStage
-          ? 'A team can sit in one bracket of ' + escapeHtml(stageName) + '. Advance teams from the overall ranking into ' + escapeHtml(nextStage ? nextStage.name : 'the next stage') + ', which seeds them in that rank order. Generate round-robin asks which bracket to fill and skips any bracket marked complete.'
-          : 'Brackets in ' + escapeHtml(stageName) + ' are filled from the teams advanced into this stage. A team can sit in one bracket here, and in a different bracket in another stage.'}</p>
-        <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.' + (isAdminUi() ? ' <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ' + escapeHtml(stageName) + '</button>' : '') + '</div>'}</div>
+        <p class="t-mode-note">${stageLocked
+          ? escapeHtml(prevStage ? prevStage.name : 'The previous stage') + ' must be marked complete before ' + escapeHtml(stageName) + ' can start.'
+          : (entryStage
+            ? 'A team can sit in one bracket of ' + escapeHtml(stageName) + '. After this stage is marked complete, Advance sends a team to ' + escapeHtml(nextStage ? nextStage.name : 'the next stage') + ', seeded in that rank order.'
+            : 'Brackets in ' + escapeHtml(stageName) + ' are filled from the teams advanced into this stage. A team can sit in one bracket here, and in a different bracket in another stage.')}</p>
+        <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.' + (isAdminUi() && !stageLocked ? ' <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ' + escapeHtml(stageName) + '</button>' : '') + '</div>'}</div>
       </section>
       ${scheduleBlock}
       ` : ''}
@@ -5888,7 +6021,9 @@
             : 'This ranking is for every team in ' + escapeHtml(stageName) + '.'}
             ${isAdminUi() ? ' Use ↑↓ to change the order.' : ''}
             ${nextStage
-              ? ' Advance uses this order to seed ' + escapeHtml(nextStage.name) + ' — rank 2 and rank 6 become Seed 1 and Seed 2.'
+              ? (stageMarked
+                ? ' Advance uses this order to seed ' + escapeHtml(nextStage.name) + ' — rank 2 and rank 6 become Seed 1 and Seed 2.'
+                : ' Mark this stage complete after every match is finished. Then Advance can seed ' + escapeHtml(nextStage.name) + '.')
               : ''}</p>
           <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rankingRows, division, '', emptyStage, stageId)}</div></div>
         </section>
@@ -6079,6 +6214,11 @@
         const id = btn.getAttribute('data-bracket');
         const target = findBracket(division, id);
         setBracketComplete(tournament.id, sport.id, division.id, id, !(target && target.complete));
+      });
+    });
+    root.querySelectorAll('[data-act="toggle-stage-complete"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setStageComplete(tournament.id, sport.id, division.id, stageId, btn.getAttribute('data-on') !== '0');
       });
     });
     root.querySelectorAll('[data-act="add-bracket-after"]').forEach(function (btn) {
@@ -6538,7 +6678,12 @@
         btns.push('<button class="t-btn sm" data-act="complete">✔ Mark complete</button>');
       } else {
         if (match.status === 'scheduled') {
-          btns.push('<button class="t-btn success sm" data-act="start">▶ Start match</button>');
+          const startBlock = match.categoryId
+            ? stageStartBlockedReason(getSportConfig(tournament, match.sport), findDivision(getSportConfig(tournament, match.sport), match.categoryId), match.stage || 'league')
+            : '';
+          btns.push(startBlock
+            ? '<button class="t-btn sm" disabled title="' + escapeHtml(startBlock) + '">▶ Start after previous stage</button>'
+            : '<button class="t-btn success sm" data-act="start">▶ Start match</button>');
           btns.push('<button class="t-btn sm" data-act="schedule">📅 Reschedule</button>');
           btns.push(match.showUpcoming
             ? '<button class="t-btn sm" data-act="upcoming">Remove from upcoming</button>'
@@ -6614,6 +6759,10 @@
         }
         toast('Match deleted');
       } else if (act === 'start') {
+        if (match.categoryId) {
+          const blocked = stageStartBlockedReason(sport, findDivision(sport, match.categoryId), match.stage || 'league');
+          if (blocked) return toast(blocked, 'error');
+        }
         const update = Object.assign({ status: 'in_progress', updatedAt: FieldValue.serverTimestamp() }, matchCaptainPatch(tournament, match));
         if (sport.kind === 'racket' && (!match.games || !match.games.length)) {
           const bestOf = (getStageScoring(tournament, match.sport, match.stage) || {}).bestOf || 1;
@@ -7088,6 +7237,8 @@
     if (!t || !sport) return;
     const scope = scheduleScope(categoryId, bracketId, sport);
     if (scope.categoryId && !scope.bracket) return toast('Create a bracket and open it before adding matches', 'error');
+    const blocked = scheduleStageBlockedReason(sport, scope);
+    if (blocked) return toast(blocked, 'error');
     const entries = readWorkingEntries(t, sport, scope).slice();
     const teams = scope.categoryId ? teamsInBracket(sport, scope.categoryId, scope.bracketId) : teamsFor(t, sport);
     const useTeams = matchUsesTeams(t, sport);
@@ -7122,6 +7273,8 @@
     const division = findDivision(sport, categoryId);
     if (!division) return toast('Open a category before generating a round-robin', 'error');
     const stage = stageId || 'league';
+    const blocked = stageStartBlockedReason(sport, division, stage);
+    if (blocked) return toast(blocked, 'error');
     const stageName = stageLabelOf(sport, stage);
     const all = bracketsInStage(division, stage);
     const open = openBracketsInStage(division, stage);
@@ -7180,7 +7333,14 @@
     const bracket = findBracket(division, bracketId);
     if (!bracket) return;
     const next = !!complete;
-    if (next && !confirm('Mark "' + (bracket.name || 'this bracket') + '" complete? It stays on the page. Generate round-robin will skip it until you reopen it.')) return;
+    const stage = bracketStageId(bracket);
+    if (next) {
+      const leftover = unfinishedStageMatches(t, sport, division, stage, bracket.id);
+      if (leftover.length) {
+        return toast('Finish every match in ' + (bracket.name || 'this bracket') + ' before marking it complete. ' + leftover.length + ' still open.', 'error');
+      }
+      if (!confirm('Mark "' + (bracket.name || 'this bracket') + '" complete? It stays on the page. Generate round-robin will skip it until you reopen it.')) return;
+    }
     try {
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
         const target = (div.brackets || []).find(function (b) { return b.id === bracketId; });
@@ -7191,12 +7351,52 @@
     } catch (_) { /* toasted */ }
   }
 
+  async function setStageComplete(tournamentId, sportId, divisionId, stageId, complete) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const division = sport ? findDivision(sport, divisionId) : null;
+    if (!t || !sport || !division || !stageId) return;
+    const label = stageLabelOf(sport, stageId);
+    const next = !!complete;
+    if (next) {
+      const matches = stageMatchList(t, sport, division, stageId);
+      const leftover = unfinishedStageMatches(t, sport, division, stageId);
+      if (!matches.length) {
+        return toast('Complete every match in ' + label + ' first. None are recorded yet.', 'error');
+      }
+      if (leftover.length) {
+        return toast('Finish every match in ' + label + ' before marking the stage complete. ' + leftover.length + ' still open.', 'error');
+      }
+      if (!confirm('Mark ' + label + ' complete? Teams can then be advanced and the next stage can start.')) return;
+    } else if (!confirm('Reopen ' + label + '? The next stage cannot start again until this stage is marked complete.')) {
+      return;
+    }
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        const ids = completedStageIds(div).filter(function (id) { return id !== stageId; });
+        if (next) ids.push(stageId);
+        if (ids.length) div.completedStages = ids;
+        else delete div.completedStages;
+        if (next) {
+          (div.brackets || []).forEach(function (b) {
+            if (bracketStageId(b) === stageId) b.complete = true;
+          });
+        }
+      });
+      toast(next ? label + ' marked complete' : label + ' reopened', 'success');
+      render();
+    } catch (_) { /* toasted */ }
+  }
+
   function generateLeagueSchedule(tournamentId, sportId, categoryId, bracketId) {
     if (!canEditSchedule()) return toast('Only admins can edit the schedule', 'error');
     const { t, sport } = currentScheduleContext(tournamentId, sportId);
     if (!t || !sport) return;
     const scope = scheduleScope(categoryId, bracketId, sport);
     if (scope.categoryId && !scope.bracket) return toast('Choose a bracket before generating a round-robin', 'error');
+    const blocked = scheduleStageBlockedReason(sport, scope);
+    if (blocked) return toast(blocked, 'error');
     if (scope.bracket && bracketIsComplete(scope.bracket)) {
       return toast((scope.bracket.name || 'This bracket') + ' is marked complete. Reopen it before generating a round-robin.', 'error');
     }
@@ -7397,6 +7597,8 @@
     if (!t || !sport) return;
     const scope = scheduleScope(categoryId, bracketId, sport);
     if (scope.categoryId && !scope.bracket) return toast('Open a bracket before publishing its schedule', 'error');
+    const blocked = scheduleStageBlockedReason(sport, scope);
+    if (blocked) return toast(blocked, 'error');
     const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport, scope));
     if (!entries.length) return toast('Add at least one match before publishing', 'error');
     for (let i = 0; i < entries.length; i++) {
@@ -9328,7 +9530,7 @@
         sport.id,
         (sport.stageList || []).map(function (st) { return st && st.id; }),
         (sport.divisions || []).map(function (d) {
-          return [d && d.id, skippedStageIds(d)];
+          return [d && d.id, skippedStageIds(d), completedStageIds(d), d && d.winnerId, d && d.runnerId, rankingRecord(d)];
         })
       ];
     });
@@ -10116,7 +10318,8 @@
       </div>`;
     const stagePills = categorySummary || panel === 'rules' ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
       const count = pool.filter(function (m) { return m.stage === st.id && m.status === 'in_progress'; }).length;
-      return `<button type="button" class="w-pill ${st.id === stageId ? 'is-on' : ''}" data-act="stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${count ? '<i>' + count + '</i>' : ''}</button>`;
+      const done = division && stageIsMarkedComplete(division, st.id);
+      return `<button type="button" class="w-pill ${st.id === stageId ? 'is-on' : ''}" data-act="stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${done ? ' · Done' : ''}${count ? '<i>' + count + '</i>' : ''}</button>`;
     }).join('')}</div>`;
 
     const heroMatches = categorySummary
