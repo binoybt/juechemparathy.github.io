@@ -384,10 +384,19 @@
     return categoryStages(sport, division);
   }
 
+  function activeStageId(sport, division) {
+    const stages = stageListForDivision(sport, division);
+    if (!stages.length) return 'league';
+    for (let i = 0; i < stages.length; i++) {
+      if (!stageIsMarkedComplete(division, stages[i].id)) return stages[i].id;
+    }
+    return stages[stages.length - 1].id;
+  }
+
   function resolveDivisionStageId(sport, division, requested) {
     const stages = stageListForDivision(sport, division);
     if (requested && stages.some(function (st) { return st.id === requested; })) return requested;
-    return (stages[0] && stages[0].id) || 'league';
+    return activeStageId(sport, division);
   }
 
   function matchStageApplies(sport, match) {
@@ -860,6 +869,40 @@
     return String(item.court || item.venue || '').trim();
   }
 
+  function scheduledAtIso(value) {
+    if (!value) return '';
+    if (typeof value === 'object') {
+      if (typeof value.toDate === 'function') {
+        const fromTs = value.toDate();
+        return isNaN(fromTs) ? '' : fromTs.toISOString();
+      }
+      if (typeof value.seconds === 'number') {
+        const fromSeconds = new Date(value.seconds * 1000);
+        return isNaN(fromSeconds) ? '' : fromSeconds.toISOString();
+      }
+    }
+    const d = new Date(value);
+    return isNaN(d) ? '' : d.toISOString();
+  }
+
+  function scheduledAtMs(value) {
+    const iso = scheduledAtIso(value);
+    if (!iso) return 0;
+    const d = new Date(iso);
+    return isNaN(d) ? 0 : d.getTime();
+  }
+
+  function sortByScheduledTime(a, b) {
+    const sa = scheduledAtMs(a && a.scheduledAt);
+    const sb = scheduledAtMs(b && b.scheduledAt);
+    if (sa !== sb) {
+      if (!sa) return 1;
+      if (!sb) return -1;
+      return sa - sb;
+    }
+    return String((a && (a.id || a.matchId)) || '').localeCompare(String((b && (b.id || b.matchId)) || ''));
+  }
+
   function emptyScheduleEntry(overrides) {
     const base = {
       id: newId('slot'),
@@ -876,6 +919,7 @@
     const court = courtOf(merged);
     merged.court = court;
     merged.venue = court;
+    merged.scheduledAt = scheduledAtIso(merged.scheduledAt);
     merged.showUpcoming = !!merged.showUpcoming;
     return merged;
   }
@@ -888,13 +932,13 @@
         stage: e.stage || 'league',
         a: String(e.a || ''),
         b: String(e.b || ''),
-        scheduledAt: e.scheduledAt || '',
+        scheduledAt: scheduledAtIso(e.scheduledAt),
         venue: court,
         court: court,
         showUpcoming: !!e.showUpcoming,
         matchId: e.matchId || ''
       };
-    });
+    }).sort(sortByScheduledTime);
   }
 
   function getSchedule(sport) {
@@ -1218,9 +1262,10 @@
   }
 
   function fmtDateTime(iso) {
-    if (!iso) return 'TBD';
-    const d = new Date(iso);
-    if (isNaN(d)) return iso;
+    const value = scheduledAtIso(iso) || iso;
+    if (!value) return 'TBD';
+    const d = new Date(value);
+    if (isNaN(d)) return String(iso);
     return d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
 
@@ -1232,8 +1277,9 @@
   }
 
   function toDatetimeLocal(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
+    const value = scheduledAtIso(iso);
+    if (!value) return '';
+    const d = new Date(value);
     if (isNaN(d)) return '';
     const pad = n => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -6024,7 +6070,7 @@
       ${showBoard ? `
         ${tournamentHasStarted(tournament) ? '' : '<p class="t-mode-note">Members see this board after you start the tournament. You can score matches before that.</p>'}
         <section class="t-section" id="tUpcomingSection" style="display:none;">
-          <div class="t-section-header"><h2 class="t-section-title">${isAdminUi() ? 'Scheduled <small>mark Upcoming so members and the spectator board list that match</small>' : 'Upcoming matches'}</h2></div>
+          <div class="t-section-header"><h2 class="t-section-title">${isAdminUi() ? 'Schedule <small>' + escapeHtml(stageName) + ' · ordered by date and time · Upcoming marks the Matches summary</small>' : 'Schedule <small>' + escapeHtml(stageName) + '</small>'}</h2></div>
           <div class="t-match-list" id="tUpcomingList"></div>
         </section>
         ${bracketTables}
@@ -6069,10 +6115,7 @@
         if ((m.stage || 'league') !== stageId) return false;
         return categoryMatchVisible(sport, m);
       });
-      const upcoming = scheduledMatchesForBoard(isAdminUi() ? pool : state.matches.filter(function (m) {
-        if (m.sport !== sport.id || m.categoryId !== division.id) return false;
-        return categoryMatchVisible(sport, m);
-      }));
+      const upcoming = pool.filter(function (m) { return m && m.status === 'scheduled'; }).sort(sortMatches);
       const completed = pool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
       fillMatchList('tUpcomingList', 'tUpcomingSection', upcoming, tournament);
       fillMatchList('tCompletedList', 'tCompletedSection', completed, tournament, { compact: true });
@@ -6460,11 +6503,8 @@
   }
 
   function sortMatches(a, b) {
-    const sa = a.scheduledAt || '';
-    const sb = b.scheduledAt || '';
-    if (sa && sb) return sa.localeCompare(sb);
-    if (sa) return -1;
-    if (sb) return 1;
+    const timed = sortByScheduledTime(a, b);
+    if (timed) return timed;
     return (a.createdAt && a.createdAt.seconds || 0) - (b.createdAt && b.createdAt.seconds || 0);
   }
 
@@ -7103,9 +7143,7 @@
       return '<div class="t-schedule-empty">No fixtures in the published schedule.</div>';
     }
     const bracketName = bracket && bracket.name;
-    const sorted = entries.slice().sort(function (a, b) {
-      return (a.scheduledAt || '').localeCompare(b.scheduledAt || '');
-    });
+    const sorted = sanitizeScheduleEntries(entries);
     const whenNote = publishedMeta && publishedMeta.publishedAt
       ? '<div class="t-schedule-note">Published ' + escapeHtml(fmtDateTime(publishedMeta.publishedAt))
         + (publishedMeta.publishedBy ? ' by ' + escapeHtml(publishedMeta.publishedBy) : '') + '</div>'
@@ -7168,7 +7206,7 @@
       `;
     }
     const bracketName = scope && scope.bracket && scope.bracket.name;
-    const rows = entries.map(function (e) {
+    const rows = sanitizeScheduleEntries(entries).map(function (e) {
       const stageOpts = scheduleStageOptions(sport, scope, e.stage);
       return `
         <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}">
@@ -7185,7 +7223,7 @@
       `;
     }).join('');
     return `
-      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Check Upcoming for the matches that should appear in Upcoming and on the spectator board.</div>
+      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Rows with a time sort by date and time. Check Upcoming for the matches that should appear on the Matches summary.</div>
       <div class="t-schedule-wrap">
         <table class="t-schedule-table" id="tScheduleEditor" ${attrs}>
           <thead>
@@ -7215,8 +7253,18 @@
     table.addEventListener('input', function () {
       markScheduleDirty(tournament.id, sport.id, categoryId, bracketId);
     });
-    table.addEventListener('change', function () {
+    table.addEventListener('change', function (e) {
       markScheduleDirty(tournament.id, sport.id, categoryId, bracketId);
+      if (e.target && e.target.getAttribute('data-f') === 'when') {
+        harvestScheduleEditor();
+        const key = scheduleKey(tournament.id, sport.id, categoryId, bracketId);
+        const cur = scheduleEditByKey[key];
+        if (cur && Array.isArray(cur.entries)) {
+          cur.entries = sanitizeScheduleEntries(cur.entries);
+          scheduleEditByKey[key] = cur;
+        }
+        renderScheduleFor(tournament, sport, scheduleScope(categoryId, bracketId, sport));
+      }
     });
     table.querySelectorAll('[data-remove-row]').forEach(function (btn) {
       btn.addEventListener('click', function () {
@@ -9213,7 +9261,7 @@
       sport: match.sport || '',
       stage: match.stage || 'league',
       status: match.status || 'scheduled',
-      scheduledAt: match.scheduledAt || '',
+      scheduledAt: scheduledAtIso(match.scheduledAt),
       venue: courtOf(match),
       court: courtOf(match),
       showUpcoming: !!match.showUpcoming,
@@ -10144,12 +10192,16 @@
     }).sort(sortMatches);
   }
 
-  function upcomingMatchesForCategory(matches, sport, categoryId) {
+  function scheduledMatchesForStage(matches, sport, categoryId, stageId) {
     const sportId = sport && sport.id;
-    return upcomingMatchesForWatch(matches).filter(function (m) {
-      if (m.sport !== sportId || m.categoryId !== categoryId) return false;
-      return matchStageApplies(sport, m);
-    });
+    const stage = stageId || 'league';
+    return (matches || []).filter(function (m) {
+      if (!m || m.status !== 'scheduled') return false;
+      if (sportId && m.sport !== sportId) return false;
+      if (categoryId && m.categoryId !== categoryId) return false;
+      if ((m.stage || 'league') !== stage) return false;
+      return !sport || matchStageApplies(sport, m);
+    }).sort(sortMatches);
   }
 
   function watchWinnersHtml(tournament, sport) {
@@ -10190,14 +10242,17 @@
   function watchUpcomingListHtml(matches, tournament, title, opts) {
     const list = matches || [];
     const showCategory = !!(opts && opts.showCategory);
+    const heading = (opts && opts.heading) || 'Upcoming';
+    const empty = (opts && opts.empty)
+      || ('No ' + heading.toLowerCase() + ' matches' + (title ? ' in ' + title : '') + '.');
     const body = list.length
       ? '<div class="w-list">' + list.map(function (m) {
         return watchFixtureHtml(m, tournament, { showCategory: showCategory, hideScore: true });
       }).join('') + '</div>'
-      : '<p class="w-empty">No upcoming matches' + (title ? ' in ' + escapeHtml(title) : '') + '. An admin chooses which scheduled matches appear here.</p>';
+      : '<p class="w-empty">' + escapeHtml(empty) + '</p>';
     return `
       <section class="w-panel">
-        <h3>Upcoming ${title ? '<small>' + escapeHtml(title) + '</small>' : ''}${list.length ? '<i>' + list.length + '</i>' : ''}</h3>
+        <h3>${escapeHtml(heading)} ${title ? '<small>' + escapeHtml(title) + '</small>' : ''}${list.length ? '<i>' + list.length + '</i>' : ''}</h3>
         ${body}
       </section>`;
   }
@@ -10278,7 +10333,7 @@
       .filter(function (m) { return m.status === 'in_progress'; })
       .sort(sortMatches);
     const upcoming = division
-      ? upcomingMatchesForCategory(sportPool, sport, division.id)
+      ? scheduledMatchesForStage(sportPool, sport, division.id, stageId)
       : upcomingMatchesForWatch(stagePool);
     const summaryUpcoming = upcomingMatchesForWatch(pool);
     const done = stagePool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
@@ -10346,7 +10401,7 @@
       ? `<div class="w-hero-row">${heroMatches.map(function (m, i) { return watchScoreboardHtml(m, tournament, i === 0); }).join('')}</div>`
       : (categorySummary
         ? '<section class="w-quiet-card"><h2>No current matches</h2><p>Live matches from every category will appear here.</p></section>'
-        : (categorized ? '' : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches appear after an admin marks them.</p></section>`));
+        : (categorized ? '' : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches on Matches appear after an admin marks them.</p></section>`));
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
     const brackets = division ? bracketsInStage(division, stageId) : [];
@@ -10404,7 +10459,17 @@
       ${categorized ? '' : hero}
       <div class="w-layout">
         <div class="w-col">
-          ${watchUpcomingListHtml(upcoming, tournament, division ? (division.name || 'Category') : stageName)}
+          ${watchUpcomingListHtml(
+            upcoming,
+            tournament,
+            stageName,
+            division
+              ? {
+                heading: 'Schedule',
+                empty: 'No scheduled matches in ' + stageName + ' yet.'
+              }
+              : null
+          )}
           ${!categorized ? watchWinnersHtml(tournament, sport) : ''}
           ${teamCompletedHtml}
         </div>
@@ -10435,7 +10500,7 @@
     function goStage(id) { setWatchParams({ sport: sport.id, panel: 'summary', st: id, cat: division ? division.id : '', team: '' }); }
     function goCat(id) {
       const nextDiv = id ? findDivision(sport, id) : null;
-      const nextStage = nextDiv ? resolveDivisionStageId(sport, nextDiv, stageId) : '';
+      const nextStage = nextDiv ? activeStageId(sport, nextDiv) : '';
       setWatchParams({ sport: sport.id, panel: 'summary', st: nextStage, cat: id, team: '' });
     }
     function goTeam(id) {
