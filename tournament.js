@@ -596,6 +596,24 @@
     return matches.length > 0 && !unfinishedStageMatches(tournament, sport, division, stageId).length;
   }
 
+  function stageAdvanceBlockedReason(tournament, sport, division, fromStageId) {
+    if (!sport || !division || !fromStageId) return 'Choose the stage you are advancing from.';
+    const label = stageLabelOf(sport, fromStageId);
+    const matches = stageMatchList(tournament, sport, division, fromStageId);
+    const leftover = unfinishedStageMatches(tournament, sport, division, fromStageId);
+    if (!matches.length) {
+      return 'Complete every match in ' + label + ' before advancing anyone to the next stage.';
+    }
+    if (leftover.length) {
+      return leftover.length + ' match' + (leftover.length === 1 ? '' : 'es') + ' in ' + label
+        + ' still open. Finish every match and mark the stage complete before advancing.';
+    }
+    if (!stageIsMarkedComplete(division, fromStageId)) {
+      return 'Mark ' + label + ' complete before advancing teams to the next stage.';
+    }
+    return '';
+  }
+
   function previousStageUnlocked(sport, division, stageId) {
     const prev = previousStageBefore(sport, division, stageId);
     if (!prev) return true;
@@ -5532,8 +5550,9 @@
     if (!division) return;
     const next = nextStageAfter(sport, division, fromStageId);
     if (!next) return toast('This category has no later stage. Stage order is set on Manage tournament.', 'error');
-    if (on && !stageIsMarkedComplete(division, fromStageId)) {
-      return toast('Mark ' + stageLabelOf(sport, fromStageId) + ' complete first. Every match in that stage must be finished.', 'error');
+    if (on) {
+      const blocked = stageAdvanceBlockedReason(t, sport, division, fromStageId);
+      if (blocked) return toast(blocked, 'error');
     }
     const team = (division.teams || []).find(function (tm) { return tm.id === teamId; });
     if (!team) return;
@@ -5626,7 +5645,6 @@
     const showPointBreakdown = !!bracketId || showGroups || rows.some(function (r) { return r && r.rank; });
     const sport = getSportConfig(tournament, sportId);
     const next = (isAdminUi() && division && fromStageId) ? nextStageAfter(sport, division, fromStageId) : null;
-    const canAdvance = !!(next && stageIsMarkedComplete(division, fromStageId));
     const canRank = !!(isAdminUi() && division && fromStageId && !bracketId && rows.length > 1);
     return `
       <div class="t-standings-scroll"><table class="t-standings-table">
@@ -5638,11 +5656,10 @@
             const place = r.rank || (i + 1);
             const meta = teamMeta(tournament, sportId, r.id);
             const already = next ? advancedTeamIds(division, next.id).indexOf(r.id) !== -1 : false;
-            const advanceCell = !next
-              ? ''
-              : (canAdvance || already
-                ? '<td class="t-advance-cell"><button type="button" class="t-btn sm t-advance-btn" data-act="advance-team" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '" data-on="' + (already ? '0' : '1') + '">' + escapeHtml(already ? ('In ' + next.name) : ('Advance to ' + next.name)) + '</button></td>'
-                : '<td class="t-advance-cell"><button type="button" class="t-btn sm" disabled title="Mark this stage complete after every match is finished">Advance after stage complete</button></td>');
+            const advanceBlocked = next && !already ? stageAdvanceBlockedReason(tournament, sport, division, fromStageId) : '';
+            const advanceCell = next
+              ? '<td class="t-advance-cell"><button type="button" class="t-btn sm t-advance-btn' + (advanceBlocked ? ' is-blocked' : '') + '" data-act="advance-team" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '" data-on="' + (already ? '0' : '1') + '"' + (advanceBlocked ? ' title="' + escapeHtml(advanceBlocked) + '"' : '') + '>' + escapeHtml(already ? ('In ' + next.name) : (advanceBlocked ? 'Advance after stage complete' : ('Advance to ' + next.name))) + '</button></td>'
+              : '';
             const rankControls = canRank
               ? '<div class="t-rank-edit"><button type="button" class="t-btn sm t-rank-btn" data-act="rank-up" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '"' + (i === 0 ? ' disabled' : '') + '>↑</button><button type="button" class="t-btn sm t-rank-btn" data-act="rank-down" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '"' + (i === rows.length - 1 ? ' disabled' : '') + '>↓</button></div>'
               : '';
