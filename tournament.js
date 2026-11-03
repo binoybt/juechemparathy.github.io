@@ -40,6 +40,10 @@
  *                     The first stage includes every registered team. Later
  *                     stages only list advanced teams, Seed 1 is the best
  *                     previous rank, and brackets are filled from that list.
+ *         ranking     { [stageId]: teamId[] } admin override of overall ranking
+ *                     across groups for that stage. Empty/missing uses points.
+ *         winnerId    admin-set champion for the category (optional)
+ *         runnerId    admin-set runner-up for the category (optional)
  *         teams[]     { id, name, players[], tags[], here, hereAt, hereBy }
  *                     tags are optional short labels (seed, home side, group)
  *                     here is a registration check-in flag (team has arrived)
@@ -65,9 +69,8 @@
  *                     ranking across groups sends a team to the next stage
  *                     it still uses, seeded from that ranking
  *                     when that category's last stage other than 3rd place is
- *                     finished, the summary shows a champion and a runner-up,
- *                     then 3rd and 4th from the 3rd-place match or the stage
- *                     before, and everyone else as a ranked list
+ *                     finished, or an admin sets a winner, Matches shows the
+ *                     champion and runner-up. Until then that tile stays hidden.
  *       schedule    { draft, published }            — legacy per-sport fixture list
  *                     draft.entries[]     working copy (admin only)
  *                     published.entries[] public copy (visible after Publish)
@@ -482,6 +485,84 @@
     const known = {};
     ((division && division.teams) || []).forEach(function (tm) { if (tm && tm.id) known[tm.id] = true; });
     return ids.filter(function (id) { return known[id]; });
+  }
+
+  function rankingRecord(division) {
+    const src = (division && division.ranking && typeof division.ranking === 'object' && !Array.isArray(division.ranking))
+      ? division.ranking
+      : {};
+    const out = {};
+    Object.keys(src).forEach(function (stageId) {
+      if (!stageId) return;
+      const ids = [];
+      const list = Array.isArray(src[stageId]) ? src[stageId] : [];
+      list.forEach(function (id) {
+        id = String(id || '').trim();
+        if (!id || ids.indexOf(id) !== -1) return;
+        ids.push(id);
+      });
+      if (ids.length) out[stageId] = ids;
+    });
+    return out;
+  }
+
+  function rankingIdsForStage(division, stageId) {
+    const ids = rankingRecord(division)[stageId] || [];
+    const known = {};
+    ((division && division.teams) || []).forEach(function (tm) { if (tm && tm.id) known[tm.id] = true; });
+    return ids.filter(function (id) { return known[id]; });
+  }
+
+  function applyRankingOverride(rows, division, stageId) {
+    const list = (rows || []).slice();
+    const order = rankingIdsForStage(division, stageId);
+    if (!order.length || !list.length) {
+      return list.map(function (row, i) {
+        return Object.assign({}, row, { rank: i + 1 });
+      });
+    }
+    const byId = {};
+    list.forEach(function (row) {
+      if (row && row.id) byId[row.id] = row;
+    });
+    const used = {};
+    const out = [];
+    order.forEach(function (id) {
+      if (byId[id] && !used[id]) {
+        out.push(byId[id]);
+        used[id] = true;
+      }
+    });
+    list.forEach(function (row) {
+      if (row && row.id && !used[row.id]) {
+        out.push(row);
+        used[row.id] = true;
+      }
+    });
+    return out.map(function (row, i) {
+      return Object.assign({}, row, { rank: i + 1 });
+    });
+  }
+
+  function placesOverride(division) {
+    const known = {};
+    ((division && division.teams) || []).forEach(function (tm) { if (tm && tm.id) known[tm.id] = true; });
+    const winnerId = String((division && division.winnerId) || '').trim();
+    const runnerId = String((division && division.runnerId) || '').trim();
+    const ids = [];
+    if (winnerId && known[winnerId]) ids.push(winnerId);
+    if (runnerId && known[runnerId] && runnerId !== winnerId) ids.push(runnerId);
+    return ids;
+  }
+
+  function copyDivisionResultFields(src, out) {
+    const ranking = rankingRecord(src);
+    if (Object.keys(ranking).length) out.ranking = ranking;
+    const winnerId = String((src && src.winnerId) || '').trim();
+    const runnerId = String((src && src.runnerId) || '').trim();
+    if (winnerId) out.winnerId = winnerId;
+    if (runnerId) out.runnerId = runnerId;
+    return out;
   }
 
   function isEntryStage(sport, division, stageId) {
@@ -982,7 +1063,7 @@
         skippedStages: skippedStageIds(live || d),
         advanced: advancedRecord(live || d)
       };
-      return out;
+      return copyDivisionResultFields(live || d, out);
     });
   }
 
@@ -2310,14 +2391,14 @@
     const groups = bracketsInStage(division, stageId).filter(bracketHasTeams);
     if (!groups.length) {
       const stageTeamIds = teamsForStage(division, sport, stageId).map(function (tm) { return tm.id; });
-      return computeStandings(tournament, matches, sport.id, {
+      return applyRankingOverride(computeStandings(tournament, matches, sport.id, {
         categoryId: division.id,
         stageId: stageId,
         teamIds: stageTeamIds.length ? stageTeamIds : undefined,
         useTeams: true
       }).map(function (row, i) {
         return Object.assign({}, row, { rank: i + 1, groupName: '', groupRank: i + 1 });
-      });
+      }), division, stageId);
     }
     const byTeam = {};
     groups.forEach(function (bracket) {
@@ -2338,7 +2419,7 @@
     });
     const list = Object.keys(byTeam).map(function (id) { return byTeam[id]; });
     list.sort(compareStandingRows);
-    return list.map(function (row, i) { return Object.assign({}, row, { rank: i + 1 }); });
+    return applyRankingOverride(list, division, stageId);
   }
 
   function isSeedTag(tag) {
@@ -3478,7 +3559,7 @@
               };
             })
           };
-          return cloned;
+          return copyDivisionResultFields(d, cloned);
         }),
         tablePoints: tablePointsFor(s),
         stageList: stageListFor(s),
@@ -4174,7 +4255,7 @@
     return null;
   }
 
-  function categoryPlaceIds(tournament, sport, division) {
+  function categoryPlaceIdsFromResults(tournament, sport, division) {
     const champ = championshipStage(sport, division);
     if (!champ || !stageIsFinished(tournament, sport, division, champ.id)) return null;
     const visible = visibleMatchesFor(tournament, sport.id);
@@ -4231,6 +4312,16 @@
       return displayName(tournament, sport.id, a.id).localeCompare(displayName(tournament, sport.id, b.id));
     });
     rest.forEach(function (team) { pushPlace(placed, team.id); });
+    return placed.length ? placed : null;
+  }
+
+  function categoryPlaceIds(tournament, sport, division) {
+    const auto = categoryPlaceIdsFromResults(tournament, sport, division);
+    const override = placesOverride(division);
+    if (!override.length) return auto;
+    const placed = [];
+    override.forEach(function (id) { pushPlace(placed, id); });
+    if (auto) auto.forEach(function (id) { pushPlace(placed, id); });
     return placed.length ? placed : null;
   }
 
@@ -4389,13 +4480,8 @@
     const section = document.getElementById('tSummaryPodiumSection');
     const blocks = podiumBlocks(tournament, sport);
     if (!blocks.length) {
-      if (usesRegistrationCategories(sport)) {
-        root.innerHTML = '<p class="t-empty">Champions appear here when a category\'s last stage is complete.</p>';
-        if (section) section.style.display = '';
-      } else {
-        root.innerHTML = '';
-        if (section) section.style.display = 'none';
-      }
+      root.innerHTML = '';
+      if (section) section.style.display = 'none';
       return;
     }
     if (section) section.style.display = '';
@@ -4566,10 +4652,6 @@
       ` : ''}
 
       ${panel === 'summary' && sport && categorized ? `
-        <section class="t-section" id="tSummaryPodiumSection">
-          <div class="t-section-header"><h2 class="t-section-title">Champions <small>winner and runner-up when the last stage is complete</small></h2></div>
-          <div id="tSummaryPodium"></div>
-        </section>
         <section class="t-section">
           <div class="t-section-header"><h2 class="t-section-title">Current matches <small>all categories</small></h2></div>
           <div class="t-match-list" id="tSummaryCurrentMatches"></div>
@@ -4578,14 +4660,14 @@
           <div class="t-section-header"><h2 class="t-section-title">Upcoming matches <small>all categories</small></h2></div>
           <div class="t-card"><div class="t-card-body" id="tSummaryUpcoming"></div></div>
         </section>
+        <section class="t-section" id="tSummaryPodiumSection" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">Winners <small>champion and runner-up for each category</small></h2></div>
+          <div id="tSummaryPodium"></div>
+        </section>
       ` : ''}
 
       ${panel === 'summary' && sport && categorized ? '<div id="tCategoryRoot"></div>' : ''}
       ${panel === 'summary' && sport && !categorized ? `
-        <section class="t-section" id="tSummaryPodiumSection" style="display:none;">
-          <div class="t-section-header"><h2 class="t-section-title">Champions <small>winner and runner-up when the last stage is complete</small></h2></div>
-          <div id="tSummaryPodium"></div>
-        </section>
         ${t.format === 'teams' ? `
         <section class="t-section" id="tRostersSection">
           <div class="t-section-header">
@@ -4623,6 +4705,11 @@
         <section class="t-section" id="tUpcomingSection" style="display:none;">
           <div class="t-section-header"><h2 class="t-section-title">${isAdminUi() ? 'Scheduled <small>mark Upcoming so members and the spectator board list that match</small>' : 'Upcoming'}</h2></div>
           <div class="t-match-list" id="tUpcomingList"></div>
+        </section>
+
+        <section class="t-section" id="tSummaryPodiumSection" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">Winners <small>champion and runner-up when decided</small></h2></div>
+          <div id="tSummaryPodium"></div>
         </section>
 
         <section class="t-section" id="tCompletedSection" style="display:none;">
@@ -5087,6 +5174,14 @@
           if (!record[stageKey].length) delete record[stageKey];
         });
         div.advanced = record;
+        const ranking = rankingRecord(div);
+        Object.keys(ranking).forEach(function (stageKey) {
+          ranking[stageKey] = ranking[stageKey].filter(function (id) { return id !== teamId; });
+          if (!ranking[stageKey].length) delete ranking[stageKey];
+        });
+        div.ranking = ranking;
+        if (div.winnerId === teamId) delete div.winnerId;
+        if (div.runnerId === teamId) delete div.runnerId;
       });
       toast('Team removed', 'success');
       if (parseUrl().teamId === teamId) {
@@ -5248,6 +5343,81 @@
     } catch (_) { /* toasted */ }
   }
 
+  async function moveStageRank(tournamentId, sportId, divisionId, stageId, teamId, dir) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const division = sport ? findDivision(sport, divisionId) : null;
+    if (!t || !sport || !division || !stageId || !teamId) return;
+    const rows = computeStageRanking(t, state.matches, sport, division, stageId);
+    const ids = rows.map(function (row) { return row.id; });
+    const from = ids.indexOf(teamId);
+    const to = from + (dir < 0 ? -1 : 1);
+    if (from < 0 || to < 0 || to >= ids.length) return;
+    const swap = ids[from];
+    ids[from] = ids[to];
+    ids[to] = swap;
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        const record = rankingRecord(div);
+        record[stageId] = ids.slice();
+        div.ranking = record;
+      });
+      toast('Ranking updated', 'success');
+      render();
+    } catch (_) { /* toasted */ }
+  }
+
+  async function resetStageRanking(tournamentId, sportId, divisionId, stageId) {
+    if (!isAdminUi()) return;
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        const record = rankingRecord(div);
+        delete record[stageId];
+        if (Object.keys(record).length) div.ranking = record;
+        else delete div.ranking;
+      });
+      toast('Ranking reset to points order', 'success');
+      render();
+    } catch (_) { /* toasted */ }
+  }
+
+  async function setCategoryPlace(tournamentId, sportId, divisionId, field, teamId) {
+    if (!isAdminUi()) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    const sport = t ? getSportConfig(t, sportId) : null;
+    const division = sport ? findDivision(sport, divisionId) : null;
+    if (!division) return;
+    const known = {};
+    (division.teams || []).forEach(function (tm) { if (tm && tm.id) known[tm.id] = true; });
+    const id = known[teamId] ? teamId : '';
+    if (field === 'runnerId' && id && id === String(division.winnerId || '')) {
+      return toast('Runner-up must be a different team', 'error');
+    }
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        if (field === 'winnerId') {
+          if (id && div.runnerId === id) {
+            const previous = div.winnerId || '';
+            if (previous && previous !== id) div.runnerId = previous;
+            else delete div.runnerId;
+          }
+          if (id) div.winnerId = id;
+          else delete div.winnerId;
+        } else if (field === 'runnerId') {
+          if (id && div.winnerId === id) return;
+          if (id) div.runnerId = id;
+          else delete div.runnerId;
+        } else {
+          delete div.winnerId;
+          delete div.runnerId;
+        }
+      });
+      toast(field === 'clear' ? 'Winner cleared' : 'Winner updated', 'success');
+      render();
+    } catch (_) { /* toasted */ }
+  }
+
   async function setTeamAdvanced(tournamentId, sportId, divisionId, fromStageId, teamId, on) {
     if (!isAdminUi()) return;
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
@@ -5347,10 +5517,11 @@
     const showPointBreakdown = !!bracketId || showGroups || rows.some(function (r) { return r && r.rank; });
     const sport = getSportConfig(tournament, sportId);
     const next = (isAdminUi() && division && fromStageId) ? nextStageAfter(sport, division, fromStageId) : null;
+    const canRank = !!(isAdminUi() && division && fromStageId && !bracketId && rows.length > 1);
     return `
       <div class="t-standings-scroll"><table class="t-standings-table">
         <thead>
-          <tr><th>#</th>${showGroups ? '<th>Group</th><th class="num" title="Rank in group">Grp</th>' : ''}<th>Team</th><th class="num">P</th><th class="num">W</th><th class="num">D</th><th class="num">L</th>${showPointBreakdown ? '<th class="num" title="Points for">PF</th><th class="num" title="Points against">PA</th><th class="num" title="Points difference">PD</th>' : ''}<th class="num">Pts</th>${next ? '<th>Next stage</th>' : ''}</tr>
+          <tr><th>#</th><th>Team</th>${showGroups ? '<th>Group</th><th class="num" title="Rank in group">Grp</th>' : ''}<th class="num">P</th><th class="num">W</th><th class="num">D</th><th class="num">L</th>${showPointBreakdown ? '<th class="num" title="Points for">PF</th><th class="num" title="Points against">PA</th><th class="num" title="Points difference">PD</th>' : ''}<th class="num">Pts</th>${next ? '<th>Next stage</th>' : ''}</tr>
         </thead>
         <tbody>
           ${rows.map(function (r, i) {
@@ -5360,10 +5531,12 @@
             const advanceCell = next
               ? '<td class="t-advance-cell"><button type="button" class="t-btn sm t-advance-btn" data-act="advance-team" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '" data-on="' + (already ? '0' : '1') + '">' + escapeHtml(already ? ('In ' + next.name) : ('Advance to ' + next.name)) + '</button></td>'
               : '';
+            const rankControls = canRank
+              ? '<div class="t-rank-edit"><button type="button" class="t-btn sm t-rank-btn" data-act="rank-up" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '"' + (i === 0 ? ' disabled' : '') + '>↑</button><button type="button" class="t-btn sm t-rank-btn" data-act="rank-down" data-team="' + escapeHtml(r.id) + '" data-from="' + escapeHtml(fromStageId) + '"' + (i === rows.length - 1 ? ' disabled' : '') + '>↓</button></div>'
+              : '';
             return `
               <tr class="rank-${place} is-link" data-open-team="${escapeHtml(r.id)}" data-bracket="${escapeHtml(bracketId || '')}">
-                <td><span class="rank-badge">${place}</span></td>
-                ${showGroups ? '<td>' + escapeHtml(r.groupName || '—') + '</td><td class="num">' + (r.groupRank || '—') + '</td>' : ''}
+                <td><div class="t-rank-cell"><span class="rank-badge">${place}</span>${rankControls}</div></td>
                 <td>
                   <div class="t-team-cell">
                     <span class="t-team-swatch" style="--team-color:${meta.color}"></span>
@@ -5374,6 +5547,7 @@
                     </div>
                   </div>
                 </td>
+                ${showGroups ? '<td>' + escapeHtml(r.groupName || '—') + '</td><td class="num">' + (r.groupRank || '—') + '</td>' : ''}
                 <td class="num">${r.played}</td>
                 <td class="num">${r.won}</td>
                 <td class="num">${r.drawn || 0}</td>
@@ -5386,6 +5560,33 @@
           }).join('')}
         </tbody>
       </table></div>
+    `;
+  }
+
+  function categoryWinnerEditorHtml(tournament, sport, division) {
+    if (!isAdminUi() || !division) return '';
+    const teams = division.teams || [];
+    const winnerId = String(division.winnerId || '');
+    const runnerId = String(division.runnerId || '');
+    function options(selected) {
+      return '<option value="">Not set</option>' + teams.map(function (tm) {
+        if (!tm || !tm.id) return '';
+        return '<option value="' + escapeHtml(tm.id) + '"' + (tm.id === selected ? ' selected' : '') + '>' + escapeHtml(tm.name || 'Team') + '</option>';
+      }).join('');
+    }
+    return `
+      <section class="t-section">
+        <div class="t-section-header"><h2 class="t-section-title">Winner <small>shown on Matches after you set a champion, or when the last stage is complete</small></h2></div>
+        <div class="t-card"><div class="t-card-body t-winner-edit">
+          <label>Champion
+            <select class="t-select" data-act="set-winner">${options(winnerId)}</select>
+          </label>
+          <label>Runner-up
+            <select class="t-select" data-act="set-runner">${options(runnerId)}</select>
+          </label>
+          ${(winnerId || runnerId) ? '<button type="button" class="t-btn sm" data-act="clear-winner">Clear</button>' : ''}
+        </div></div>
+      </section>
     `;
   }
 
@@ -5678,15 +5879,20 @@
         </section>
         ${bracketTables}
         <section class="t-section">
-          <div class="t-section-header"><h2 class="t-section-title">Overall ranking <small>${escapeHtml(stageName)}${stageComplete ? ' · Stage complete' : ''}</small></h2></div>
+          <div class="t-section-header">
+            <h2 class="t-section-title">Overall ranking <small>${escapeHtml(stageName)}${stageComplete ? ' · Stage complete' : ''}${rankingIdsForStage(division, stageId).length ? ' · Edited' : ''}</small></h2>
+            ${isAdminUi() && rankingIdsForStage(division, stageId).length ? '<button type="button" class="t-btn sm" data-act="reset-ranking" data-from="' + escapeHtml(stageId) + '">Reset ranking</button>' : ''}
+          </div>
           <p class="t-mode-note">${populatedGroups.length
             ? 'This ranking is across every group in ' + escapeHtml(stageName) + '.'
             : 'This ranking is for every team in ' + escapeHtml(stageName) + '.'}
+            ${isAdminUi() ? ' Use ↑↓ to change the order.' : ''}
             ${nextStage
               ? ' Advance uses this order to seed ' + escapeHtml(nextStage.name) + ' — rank 2 and rank 6 become Seed 1 and Seed 2.'
               : ''}</p>
           <div class="t-card"><div class="t-card-body">${standingsTableHtml(tournament, sport.id, rankingRows, division, '', emptyStage, stageId)}</div></div>
         </section>
+        ${categoryWinnerEditorHtml(tournament, sport, division)}
         ${isAdminUi() ? `
         <section class="t-section" id="tCompletedSection" style="display:none;">
           <div class="t-section-header"><h2 class="t-section-title">Completed</h2></div>
@@ -5779,6 +5985,41 @@
           btn.getAttribute('data-team'),
           btn.getAttribute('data-on') !== '0'
         );
+      });
+    });
+    root.querySelectorAll('[data-act="rank-up"], [data-act="rank-down"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        moveStageRank(
+          tournament.id,
+          sport.id,
+          division.id,
+          btn.getAttribute('data-from') || stageId,
+          btn.getAttribute('data-team'),
+          btn.getAttribute('data-act') === 'rank-up' ? -1 : 1
+        );
+      });
+    });
+    root.querySelectorAll('[data-act="reset-ranking"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        resetStageRanking(tournament.id, sport.id, division.id, btn.getAttribute('data-from') || stageId);
+      });
+    });
+    root.querySelectorAll('[data-act="set-winner"], [data-act="set-runner"]').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        setCategoryPlace(
+          tournament.id,
+          sport.id,
+          division.id,
+          sel.getAttribute('data-act') === 'set-winner' ? 'winnerId' : 'runnerId',
+          sel.value
+        );
+      });
+    });
+    root.querySelectorAll('[data-act="clear-winner"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setCategoryPlace(tournament.id, sport.id, division.id, 'clear', '');
       });
     });
     root.querySelectorAll('[data-act="drop-stage-team"]').forEach(function (btn) {
@@ -6084,7 +6325,8 @@
   // MATCH CARD RENDERING
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function renderMatchHeadline(match, tournament) {
+  function renderMatchHeadline(match, tournament, opts) {
+    opts = opts || {};
     const sport = getSportConfig(tournament, match.sport);
     const p = participantsOf(match, tournament);
     const aMeta = teamMeta(tournament, match.sport, p.a);
@@ -6120,9 +6362,11 @@
             ${matchSideAckHtml(match, tournament, 'A')}
           </div>
         </div>
-        <div class="t-match-score">${s.label === 'Points'
-          ? '<span class="sets">' + escapeHtml(racketSetScoreLine(match, tournament)) + '</span>'
-          : '<span>' + s.a + '</span><span class="dash">–</span><span>' + s.b + '</span>'}</div>
+        <div class="t-match-score">${(opts && opts.hideScore) || match.status === 'scheduled'
+          ? '<span class="dash">vs</span>'
+          : (s.label === 'Points'
+            ? '<span class="sets">' + escapeHtml(racketSetScoreLine(match, tournament)) + '</span>'
+            : '<span>' + s.a + '</span><span class="dash">–</span><span>' + s.b + '</span>')}</div>
         <div class="t-match-team right ${bWin ? 'winner' : ''}">
           <div class="info">
             <div class="name">${match.categoryId && p.b ? '<button type="button" class="t-text-btn" onclick="event.stopPropagation();window.__tournament.navigate({view:\'tournament\',tournamentId:\'' + tournament.id + '\',sportId:\'' + match.sport + '\',categoryId:\'' + match.categoryId + '\',bracketId:\'' + (match.bracketId || '') + '\',teamId:\'' + p.b + '\',stageId:\'' + (match.stage || '') + '\'})">' + escapeHtml(bMeta.name) + '</button>' : escapeHtml(bMeta.name)}</div>
@@ -6283,7 +6527,7 @@
     if (match.status === 'in_progress') classes.push('live');
     if (match.status === 'completed') classes.push('completed');
     const node = el('div', { class: classes.join(' ') });
-    node.innerHTML = renderMatchHeadline(match, tournament) + (opts.compact ? '' : renderMatchDetail(match, tournament));
+    node.innerHTML = renderMatchHeadline(match, tournament, opts) + ((opts.compact || match.status === 'scheduled') ? '' : renderMatchDetail(match, tournament));
     const adminCanEdit = !!opts.canEdit;
     const scorerCanEdit = !adminCanEdit && canScoreMatch(match);
     if (adminCanEdit || scorerCanEdit) {
@@ -8739,7 +8983,7 @@
             };
           })
         };
-        return pub;
+        return copyDivisionResultFields(d, pub);
       })
     };
   }
@@ -9422,15 +9666,16 @@
     const p = participantsOf(match, tournament);
     const a = teamMeta(tournament, match.sport, p.a);
     const b = teamMeta(tournament, match.sport, p.b);
-    const score = watchScoreText(match, tournament);
-    const mid = score.note === 'vs' ? 'vs' : (score.line || (score.a + '–' + score.b));
+    const hideScore = !!(opts && opts.hideScore) || (match.status !== 'in_progress' && match.status !== 'completed');
+    const score = hideScore ? null : watchScoreText(match, tournament);
+    const mid = hideScore ? 'vs' : (score.note === 'vs' ? 'vs' : (score.line || (score.a + '–' + score.b)));
     const division = findDivision(sport, match.categoryId);
     const showCategory = !!(opts && opts.showCategory && division);
     const bits = [];
     if (showCategory) bits.push(division.name || 'Category');
     bits.push(stageLabelOf(sport, match.stage));
-    if (resultKind(match) === 'walkover') bits.push('Walkover');
-    if (resultKind(match) === 'no_result') bits.push('No result');
+    if (!hideScore && resultKind(match) === 'walkover') bits.push('Walkover');
+    if (!hideScore && resultKind(match) === 'no_result') bits.push('No result');
     return `
       <div class="w-fixture">
         <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${courtOf(match) ? ' · ' + escapeHtml(courtOf(match)) : ''}</div>
@@ -9455,7 +9700,7 @@
     const stageId = opts && opts.stageId;
     return `
       <div class="w-table-scroll"><table class="w-table">
-        <thead><tr><th>#</th>${showGroups ? '<th>Group</th><th>Grp</th>' : ''}<th class="w-team-col">Team</th><th>P</th><th>W</th><th>D</th><th>L</th>${showPointBreakdown ? '<th title="Points for">PF</th><th title="Points against">PA</th><th title="Points difference">PD</th>' : ''}<th>Pts</th></tr></thead>
+        <thead><tr><th>#</th><th class="w-team-col">Team</th>${showGroups ? '<th>Group</th><th>Grp</th>' : ''}<th>P</th><th>W</th><th>D</th><th>L</th>${showPointBreakdown ? '<th title="Points for">PF</th><th title="Points against">PA</th><th title="Points difference">PD</th>' : ''}<th>Pts</th></tr></thead>
         <tbody>
           ${rows.map(function (r, i) {
             const place = r.rank || (i + 1);
@@ -9463,8 +9708,8 @@
             return `
               <tr class="rank-${place}" data-act="team" data-team="${escapeHtml(r.id)}" data-sport="${escapeHtml(sportId)}">
                 <td><span class="w-rank">${place}</span></td>
-                ${showGroups ? '<td>' + escapeHtml(r.groupName || '—') + '</td><td>' + (r.groupRank || '—') + '</td>' : ''}
                 <td class="w-team-col"><span class="w-team"><span class="w-swatch sm" style="background:${meta.color}"></span><span><span>${escapeHtml(meta.name)}</span>${teamLabelsHtml(meta.tags, stageSeedOf(division, sport, stageId, r.id), 'watch')}</span></span></td>
+                ${showGroups ? '<td>' + escapeHtml(r.groupName || '—') + '</td><td>' + (r.groupRank || '—') + '</td>' : ''}
                 <td>${r.played}</td><td>${r.won}</td><td>${r.drawn || 0}</td><td>${r.lost}</td>${showPointBreakdown ? '<td>' + (r.pointsFor || 0) + '</td><td>' + (r.pointsAgainst || 0) + '</td><td>' + ((r.pointsFor || 0) - (r.pointsAgainst || 0)) + '</td>' : ''}<td class="pts">${r.points}</td>
               </tr>
             `;
@@ -9688,12 +9933,47 @@
     });
   }
 
+  function watchWinnersHtml(tournament, sport) {
+    const blocks = podiumBlocks(tournament, sport);
+    if (!blocks.length) return '';
+    const cards = blocks.map(function (block) {
+      const champion = block.ids && block.ids[0] ? teamMeta(tournament, sport.id, block.ids[0]) : null;
+      const runner = block.ids && block.ids[1] ? teamMeta(tournament, sport.id, block.ids[1]) : null;
+      function placeHtml(meta, label, kind) {
+        if (!meta) return '';
+        const names = podiumPlayerNames(tournament, sport.id, meta.id);
+        return `
+          <div class="w-winner-place ${kind}">
+            <span>${escapeHtml(label)}</span>
+            <b>${escapeHtml(meta.name)}</b>
+            ${names.length ? '<small>' + names.map(escapeHtml).join(', ') + '</small>' : ''}
+          </div>
+        `;
+      }
+      return `
+        <article class="w-winner">
+          <h4>${escapeHtml(block.title)}${block.stageName ? '<small>' + escapeHtml(block.stageName) + '</small>' : ''}</h4>
+          <div class="w-winner-row">
+            ${placeHtml(champion, 'Champion', 'gold')}
+            ${placeHtml(runner, 'Runner-up', 'silver')}
+          </div>
+        </article>
+      `;
+    }).join('');
+    return `
+      <section class="w-panel">
+        <h3>Winners</h3>
+        <div class="w-winner-grid">${cards}</div>
+      </section>
+    `;
+  }
+
   function watchUpcomingListHtml(matches, tournament, title, opts) {
     const list = matches || [];
     const showCategory = !!(opts && opts.showCategory);
     const body = list.length
       ? '<div class="w-list">' + list.map(function (m) {
-        return watchFixtureHtml(m, tournament, { showCategory: showCategory });
+        return watchFixtureHtml(m, tournament, { showCategory: showCategory, hideScore: true });
       }).join('') + '</div>'
       : '<p class="w-empty">No upcoming matches' + (title ? ' in ' + escapeHtml(title) : '') + '. An admin chooses which scheduled matches appear here.</p>';
     return `
@@ -9841,7 +10121,7 @@
 
     const heroMatches = categorySummary
       ? live
-      : (categorized ? [] : (live.length ? live : (upcoming[0] ? [upcoming[0]] : [])));
+      : (categorized ? [] : live);
     const hero = heroMatches.length
       ? `<div class="w-hero-row">${heroMatches.map(function (m, i) { return watchScoreboardHtml(m, tournament, i === 0); }).join('')}</div>`
       : (categorySummary
@@ -9898,13 +10178,14 @@
       <div class="w-accent" style="--accent:${sport.color || '#3b82f6'}"></div>
       ${navPills}
       ${panel === 'rules' ? watchRulesPanelHtml(tournament, sport) : `
-      ${categorySummary ? hero + watchUpcomingListHtml(summaryUpcoming, tournament, 'all categories', { showCategory: true }) + summaryCompletedHtml : `
+      ${categorySummary ? hero + watchUpcomingListHtml(summaryUpcoming, tournament, 'all categories', { showCategory: true }) + watchWinnersHtml(tournament, sport) + summaryCompletedHtml : `
       ${stagePills}
       ${focus}
       ${categorized ? '' : hero}
       <div class="w-layout">
         <div class="w-col">
           ${watchUpcomingListHtml(upcoming, tournament, division ? (division.name || 'Category') : stageName)}
+          ${!categorized ? watchWinnersHtml(tournament, sport) : ''}
           ${teamCompletedHtml}
         </div>
         <div class="w-col">

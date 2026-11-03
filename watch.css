@@ -269,6 +269,53 @@ body.watch {
 .w-fix-name { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w-fix-name.right { text-align: right; }
 .w-fix-mid { font-family: 'Barlow Condensed', sans-serif; font-size: 1.25rem; letter-spacing: .04em; color: var(--w-gold); }
+.w-winner-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.w-winner {
+  border: 1px solid var(--w-line);
+  background: rgba(255,255,255,.03);
+  border-radius: 14px;
+  padding: 12px;
+}
+.w-winner h4 {
+  margin: 0 0 8px;
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  font-size: 1rem;
+}
+.w-winner h4 small {
+  display: block;
+  margin-top: 2px;
+  font-family: 'Outfit', sans-serif;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--w-muted);
+  font-size: .75rem;
+}
+.w-winner-row { display: grid; gap: 8px; }
+.w-winner-place {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px;
+  border-radius: 12px;
+}
+.w-winner-place.gold { background: rgba(251, 191, 36, .14); }
+.w-winner-place.silver { background: rgba(148, 163, 184, .12); }
+.w-winner-place span {
+  font-family: 'Barlow Condensed', sans-serif;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-size: .78rem;
+  color: var(--w-muted);
+}
+.w-winner-place b { font-size: 1.05rem; }
+.w-winner-place small { color: var(--w-muted); }
 
 .w-table-scroll { width: 100%; overflow-x: auto; }
 .w-table { width: 100%; min-width: 600px; border-collapse: collapse; }
