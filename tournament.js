@@ -9826,14 +9826,15 @@
       <button type="button" class="w-copy" data-act="copy">Copy link</button>
     `;
 
-    const catPills = categorized
-      ? `<div class="w-pills w-sub">
-          <button type="button" class="w-pill ${categorySummary ? 'is-on' : ''}" data-act="cat" data-cat="">Summary</button>
-          ${divisions.map(function (d) {
-          return `<button type="button" class="w-pill ${division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
-        }).join('')}</div>`
-      : '';
-    const stagePills = categorySummary ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
+    const matchesOn = panel === 'summary' && (!categorized || categorySummary);
+    const navPills = `<div class="w-pills w-sub w-view-tabs" aria-label="Spectator views">
+        <button type="button" class="w-pill ${matchesOn ? 'is-on' : ''}" data-act="watch-panel" data-panel="summary">Matches</button>
+        ${categorized ? divisions.map(function (d) {
+          return `<button type="button" class="w-pill ${panel === 'summary' && division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
+        }).join('') : ''}
+        <button type="button" class="w-pill ${panel === 'rules' ? 'is-on' : ''}" data-act="watch-panel" data-panel="rules">Rules</button>
+      </div>`;
+    const stagePills = categorySummary || panel === 'rules' ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
       const count = pool.filter(function (m) { return m.stage === st.id && m.status === 'in_progress'; }).length;
       return `<button type="button" class="w-pill ${st.id === stageId ? 'is-on' : ''}" data-act="stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${count ? '<i>' + count + '</i>' : ''}</button>`;
     }).join('')}</div>`;
@@ -9846,12 +9847,6 @@
       : (categorySummary
         ? '<section class="w-quiet-card"><h2>No current matches</h2><p>Live matches from every category will appear here.</p></section>'
         : (categorized ? '' : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches appear after an admin marks them.</p></section>`));
-    const viewTabs = `
-      <div class="w-pills w-sub w-view-tabs" aria-label="Spectator views">
-        <button type="button" class="w-pill ${panel === 'summary' ? 'is-on' : ''}" data-act="watch-panel" data-panel="summary">Summary</button>
-        <button type="button" class="w-pill ${panel === 'rules' ? 'is-on' : ''}" data-act="watch-panel" data-panel="rules">Rules</button>
-      </div>`;
-
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
     const brackets = division ? bracketsInStage(division, stageId) : [];
@@ -9901,9 +9896,8 @@
     root.innerHTML = `
       ${watch.preview ? '<div class="w-sample">Sample board — this is not a live tournament.</div>' : ''}
       <div class="w-accent" style="--accent:${sport.color || '#3b82f6'}"></div>
-      ${viewTabs}
+      ${navPills}
       ${panel === 'rules' ? watchRulesPanelHtml(tournament, sport) : `
-      ${catPills}
       ${categorySummary ? hero + watchUpcomingListHtml(summaryUpcoming, tournament, 'all categories', { showCategory: true }) + summaryCompletedHtml : `
       ${stagePills}
       ${focus}
@@ -9963,8 +9957,8 @@
         setWatchParams({
           sport: sport.id,
           panel: btn.getAttribute('data-panel'),
-          st: panel === 'summary' ? stageId : '',
-          cat: panel === 'summary' && division ? division.id : '',
+          st: '',
+          cat: '',
           team: ''
         });
       });
