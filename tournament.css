@@ -1329,6 +1329,7 @@ body.t-member-preview .t-admin-switch {
   color: var(--t-muted);
 }
 .t-stage-skip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.t-tab.is-locked { opacity: .7; }
 .t-standings-table td.t-advance-cell { text-align: right; white-space: nowrap; }
 .t-advance-btn { white-space: nowrap; }
 .t-rank-cell { display: flex; align-items: center; gap: 6px; }
