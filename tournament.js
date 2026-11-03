@@ -2379,6 +2379,20 @@
     return { a: 0, b: 0 };
   }
 
+  function matchHasEnteredScores(match, tournament) {
+    if (!match) return false;
+    const totals = matchPointTotals(match, tournament);
+    if ((totals.a || 0) > 0 || (totals.b || 0) > 0) return true;
+    return !!(match.winner && match.status !== 'completed');
+  }
+
+  function scheduleRowKind(match, tournament) {
+    if (!match) return 'upcoming';
+    if (match.status === 'completed') return 'completed';
+    if (match.status === 'in_progress' || matchHasEnteredScores(match, tournament)) return 'live';
+    return 'upcoming';
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // STANDINGS
   // ═══════════════════════════════════════════════════════════════════════════
@@ -7092,7 +7106,7 @@
       const bEl = row.querySelector('[data-f="b"]');
       const whenEl = row.querySelector('[data-f="when"]');
       const courtEl = row.querySelector('[data-f="court"]') || row.querySelector('[data-f="venue"]');
-      const upcomingEl = row.querySelector('[data-f="upcoming"]');
+        const upcomingEl = row.querySelector('[data-f="upcoming"]');
       const whenVal = whenEl ? whenEl.value : '';
       const court = courtEl ? courtEl.value.trim() : '';
       out.push({
@@ -7103,7 +7117,7 @@
         scheduledAt: whenVal ? fromDatetimeLocal(whenVal) : '',
         venue: court,
         court: court,
-        showUpcoming: !!(upcomingEl && upcomingEl.checked),
+        showUpcoming: upcomingEl ? !!upcomingEl.checked : row.getAttribute('data-upcoming') === '1',
         matchId: row.getAttribute('data-match-id') || ''
       });
     });
@@ -7197,6 +7211,35 @@
       + scheduleTagChipHtml(scheduleTagOf(bracket, teamId));
   }
 
+  function scheduleEntryMatch(entry, sport, scope) {
+    if (!entry) return null;
+    const list = state.matches || [];
+    if (entry.matchId) {
+      for (let i = 0; i < list.length; i++) {
+        if (list[i] && list[i].id === entry.matchId) return list[i];
+      }
+    }
+    if (!entry.id || !sport) return null;
+    const ids = scopeIds(scope);
+    for (let i = 0; i < list.length; i++) {
+      const match = list[i];
+      if (!match || match.scheduleEntryId !== entry.id) continue;
+      if (entryInScope(match, sport.id, ids.categoryId, ids.bracketId)) return match;
+    }
+    return null;
+  }
+
+  function scheduleStatusCellHtml(tournament, sport, entry, scope, editable) {
+    const match = scheduleEntryMatch(entry, sport, scope);
+    const kind = scheduleRowKind(match, tournament);
+    if (kind === 'completed') return '<span class="t-badge status-completed">Completed</span>';
+    if (kind === 'live') return '<span class="t-badge status-in_progress">Live</span>';
+    if (editable) {
+      return '<label class="t-check-line"><input type="checkbox" data-f="upcoming" ' + (entry.showUpcoming ? 'checked' : '') + ' /> Upcoming</label>';
+    }
+    return entry.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : '—';
+  }
+
   function scheduleArgs(tournament, sport, scope) {
     const ids = scopeIds(scope);
     return "'" + tournament.id + "','" + sport.id + "','" + ids.categoryId + "','" + ids.bracketId + "'";
@@ -7251,7 +7294,7 @@
     }
 
     if (!canEdit) {
-      body.innerHTML = renderScheduleReadOnly(tournament, sport, entries, sch.published, scope.bracket);
+      body.innerHTML = renderScheduleReadOnly(tournament, sport, entries, sch.published, scope);
       return;
     }
 
@@ -7297,7 +7340,7 @@
           <td class="t-schedule-vs">${scheduleSideHtml(tournament, sport, e.a, bracket)} <span>vs</span> ${scheduleSideHtml(tournament, sport, e.b, bracket)}</td>
           <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
           <td>${courtOf(e) ? escapeHtml(courtOf(e)) : '—'}</td>
-          <td>${e.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : '—'}</td>
+          <td>${scheduleStatusCellHtml(tournament, sport, e, { division: division, bracket: bracket, categoryId: division.id, bracketId: bracket.id }, false)}</td>
         </tr>
       `;
     }).join('');
@@ -7305,17 +7348,18 @@
       <div class="t-schedule-note">Fixtures from every bracket in ${escapeHtml(stageLabelOf(sport, stageId))}, ordered by date and time. Tags are the short labels set on each bracket team.</div>
       <div class="t-schedule-wrap">
         <table class="t-schedule-table">
-          <thead><tr><th>Bracket</th><th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Upcoming</th></tr></thead>
+          <thead><tr><th>Bracket</th><th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Status</th></tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>
     `;
   }
 
-  function renderScheduleReadOnly(tournament, sport, entries, publishedMeta, bracket) {
+  function renderScheduleReadOnly(tournament, sport, entries, publishedMeta, scope) {
     if (!entries.length) {
       return '<div class="t-schedule-empty">No fixtures in the published schedule.</div>';
     }
+    const bracket = scope && scope.bracket;
     const bracketName = bracket && bracket.name;
     const sorted = sanitizeScheduleEntries(entries);
     const whenNote = publishedMeta && publishedMeta.publishedAt
@@ -7330,7 +7374,7 @@
           <td class="t-schedule-vs">${scheduleSideHtml(tournament, sport, e.a, bracket)} <span>vs</span> ${scheduleSideHtml(tournament, sport, e.b, bracket)}</td>
           <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
           <td>${courtOf(e) ? escapeHtml(courtOf(e)) : '—'}</td>
-          <td>${e.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : '—'}</td>
+          <td>${scheduleStatusCellHtml(tournament, sport, e, scope, false)}</td>
         </tr>
       `;
     }).join('');
@@ -7338,7 +7382,7 @@
       ${whenNote}
       <div class="t-schedule-wrap">
         <table class="t-schedule-table">
-          <thead><tr>${bracketName ? '<th>Bracket</th>' : ''}<th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Upcoming</th></tr></thead>
+          <thead><tr>${bracketName ? '<th>Bracket</th>' : ''}<th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Status</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -7379,7 +7423,7 @@
     const rows = sanitizeScheduleEntries(entries).map(function (e) {
       const stageOpts = scheduleStageOptions(sport, scope, e.stage);
       return `
-        <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}">
+        <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}" data-upcoming="${e.showUpcoming ? '1' : '0'}">
           ${bracketName ? '<td>' + escapeHtml(bracketName) + '</td>' : ''}
           <td><select class="t-select" data-f="stage">${stageOpts}</select></td>
           <td>${participantSelectHtml(tournament, sport, 'a', e.a, pool, scope && scope.bracket)}</td>
@@ -7387,13 +7431,13 @@
           <td>${participantSelectHtml(tournament, sport, 'b', e.b, pool, scope && scope.bracket)}</td>
           <td><input type="datetime-local" class="t-input" data-f="when" value="${escapeHtml(toDatetimeLocal(e.scheduledAt))}" /></td>
           <td><input type="text" class="t-input" data-f="court" value="${escapeHtml(courtOf(e))}" placeholder="Court (optional)" /></td>
-          <td class="t-schedule-flag"><label class="t-check-line"><input type="checkbox" data-f="upcoming" ${e.showUpcoming ? 'checked' : ''} /> Upcoming</label></td>
+          <td class="t-schedule-flag">${scheduleStatusCellHtml(tournament, sport, e, scope, true)}</td>
           <td><button type="button" class="t-btn danger sm" data-remove-row="${escapeHtml(e.id)}">Remove</button></td>
         </tr>
       `;
     }).join('');
     return `
-      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Rows with a time sort by date and time. Check Upcoming for the matches that should appear on the Matches summary.</div>
+      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Rows with a time sort by date and time. Status shows Live or Completed once the match has started or has scores. Otherwise check Upcoming to list it on the Matches summary.</div>
       <div class="t-schedule-wrap">
         <table class="t-schedule-table" id="tScheduleEditor" ${attrs}>
           <thead>
@@ -7405,7 +7449,7 @@
               <th>Side B</th>
               <th>When</th>
               <th>Court</th>
-              <th>Upcoming</th>
+              <th>Status</th>
               <th></th>
             </tr>
           </thead>
