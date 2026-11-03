@@ -5711,7 +5711,10 @@
         if ((m.stage || 'league') !== stageId) return false;
         return categoryMatchVisible(sport, m);
       });
-      const upcoming = scheduledMatchesForBoard(pool);
+      const upcoming = scheduledMatchesForBoard(isAdminUi() ? pool : state.matches.filter(function (m) {
+        if (m.sport !== sport.id || m.categoryId !== division.id) return false;
+        return categoryMatchVisible(sport, m);
+      }));
       const completed = pool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
       fillMatchList('tUpcomingList', 'tUpcomingSection', upcoming, tournament);
       fillMatchList('tCompletedList', 'tCompletedSection', completed, tournament, { compact: true });
@@ -9414,13 +9417,20 @@
     `;
   }
 
-  function watchFixtureHtml(match, tournament) {
+  function watchFixtureHtml(match, tournament, opts) {
     const sport = getSportConfig(tournament, match.sport);
     const p = participantsOf(match, tournament);
     const a = teamMeta(tournament, match.sport, p.a);
     const b = teamMeta(tournament, match.sport, p.b);
     const score = watchScoreText(match, tournament);
     const mid = score.note === 'vs' ? 'vs' : (score.line || (score.a + '–' + score.b));
+    const division = findDivision(sport, match.categoryId);
+    const showCategory = !!(opts && opts.showCategory && division);
+    const bits = [];
+    if (showCategory) bits.push(division.name || 'Category');
+    bits.push(stageLabelOf(sport, match.stage));
+    if (resultKind(match) === 'walkover') bits.push('Walkover');
+    if (resultKind(match) === 'no_result') bits.push('No result');
     return `
       <div class="w-fixture">
         <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${courtOf(match) ? ' · ' + escapeHtml(courtOf(match)) : ''}</div>
@@ -9431,7 +9441,7 @@
           <span class="w-fix-name right">${escapeHtml(b.name)}</span>
           <span class="w-swatch sm" style="background:${b.color}"></span>
         </div>
-        <div class="w-fix-stage">${escapeHtml(stageLabelOf(sport, match.stage))}${resultKind(match) === 'walkover' ? ' · Walkover' : ''}${resultKind(match) === 'no_result' ? ' · No result' : ''}</div>
+        <div class="w-fix-stage">${escapeHtml(bits.join(' · '))}</div>
       </div>
     `;
   }
@@ -9664,6 +9674,35 @@
     }).sort(sortMatches).reverse();
   }
 
+  function upcomingMatchesForWatch(matches) {
+    return (matches || []).filter(function (m) {
+      return m && m.status === 'scheduled' && m.showUpcoming;
+    }).sort(sortMatches);
+  }
+
+  function upcomingMatchesForCategory(matches, sport, categoryId) {
+    const sportId = sport && sport.id;
+    return upcomingMatchesForWatch(matches).filter(function (m) {
+      if (m.sport !== sportId || m.categoryId !== categoryId) return false;
+      return matchStageApplies(sport, m);
+    });
+  }
+
+  function watchUpcomingListHtml(matches, tournament, title, opts) {
+    const list = matches || [];
+    const showCategory = !!(opts && opts.showCategory);
+    const body = list.length
+      ? '<div class="w-list">' + list.map(function (m) {
+        return watchFixtureHtml(m, tournament, { showCategory: showCategory });
+      }).join('') + '</div>'
+      : '<p class="w-empty">No upcoming matches' + (title ? ' in ' + escapeHtml(title) : '') + '. An admin chooses which scheduled matches appear here.</p>';
+    return `
+      <section class="w-panel">
+        <h3>Upcoming ${title ? '<small>' + escapeHtml(title) + '</small>' : ''}${list.length ? '<i>' + list.length + '</i>' : ''}</h3>
+        ${body}
+      </section>`;
+  }
+
   function renderPublicWatch() {
     const top = document.getElementById('wTop');
     const root = document.getElementById('wContent');
@@ -9739,7 +9778,10 @@
     const live = (categorySummary ? pool : stagePool)
       .filter(function (m) { return m.status === 'in_progress'; })
       .sort(sortMatches);
-    const upcoming = stagePool.filter(function (m) { return m.status === 'scheduled' && m.showUpcoming; }).sort(sortMatches);
+    const upcoming = division
+      ? upcomingMatchesForCategory(sportPool, sport, division.id)
+      : upcomingMatchesForWatch(stagePool);
+    const summaryUpcoming = upcomingMatchesForWatch(pool);
     const done = stagePool.filter(function (m) { return m.status === 'completed'; }).sort(sortMatches).reverse();
     const categoryDone = division
       ? completedMatchesForCategory(sportPool, sport, division.id)
@@ -9784,14 +9826,15 @@
       <button type="button" class="w-copy" data-act="copy">Copy link</button>
     `;
 
-    const catPills = categorized
-      ? `<div class="w-pills w-sub">
-          <button type="button" class="w-pill ${categorySummary ? 'is-on' : ''}" data-act="cat" data-cat="">Summary</button>
-          ${divisions.map(function (d) {
-          return `<button type="button" class="w-pill ${division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
-        }).join('')}</div>`
-      : '';
-    const stagePills = categorySummary ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
+    const matchesOn = panel === 'summary' && (!categorized || categorySummary);
+    const navPills = `<div class="w-pills w-sub w-view-tabs" aria-label="Spectator views">
+        <button type="button" class="w-pill ${matchesOn ? 'is-on' : ''}" data-act="watch-panel" data-panel="summary">Matches</button>
+        ${categorized ? divisions.map(function (d) {
+          return `<button type="button" class="w-pill ${panel === 'summary' && division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
+        }).join('') : ''}
+        <button type="button" class="w-pill ${panel === 'rules' ? 'is-on' : ''}" data-act="watch-panel" data-panel="rules">Rules</button>
+      </div>`;
+    const stagePills = categorySummary || panel === 'rules' ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
       const count = pool.filter(function (m) { return m.stage === st.id && m.status === 'in_progress'; }).length;
       return `<button type="button" class="w-pill ${st.id === stageId ? 'is-on' : ''}" data-act="stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${count ? '<i>' + count + '</i>' : ''}</button>`;
     }).join('')}</div>`;
@@ -9804,12 +9847,6 @@
       : (categorySummary
         ? '<section class="w-quiet-card"><h2>No current matches</h2><p>Live matches from every category will appear here.</p></section>'
         : (categorized ? '' : `<section class="w-quiet-card"><h2>No ${escapeHtml(stageName)} matches on the board yet</h2><p>Live scores show here. Upcoming matches appear after an admin marks them.</p></section>`));
-    const viewTabs = `
-      <div class="w-pills w-sub w-view-tabs" aria-label="Spectator views">
-        <button type="button" class="w-pill ${panel === 'summary' ? 'is-on' : ''}" data-act="watch-panel" data-panel="summary">Summary</button>
-        <button type="button" class="w-pill ${panel === 'rules' ? 'is-on' : ''}" data-act="watch-panel" data-panel="rules">Rules</button>
-      </div>`;
-
     const standScope = { stageId: stageId, useTeams: true };
     if (division) standScope.categoryId = division.id;
     const brackets = division ? bracketsInStage(division, stageId) : [];
@@ -9859,19 +9896,15 @@
     root.innerHTML = `
       ${watch.preview ? '<div class="w-sample">Sample board — this is not a live tournament.</div>' : ''}
       <div class="w-accent" style="--accent:${sport.color || '#3b82f6'}"></div>
-      ${viewTabs}
+      ${navPills}
       ${panel === 'rules' ? watchRulesPanelHtml(tournament, sport) : `
-      ${catPills}
-      ${categorySummary ? hero + summaryCompletedHtml : `
+      ${categorySummary ? hero + watchUpcomingListHtml(summaryUpcoming, tournament, 'all categories', { showCategory: true }) + summaryCompletedHtml : `
       ${stagePills}
       ${focus}
       ${categorized ? '' : hero}
       <div class="w-layout">
         <div class="w-col">
-          <section class="w-panel">
-            <h3>Upcoming <small>${escapeHtml(stageName)}</small></h3>
-            ${upcoming.length ? '<div class="w-list">' + upcoming.map(function (m) { return watchFixtureHtml(m, tournament); }).join('') + '</div>' : '<p class="w-empty">No upcoming matches in ' + escapeHtml(stageName) + '. An admin chooses which scheduled matches appear here.</p>'}
-          </section>
+          ${watchUpcomingListHtml(upcoming, tournament, division ? (division.name || 'Category') : stageName)}
           ${teamCompletedHtml}
         </div>
         <div class="w-col">
@@ -9924,8 +9957,8 @@
         setWatchParams({
           sport: sport.id,
           panel: btn.getAttribute('data-panel'),
-          st: panel === 'summary' ? stageId : '',
-          cat: panel === 'summary' && division ? division.id : '',
+          st: '',
+          cat: '',
           team: ''
         });
       });
