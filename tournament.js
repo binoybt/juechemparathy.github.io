@@ -657,6 +657,7 @@
 
   function stageAdvanceBlockedReason(tournament, sport, division, fromStageId) {
     if (!sport || !division || !fromStageId) return 'Choose the stage you are advancing from.';
+    if (stageIsMarkedComplete(division, fromStageId)) return '';
     const label = stageLabelOf(sport, fromStageId);
     const matches = stageMatchList(tournament, sport, division, fromStageId);
     const leftover = unfinishedStageMatches(tournament, sport, division, fromStageId);
@@ -667,10 +668,7 @@
       return leftover.length + ' match' + (leftover.length === 1 ? '' : 'es') + ' in ' + label
         + ' still open. Finish every match and mark the stage complete before advancing.';
     }
-    if (!stageIsMarkedComplete(division, fromStageId)) {
-      return 'Mark ' + label + ' complete before advancing teams to the next stage.';
-    }
-    return '';
+    return 'Mark ' + label + ' complete before advancing teams to the next stage.';
   }
 
   function previousStageUnlocked(sport, division, stageId) {
@@ -2475,7 +2473,7 @@
     const scoped = (matches || []).filter(function (m) {
       if (sportId && m.sport !== sportId) return false;
       if (m.status !== 'completed') return false;
-      if (stageId && m.stage !== stageId) return false;
+      if (stageId && (m.stage || 'league') !== stageId) return false;
       if (scope.categoryId && m.categoryId !== scope.categoryId) return false;
       if (scope.bracketId && m.bracketId !== scope.bracketId) return false;
       // Parish-group standings ignore category fixtures.
@@ -5702,7 +5700,7 @@
       if (blocked) return toast(blocked, 'error');
     }
     const team = (division.teams || []).find(function (tm) { return tm.id === teamId; });
-    if (!team) return;
+    if (!team) return toast('That team is not in this category.', 'error');
     const turningOn = !!on;
     const nextIds = (advancedTeamIds(division, next.id) || []).slice();
     if (turningOn && nextIds.indexOf(teamId) === -1) nextIds.push(teamId);
@@ -7192,11 +7190,10 @@
     if (teams) {
       const opts = ['<option value="">Select team…</option>'].concat(teams.map(function (tm) {
         const label = teamPublicName(tm);
-        const extra = (tm.id && label !== tm.id) ? ' (' + tm.id + ')' : '';
         const tag = scheduleTagOf(bracket, tm.id);
         const tagBit = tag ? ' · ' + tag : '';
         return '<option value="' + escapeHtml(tm.id) + '"' + (tm.id === selected ? ' selected' : '') + '>'
-          + escapeHtml(label) + escapeHtml(extra) + escapeHtml(tagBit) + escapeHtml(teamHereSuffix(tm))
+          + escapeHtml(label) + escapeHtml(tagBit) + escapeHtml(teamHereSuffix(tm))
           + '</option>';
       }));
       return '<select class="t-select" data-f="' + field + '">' + opts.join('') + '</select>';
