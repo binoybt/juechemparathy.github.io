@@ -1791,6 +1791,12 @@
     return canSeeUnpublishedTournaments();
   }
 
+  // SmashAuth may still be resolving isAdmin/isLabUser after a refresh.
+  // Do not treat unpublished tournaments as forbidden until that settles.
+  function unpublishedAccessPending(t) {
+    return !!(t && !isTournamentPublished(t) && state.authLoading);
+  }
+
   function visibleTournaments() {
     return (state.tournaments || []).filter(function (t) {
       return canOpenTournament(t);
@@ -1798,8 +1804,11 @@
   }
 
   function tournamentAccessPending() {
-    if (tournamentOpenToEveryone() || canAccessLab()) return false;
+    // Role (admin/lab/scorer) is used both to open unpublished tournaments and
+    // to keep admin URLs. Wait until SmashAuth settles, even if Tournament is
+    // already open to everyone — otherwise a refresh treats an admin as a member.
     if (state.authLoading) return true;
+    if (tournamentOpenToEveryone() || canAccessLab()) return false;
     if (window.TournamentAccess && !TournamentAccess.isLoaded()) return true;
     return false;
   }
@@ -4802,6 +4811,10 @@
       } else {
         document.getElementById('tContent').innerHTML = '<div class="t-empty">Loading tournament…</div>';
       }
+      return;
+    }
+    if (unpublishedAccessPending(t)) {
+      document.getElementById('tContent').innerHTML = '<div class="t-empty">Loading tournament…</div>';
       return;
     }
     if (!canOpenTournament(t)) {
@@ -10845,6 +10858,10 @@
 
     if ((parsed.view === 'tournament' || parsed.view === 'manage') && parsed.tournamentId && state.ready.tournaments) {
       const requested = state.tournaments.find(function (x) { return x.id === parsed.tournamentId; });
+      if (requested && unpublishedAccessPending(requested)) {
+        renderCheckingAccess();
+        return;
+      }
       if (requested && !canOpenTournament(requested)) {
         toast('This tournament is not published yet', 'error');
         navigate({ view: 'list' }, { replace: true });
