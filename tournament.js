@@ -11,6 +11,7 @@
  *   /watch.html?s=<token>                     → public spectator board (no sign-in)
  *                                             one unique token per tournament; disabled
  *                                             links do not read public score data
+ *   /watch.html?s=<token>&cat=<id>&panel=teams → category Teams tab (name, players, team tags)
  *
  * Firestore layout:
  *   tournaments/{docId}
@@ -9819,7 +9820,17 @@
         sport.id,
         (sport.stageList || []).map(function (st) { return st && st.id; }),
         (sport.divisions || []).map(function (d) {
-          return [d && d.id, skippedStageIds(d), completedStageIds(d), d && d.winnerId, d && d.runnerId, rankingRecord(d)];
+          return [
+            d && d.id,
+            skippedStageIds(d),
+            completedStageIds(d),
+            d && d.winnerId,
+            d && d.runnerId,
+            rankingRecord(d),
+            (d && d.teams || []).map(function (tm) {
+              return [tm && tm.id, tm && tm.name, parseTeamTags(tm && tm.tags), tm && tm.players];
+            })
+          ];
         })
       ];
     });
@@ -10018,7 +10029,7 @@
       token: params.get('s') || '',
       tournamentId: params.get('t') || '',
       sportId: params.get('sport') || '',
-      panel: params.get('panel') === 'rules' ? 'rules' : 'summary',
+      panel: params.get('panel') === 'rules' || params.get('panel') === 'teams' ? params.get('panel') : 'summary',
       stageId: params.get('st') || '',
       categoryId: params.get('cat') || '',
       teamId: params.get('team') || ''
@@ -10463,6 +10474,42 @@
     `;
   }
 
+  function watchCategoryTeamsHtml(tournament, sport, division) {
+    const catName = (division && division.name) || 'Category';
+    const teams = (division && division.teams) || [];
+    if (!teams.length) {
+      return `
+        <section class="w-panel">
+          <h3>Teams <small>${escapeHtml(catName)}</small></h3>
+          <p class="w-empty">No teams in this category yet.</p>
+        </section>`;
+    }
+    const cards = teams.map(function (team) {
+      const meta = teamMeta(tournament, sport.id, team.id);
+      const players = (team.players || []).map(function (p) {
+        return String(p || '').trim();
+      }).filter(Boolean);
+      return `
+        <article class="w-team-card">
+          <div class="w-team-card-head">
+            <span class="w-swatch" style="background:${meta.color}"></span>
+            <div>
+              <b>${escapeHtml(meta.name)}</b>
+              ${teamTagsHtml(parseTeamTags(team.tags), 'watch')}
+            </div>
+          </div>
+          <div class="w-team-players">${players.length
+            ? players.map(function (p) { return '<span>' + escapeHtml(p) + '</span>'; }).join('')
+            : '<span class="w-empty">No players listed</span>'}</div>
+        </article>`;
+    }).join('');
+    return `
+      <section class="w-panel">
+        <h3>Teams <small>${escapeHtml(catName)} · ${teams.length}</small></h3>
+        <div class="w-team-grid">${cards}</div>
+      </section>`;
+  }
+
   function watchUpcomingListHtml(matches, tournament, title, opts) {
     const list = matches || [];
     const showCategory = !!(opts && opts.showCategory);
@@ -10517,7 +10564,6 @@
     const tournament = watch.board;
     const matches = tournament.matches || [];
     const params = watchParams();
-    const panel = params.panel;
     const sports = tournament.sports || [];
     let sport = sports.find(function (s) { return s.id === params.sportId; }) || null;
     if (!sport) {
@@ -10533,6 +10579,8 @@
     const categorized = usesRegistrationCategories(sport);
     const division = categorized && params.categoryId ? findDivision(sport, params.categoryId) : null;
     const categorySummary = categorized && !division;
+    let panel = params.panel;
+    if (panel === 'teams' && (!categorized || !division)) panel = 'summary';
     const sportPool = matches.filter(function (m) {
       return m.sport === sport.id && matchStageApplies(sport, m);
     });
@@ -10608,11 +10656,15 @@
     const navPills = `<div class="w-pills w-sub w-view-tabs" aria-label="Spectator views">
         <button type="button" class="w-pill ${matchesOn ? 'is-on' : ''}" data-act="watch-panel" data-panel="summary">Matches</button>
         ${categorized ? divisions.map(function (d) {
-          return `<button type="button" class="w-pill ${panel === 'summary' && division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
+          return `<button type="button" class="w-pill ${(panel === 'summary' || panel === 'teams') && division && d.id === division.id ? 'is-on' : ''}" data-act="cat" data-cat="${escapeHtml(d.id)}">${escapeHtml(d.name || 'Category')}</button>`;
         }).join('') : ''}
         <button type="button" class="w-pill ${panel === 'rules' ? 'is-on' : ''}" data-act="watch-panel" data-panel="rules">Rules</button>
       </div>`;
-    const stagePills = categorySummary || panel === 'rules' ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
+    const catTabs = division ? `<div class="w-pills w-sub" aria-label="Category views">
+        <button type="button" class="w-pill ${panel !== 'teams' ? 'is-on' : ''}" data-act="cat-panel" data-panel="summary">Overview</button>
+        <button type="button" class="w-pill ${panel === 'teams' ? 'is-on' : ''}" data-act="cat-panel" data-panel="teams">Teams</button>
+      </div>` : '';
+    const stagePills = categorySummary || panel === 'rules' || panel === 'teams' ? '' : `<div class="w-pills w-sub">${stages.map(function (st) {
       const count = pool.filter(function (m) { return m.stage === st.id && m.status === 'in_progress'; }).length;
       const done = division && stageIsMarkedComplete(division, st.id);
       return `<button type="button" class="w-pill ${st.id === stageId ? 'is-on' : ''}" data-act="stage" data-stage="${escapeHtml(st.id)}">${escapeHtml(st.name || st.id)}${done ? ' · Done' : ''}${count ? '<i>' + count + '</i>' : ''}</button>`;
@@ -10678,6 +10730,8 @@
       ${navPills}
       ${panel === 'rules' ? watchRulesPanelHtml(tournament, sport) : `
       ${categorySummary ? hero + watchUpcomingListHtml(summaryUpcoming, tournament, 'all categories', { showCategory: true }) + watchWinnersHtml(tournament, sport) + summaryCompletedHtml : `
+      ${catTabs}
+      ${panel === 'teams' ? watchCategoryTeamsHtml(tournament, sport, division) : `
       ${stagePills}
       ${focus}
       ${categorized ? '' : hero}
@@ -10718,6 +10772,7 @@
       ${!categorized && allLive.length && !live.length ? '<p class="w-hint">A match is on now in another stage. Switch stages to see that score.</p>' : ''}
       `}
       `}
+      `}
     `;
 
     function goSport(id) { setWatchParams({ sport: id, panel: panel, st: '', cat: '', team: '' }); }
@@ -10725,7 +10780,14 @@
     function goCat(id) {
       const nextDiv = id ? findDivision(sport, id) : null;
       const nextStage = nextDiv ? activeStageId(sport, nextDiv) : '';
-      setWatchParams({ sport: sport.id, panel: 'summary', st: nextStage, cat: id, team: '' });
+      const stayOnTeams = panel === 'teams' && !!nextDiv;
+      setWatchParams({
+        sport: sport.id,
+        panel: stayOnTeams ? 'teams' : 'summary',
+        st: stayOnTeams ? '' : nextStage,
+        cat: id,
+        team: ''
+      });
     }
     function goTeam(id) {
       const found = findEntryTeam(tournament, sport.id, id);
@@ -10749,6 +10811,18 @@
           panel: btn.getAttribute('data-panel'),
           st: '',
           cat: '',
+          team: ''
+        });
+      });
+    });
+    shell.querySelectorAll('[data-act="cat-panel"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const nextPanel = btn.getAttribute('data-panel') || 'summary';
+        setWatchParams({
+          sport: sport.id,
+          panel: nextPanel,
+          st: nextPanel === 'teams' ? '' : stageId,
+          cat: division ? division.id : '',
           team: ''
         });
       });
