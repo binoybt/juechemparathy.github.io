@@ -1332,6 +1332,7 @@ body.t-member-preview .t-admin-switch {
 .t-tab.is-locked { opacity: .7; }
 .t-standings-table td.t-advance-cell { text-align: right; white-space: nowrap; }
 .t-advance-btn { white-space: nowrap; }
+.t-advance-btn.is-blocked { opacity: .65; }
 .t-rank-cell { display: flex; align-items: center; gap: 6px; }
 .t-rank-edit { display: inline-flex; flex-direction: column; gap: 2px; }
 .t-rank-btn { min-width: 28px; padding: 0 6px; line-height: 1.2; }
