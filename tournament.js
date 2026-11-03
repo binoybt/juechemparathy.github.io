@@ -2510,7 +2510,7 @@
       } else {
         (matches || []).forEach(function (m) {
           if (sportId && m.sport !== sportId) return;
-          if (m.stage !== stageId) return;
+          if ((m.stage || 'league') !== stageId) return;
           if (m.categoryId || m.bracketId) return;
           const p = participantsOf(m, tournament);
           if (p.a) seen[p.a] = true;
