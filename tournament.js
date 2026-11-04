@@ -2773,6 +2773,7 @@
   function renderList() {
     document.title = 'Church Tournament — All Tournaments';
     const container = document.getElementById('tContent');
+    const desk = scorerDeskMode();
     const tournaments = visibleTournaments().slice().sort(function (a, b) {
       if (isTournamentPublished(a) !== isTournamentPublished(b)) return isTournamentPublished(a) ? 1 : -1;
       if (a.archived !== b.archived) return a.archived ? 1 : -1;
@@ -2782,18 +2783,20 @@
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
         <div>
-          <h1>🏆 Church Tournaments</h1>
-          <p>Every tournament run at the parish — Koinonia, SMASH, and anything you set up. Live scores, standings, and playoff progress in one place.</p>
+          <h1>${desk ? '🎯 Matches to score' : '🏆 Church Tournaments'}</h1>
+          <p>${desk
+            ? 'Open a tournament to see only the matches an admin assigned to you. Full standings stay hidden until Tournament is open to everyone.'
+            : 'Every tournament run at the parish — Koinonia, SMASH, and anything you set up. Live scores, standings, and playoff progress in one place.'}</p>
         </div>
-        <div class="t-emoji">🏆</div>
+        <div class="t-emoji">${desk ? '🎯' : '🏆'}</div>
       </section>
 
       ${renderAccessBanner()}
-      ${renderRosterProfileWarning()}
+      ${desk ? '' : renderRosterProfileWarning()}
 
       <section class="t-section">
         <div class="t-section-header">
-          <h2 class="t-section-title">All tournaments <small>${tournaments.length} total</small></h2>
+          <h2 class="t-section-title">${desk ? 'Your tournaments' : 'All tournaments'} <small>${tournaments.length} total</small></h2>
           ${canCreate ? '<button class="t-btn primary" onclick="window.__tournament.navigate({view:\'create\'})">➕ New tournament</button>' : ''}
         </div>
         <div id="tTournamentGrid"></div>
@@ -2820,7 +2823,7 @@
         <div class="t-empty" style="padding: 50px 20px;">
           <div style="font-size: 2.4rem; margin-bottom: 8px;">🏆</div>
           <div style="color:var(--t-fg);font-size:1.05rem;font-weight:600;margin-bottom:4px;">No tournaments yet</div>
-          <div>${canCreate ? 'Create your first tournament to get started.' : (canSeeUnpublishedTournaments() ? 'No tournaments yet.' : 'No published tournaments yet. Check back soon.')}</div>
+          <div>${canCreate ? 'Create your first tournament to get started.' : (desk ? 'No tournaments have assigned you as a scorer yet.' : (canSeeUnpublishedTournaments() ? 'No tournaments yet.' : 'No published tournaments yet. Check back soon.'))}</div>
           ${canCreate ? `
             <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
               <button class="t-btn primary" onclick="window.__tournament.navigate({view:'create'})">➕ Create tournament</button>
@@ -4898,6 +4901,11 @@
       return;
     }
     if (scorerDeskMode()) {
+      if (!isTournamentScorer(t)) {
+        toast('You are not assigned as a scorer for this tournament', 'error');
+        navigate({ view: 'list' }, { replace: true });
+        return;
+      }
       document.title = t.name + ' — Scoring';
       renderScorerDesk(t);
       return;
