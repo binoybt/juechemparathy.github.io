@@ -106,8 +106,9 @@
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
- *     missing/false → admin / lab-user testing only;
- *     true → all signed-in members
+ *     missing/false → admin / lab-user testing only; scorers still open the
+ *                     page but only see matches assigned to them
+ *     true → all signed-in members; scorers see the same full member view
  *
  *   tournament_matches/{docId}
  *     tournamentId  string
@@ -1573,6 +1574,18 @@
       && isTournamentScorer(tournament));
   }
 
+  function scorerDeskMode() {
+    return !!(hasScorerRole() && !isRealAdmin() && !tournamentOpenToEveryone());
+  }
+
+  function assignedMatchesFor(tournament) {
+    const uid = currentUid();
+    if (!tournament || !uid) return [];
+    return (state.matches || []).filter(function (match) {
+      return match && match.tournamentId === tournament.id && match.scorerUid === uid;
+    }).sort(sortMatches);
+  }
+
   function assertCanScoreMatch(match) {
     const latest = match && state.matches.find(function (item) { return item.id === match.id; });
     const target = latest || match;
@@ -1823,7 +1836,9 @@
 
   function visibleTournaments() {
     return (state.tournaments || []).filter(function (t) {
-      return canOpenTournament(t);
+      if (!canOpenTournament(t)) return false;
+      if (scorerDeskMode() && !isTournamentScorer(t)) return false;
+      return true;
     });
   }
 
@@ -2758,6 +2773,7 @@
   function renderList() {
     document.title = 'Church Tournament — All Tournaments';
     const container = document.getElementById('tContent');
+    const desk = scorerDeskMode();
     const tournaments = visibleTournaments().slice().sort(function (a, b) {
       if (isTournamentPublished(a) !== isTournamentPublished(b)) return isTournamentPublished(a) ? 1 : -1;
       if (a.archived !== b.archived) return a.archived ? 1 : -1;
@@ -2767,18 +2783,20 @@
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#7c3aed;">
         <div>
-          <h1>🏆 Church Tournaments</h1>
-          <p>Every tournament run at the parish — Koinonia, SMASH, and anything you set up. Live scores, standings, and playoff progress in one place.</p>
+          <h1>${desk ? '🎯 Matches to score' : '🏆 Church Tournaments'}</h1>
+          <p>${desk
+            ? 'Open a tournament to see only the matches an admin assigned to you. Full standings stay hidden until Tournament is open to everyone.'
+            : 'Every tournament run at the parish — Koinonia, SMASH, and anything you set up. Live scores, standings, and playoff progress in one place.'}</p>
         </div>
-        <div class="t-emoji">🏆</div>
+        <div class="t-emoji">${desk ? '🎯' : '🏆'}</div>
       </section>
 
       ${renderAccessBanner()}
-      ${renderRosterProfileWarning()}
+      ${desk ? '' : renderRosterProfileWarning()}
 
       <section class="t-section">
         <div class="t-section-header">
-          <h2 class="t-section-title">All tournaments <small>${tournaments.length} total</small></h2>
+          <h2 class="t-section-title">${desk ? 'Your tournaments' : 'All tournaments'} <small>${tournaments.length} total</small></h2>
           ${canCreate ? '<button class="t-btn primary" onclick="window.__tournament.navigate({view:\'create\'})">➕ New tournament</button>' : ''}
         </div>
         <div id="tTournamentGrid"></div>
@@ -2805,7 +2823,7 @@
         <div class="t-empty" style="padding: 50px 20px;">
           <div style="font-size: 2.4rem; margin-bottom: 8px;">🏆</div>
           <div style="color:var(--t-fg);font-size:1.05rem;font-weight:600;margin-bottom:4px;">No tournaments yet</div>
-          <div>${canCreate ? 'Create your first tournament to get started.' : (canSeeUnpublishedTournaments() ? 'No tournaments yet.' : 'No published tournaments yet. Check back soon.')}</div>
+          <div>${canCreate ? 'Create your first tournament to get started.' : (desk ? 'No tournaments have assigned you as a scorer yet.' : (canSeeUnpublishedTournaments() ? 'No tournaments yet.' : 'No published tournaments yet. Check back soon.'))}</div>
           ${canCreate ? `
             <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center;">
               <button class="t-btn primary" onclick="window.__tournament.navigate({view:'create'})">➕ Create tournament</button>
@@ -4824,6 +4842,41 @@
     `;
   }
 
+  function renderScorerDesk(tournament) {
+    const container = document.getElementById('tContent');
+    const assigned = assignedMatchesFor(tournament);
+    const live = assigned.filter(function (m) { return m.status === 'in_progress'; });
+    const upcoming = assigned.filter(function (m) { return m.status === 'scheduled'; });
+    const completed = assigned.filter(function (m) { return m.status === 'completed'; });
+    function sectionHtml(id, title, note) {
+      return `
+        <section class="t-section" id="${id}" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">${title}${note ? '<small>' + note + '</small>' : ''}</h2></div>
+          <div class="t-match-list" id="${id}List"></div>
+        </section>`;
+    }
+    container.innerHTML = `
+      <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#1e293b;">
+        <div>
+          <h1>${escapeHtml(tournament.name)}</h1>
+          <p>Matches assigned to you. An admin starts a match before you can enter scores.</p>
+        </div>
+        <div class="t-emoji">🎯</div>
+      </section>
+      ${assigned.length ? '' : `
+        <section class="t-section">
+          <div class="t-empty">No matches are assigned to you yet. An admin assigns you as the match scorer on the match card.</div>
+        </section>
+      `}
+      ${sectionHtml('tLiveSection', '🔴 Live now', 'enter scores here')}
+      ${sectionHtml('tUpcomingSection', 'Assigned upcoming', '')}
+      ${sectionHtml('tCompletedSection', 'Completed', '')}
+    `;
+    fillMatchList('tLiveSectionList', 'tLiveSection', live, tournament);
+    fillMatchList('tUpcomingSectionList', 'tUpcomingSection', upcoming, tournament);
+    fillMatchList('tCompletedSectionList', 'tCompletedSection', completed, tournament, { compact: true });
+  }
+
   function renderTournament() {
     ensureScorerDirectoryThenRender();
     harvestScheduleEditor();
@@ -4845,6 +4898,16 @@
     if (!canOpenTournament(t)) {
       toast('This tournament is not published yet', 'error');
       navigate({ view: 'list' }, { replace: true });
+      return;
+    }
+    if (scorerDeskMode()) {
+      if (!isTournamentScorer(t)) {
+        toast('You are not assigned as a scorer for this tournament', 'error');
+        navigate({ view: 'list' }, { replace: true });
+        return;
+      }
+      document.title = t.name + ' — Scoring';
+      renderScorerDesk(t);
       return;
     }
     document.title = t.name + ' — Church Tournament';
@@ -6605,6 +6668,7 @@
     const sport = getSportConfig(tournament, sportId);
     return state.matches.filter(function (m) {
       if (m.sport !== sportId) return false;
+      if (scorerDeskMode()) return isAssignedScorer(m);
       if (isAdminUi()) return true;
       if (m.categoryId || m.bracketId) return categoryMatchVisible(sport, m);
       if (m.fromSchedule || m.scheduleEntryId) return scheduleIsPublished(sport);
