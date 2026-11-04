@@ -193,9 +193,22 @@ body.t-member-preview .t-admin-switch {
 }
 .t-hero p { margin-top: 6px; opacity: .92; font-size: .95rem; max-width: 640px; }
 .t-hero .t-emoji { font-size: 3rem; line-height: 1; opacity: .9; }
+.t-sport-icon {
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.2em;
+  object-fit: contain;
+}
+.t-sport-icon.lg,
+.t-hero .t-emoji .t-sport-icon {
+  width: 3rem;
+  height: 3rem;
+  vertical-align: 0;
+}
 @media (max-width: 640px) {
   .t-hero { grid-template-columns: 1fr; text-align: center; }
   .t-hero .t-emoji { font-size: 2.4rem; }
+  .t-hero .t-emoji .t-sport-icon { width: 2.4rem; height: 2.4rem; }
 }
 
 /* ── Sport cards on hub ── */
