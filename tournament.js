@@ -4238,6 +4238,7 @@
   window.__tournament.promptRoundRobin = promptRoundRobin;
   window.__tournament.saveScheduleDraft = saveScheduleDraft;
   window.__tournament.publishSchedule = publishSchedule;
+  window.__tournament.unpublishSchedule = unpublishSchedule;
   window.__tournament.clearSchedule = clearSchedule;
   window.__tournament.setSportMode = setSportMode;
   window.__tournament.setTournamentStarted = setTournamentStarted;
@@ -7361,7 +7362,12 @@
               : '<button class="t-btn sm" type="button" onclick="window.__tournament.generateLeagueSchedule(' + args + ')">↺ Generate round-robin</button>')
             : ''}
           <button class="t-btn sm" type="button" onclick="window.__tournament.saveScheduleDraft(${args})">💾 Save draft</button>
-          <button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule(${args})">📢 Publish</button>
+          ${!published || dirty
+            ? '<button class="t-btn sm primary" type="button" onclick="window.__tournament.publishSchedule(' + args + ')">📢 ' + (published ? 'Publish changes' : 'Publish') + '</button>'
+            : ''}
+          ${published
+            ? '<button class="t-btn sm" type="button" onclick="window.__tournament.unpublishSchedule(' + args + ')">🙈 Unpublish</button>'
+            : ''}
           <button class="t-btn sm danger" type="button" onclick="window.__tournament.clearSchedule(${args})">Clear schedule</button>
         `;
       } else if (published) {
@@ -7973,7 +7979,10 @@
       if (!e.a || !e.b) return toast('Every match needs two sides before publishing', 'error');
       if (e.a === e.b) return toast('A match cannot have the same side on both sides', 'error');
     }
-    if (!confirm('Publish this schedule? Everyone signed in will be able to view it.')) return;
+    const alreadyPublished = scheduleIsPublished(scope.categoryId ? scope.bracket : sport);
+    if (!confirm(alreadyPublished
+      ? 'Publish these schedule changes? Everyone signed in will see the updated fixtures.'
+      : 'Publish this schedule? Everyone signed in will be able to view it.')) return;
 
     const nowIso = new Date().toISOString();
     const who = (state.user && (state.user.email || state.user.displayName)) || '';
@@ -7986,9 +7995,37 @@
       await syncPublishedMatches(t, sport, entries, scope);
       await writeSchedule(t, sportId, scope.categoryId, scope.bracketId, schedule);
       persistLocalEntries(tournamentId, sportId, entries, false, scope.categoryId, scope.bracketId);
-      toast('Schedule published', 'success');
+      toast(alreadyPublished ? 'Schedule changes published' : 'Schedule published', 'success');
       render();
     } catch (_) { /* already toasted */ }
+  }
+
+  async function unpublishSchedule(tournamentId, sportId, categoryId, bracketId) {
+    if (!canEditSchedule()) return toast('Only admins can unpublish the schedule', 'error');
+    harvestScheduleEditor();
+    const { t, sport } = currentScheduleContext(tournamentId, sportId);
+    if (!t || !sport) return;
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    const owner = scope.categoryId ? scope.bracket : sport;
+    if (scope.categoryId && !owner) return toast('Open a bracket before unpublishing its schedule', 'error');
+    if (!scheduleIsPublished(owner)) return toast('This schedule is not published');
+    const where = scope.bracket ? (scope.bracket.name || 'this bracket') : 'this sport';
+    if (!confirm('Unpublish the schedule for ' + where + '? Members will no longer see these fixtures. Your draft is kept so you can publish it again.')) return;
+
+    const entries = sanitizeScheduleEntries(readWorkingEntries(t, sport, scope));
+    const nowIso = new Date().toISOString();
+    const who = (state.user && (state.user.email || state.user.displayName)) || '';
+    const schedule = {
+      draft: entries.length ? { entries: entries, savedAt: nowIso, savedBy: who } : null,
+      published: null
+    };
+    try {
+      await deleteScheduleMatches(t, sport, scope);
+      await writeSchedule(t, sportId, scope.categoryId, scope.bracketId, schedule);
+      persistLocalEntries(tournamentId, sportId, entries, false, scope.categoryId, scope.bracketId);
+      toast('Schedule unpublished', 'success');
+      render();
+    } catch (_) { /* writeSportPatch already toasted */ }
   }
 
   async function deleteScheduleMatches(tournament, sport, scope) {
