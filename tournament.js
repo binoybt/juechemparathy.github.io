@@ -7040,6 +7040,7 @@
       } else if (act === 'upcoming') {
         const next = !match.showUpcoming;
         await ref.update({ showUpcoming: next, updatedAt: FieldValue.serverTimestamp() });
+        rememberLocalMatch(match.id, { showUpcoming: next });
         await mirrorMatchPlan(tournament, match, { showUpcoming: next });
         toast(next ? 'Marked as upcoming' : 'Removed from upcoming');
       } else if (act === 'court') {
@@ -7190,16 +7191,63 @@
     return [];
   }
 
+  function schedulePlanSignature(entries) {
+    return JSON.stringify(sanitizeScheduleEntries(entries).map(function (e) {
+      return [e.id, e.stage, e.a, e.b, e.scheduledAt, e.court || '', e.venue || '', e.matchId || ''];
+    }));
+  }
+
   function scheduleHasUnpublishedChanges(tournament, sport, scope) {
     const ids = scopeIds(scope);
     const key = scheduleKey(tournament.id, sport.id, ids.categoryId, ids.bracketId);
     const local = scheduleEditByKey[key];
-    if (local && local.dirty) return true;
     const sch = scheduleRecord(sport, scope);
-    if (!sch.published) return !!(sch.draft && (sch.draft.entries || []).length);
-    const draftEntries = JSON.stringify(sanitizeScheduleEntries((sch.draft && sch.draft.entries) || []));
-    const pubEntries = JSON.stringify(sanitizeScheduleEntries(sch.published.entries || []));
-    return draftEntries !== pubEntries;
+    if (!sch.published) {
+      if (local && local.dirty && Array.isArray(local.entries)) return !!local.entries.length;
+      return !!(sch.draft && (sch.draft.entries || []).length);
+    }
+    const publishedSig = schedulePlanSignature(sch.published.entries || []);
+    if (local && local.dirty && Array.isArray(local.entries)) {
+      return schedulePlanSignature(local.entries) !== publishedSig;
+    }
+    return schedulePlanSignature((sch.draft && sch.draft.entries) || []) !== publishedSig;
+  }
+
+  function rememberLocalMatch(matchId, fields) {
+    const idx = state.matches.findIndex(function (m) { return m && m.id === matchId; });
+    if (idx >= 0) state.matches[idx] = Object.assign({}, state.matches[idx], fields);
+  }
+
+  async function applyUpcomingFromEditor(tournament, sport, categoryId, bracketId) {
+    harvestScheduleEditor();
+    const scope = scheduleScope(categoryId, bracketId, sport);
+    const entries = readWorkingEntries(tournament, sport, scope);
+    const key = scheduleKey(tournament.id, sport.id, categoryId || '', bracketId || '');
+    const cur = scheduleEditByKey[key] || { entries: entries, dirty: false };
+    const wasDirty = !!cur.dirty;
+    cur.entries = sanitizeScheduleEntries(entries);
+    cur.dirty = true;
+    cur.dirty = wasDirty && scheduleHasUnpublishedChanges(tournament, sport, scope);
+    scheduleEditByKey[key] = cur;
+    try {
+      for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        const match = scheduleEntryMatch(e, sport, scope);
+        if (!match) continue;
+        if (!!match.showUpcoming === !!e.showUpcoming) continue;
+        const next = !!e.showUpcoming;
+        await db.collection('tournament_matches').doc(match.id).update({
+          showUpcoming: next,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+        rememberLocalMatch(match.id, { showUpcoming: next });
+        await mirrorMatchPlan(tournament, Object.assign({}, match, { showUpcoming: next }), { showUpcoming: next });
+      }
+      render();
+    } catch (err) {
+      console.error(err);
+      toast('Could not update upcoming: ' + (err.message || err.code || 'unknown'), 'error');
+    }
   }
 
   function participantSelectHtml(tournament, sport, field, selected, teamList, bracket) {
@@ -7281,10 +7329,11 @@
       if (canEdit) {
         const dirty = scheduleHasUnpublishedChanges(tournament, sport, scope);
         actions.innerHTML = `
-          ${published
-            ? '<span class="t-badge locked">Published</span>'
-            : '<span class="t-badge unlocked">Draft</span>'}
-          ${dirty && published ? '<span class="t-badge nologin">Unpublished changes</span>' : ''}
+          ${dirty && published
+            ? '<span class="t-badge nologin">Unpublished changes</span>'
+            : (published
+              ? '<span class="t-badge locked">Published</span>'
+              : '<span class="t-badge unlocked">Draft</span>')}
           <button class="t-btn sm" type="button" onclick="window.__tournament.addScheduleRow(${args})">➕ Add match</button>
           ${canGenerate
             ? (ids.categoryId
@@ -7451,7 +7500,7 @@
       `;
     }).join('');
     return `
-      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Rows with a time sort by date and time. Status shows Live or Completed once the match has started or has scores. Otherwise check Upcoming to list it on the Matches summary.</div>
+      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Rows with a time sort by date and time. Status shows Live or Completed once the match has started or has scores. Otherwise check Upcoming to list it on the Matches summary — that flag is saved right away.</div>
       <div class="t-schedule-wrap">
         <table class="t-schedule-table" id="tScheduleEditor" ${attrs}>
           <thead>
@@ -7478,10 +7527,15 @@
     if (!table) return;
     const categoryId = table.getAttribute('data-category') || '';
     const bracketId = table.getAttribute('data-bracket') || '';
-    table.addEventListener('input', function () {
+    table.addEventListener('input', function (e) {
+      if (e.target && e.target.getAttribute('data-f') === 'upcoming') return;
       markScheduleDirty(tournament.id, sport.id, categoryId, bracketId);
     });
     table.addEventListener('change', function (e) {
+      if (e.target && e.target.getAttribute('data-f') === 'upcoming') {
+        applyUpcomingFromEditor(tournament, sport, categoryId, bracketId);
+        return;
+      }
       markScheduleDirty(tournament.id, sport.id, categoryId, bracketId);
       if (e.target && e.target.getAttribute('data-f') === 'when') {
         harvestScheduleEditor();
