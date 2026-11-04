@@ -92,6 +92,13 @@ body.watch {
 .w-pills { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; min-width: 0; }
 .w-pills::-webkit-scrollbar { display: none; }
 .w-top .w-pills { flex: 1; }
+.w-pill .t-sport-icon {
+  width: 1.1em;
+  height: 1.1em;
+  vertical-align: -0.2em;
+  object-fit: contain;
+  border-radius: 0;
+}
 .w-pill {
   border: 1px solid var(--w-line);
   background: transparent;
