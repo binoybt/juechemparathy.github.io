@@ -9821,6 +9821,45 @@
     completedPage: {}
   };
 
+  const WATCH_THEME_KEY = 'smash-watch-theme';
+
+  function watchTheme() {
+    try {
+      const stored = localStorage.getItem(WATCH_THEME_KEY);
+      if (stored === 'light' || stored === 'dark') return stored;
+    } catch (_) {}
+    return 'dark';
+  }
+
+  function applyWatchTheme(theme) {
+    const next = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', next === 'light' ? '#f1f5f9' : '#070b14');
+  }
+
+  function setWatchTheme(theme) {
+    const next = theme === 'light' ? 'light' : 'dark';
+    try { localStorage.setItem(WATCH_THEME_KEY, next); } catch (_) {}
+    applyWatchTheme(next);
+    if (isPublicWatchPage()) renderPublicWatch();
+  }
+
+  function watchThemeToggleHtml() {
+    const light = watchTheme() === 'light';
+    return '<button type="button" class="w-copy" data-act="theme" title="'
+      + (light ? 'Switch to dark mode' : 'Switch to light mode') + '">'
+      + (light ? 'Dark' : 'Light') + '</button>';
+  }
+
+  function watchChromeButtonsHtml(opts) {
+    opts = opts || {};
+    const bits = [watchThemeToggleHtml()];
+    if (opts.refresh) bits.push('<button type="button" class="w-copy" data-act="reload-watch">Refresh</button>');
+    if (opts.copy) bits.push('<button type="button" class="w-copy" data-act="copy">Copy link</button>');
+    return bits.join('');
+  }
+
   function mergeWatchMatches(parent, liveMatches) {
     if (!parent) return parent;
     const byId = {};
@@ -10472,34 +10511,12 @@
   function watchWinnersHtml(tournament, sport) {
     const blocks = podiumBlocks(tournament, sport);
     if (!blocks.length) return '';
-    const cards = blocks.map(function (block) {
-      const champion = block.ids && block.ids[0] ? teamMeta(tournament, sport.id, block.ids[0]) : null;
-      const runner = block.ids && block.ids[1] ? teamMeta(tournament, sport.id, block.ids[1]) : null;
-      function placeHtml(meta, label, kind) {
-        if (!meta) return '';
-        const names = podiumPlayerNames(tournament, sport.id, meta.id);
-        return `
-          <div class="w-winner-place ${kind}">
-            <span>${escapeHtml(label)}</span>
-            <b>${escapeHtml(meta.name)}</b>
-            ${names.length ? '<small>' + names.map(escapeHtml).join(', ') + '</small>' : ''}
-          </div>
-        `;
-      }
-      return `
-        <article class="w-winner">
-          <h4>${escapeHtml(block.title)}${block.stageName ? '<small>' + escapeHtml(block.stageName) + '</small>' : ''}</h4>
-          <div class="w-winner-row">
-            ${placeHtml(champion, 'Champion', 'gold')}
-            ${placeHtml(runner, 'Runner-up', 'silver')}
-          </div>
-        </article>
-      `;
-    }).join('');
     return `
-      <section class="w-panel">
+      <section class="w-panel w-podium-panel">
         <h3>Winners</h3>
-        <div class="w-winner-grid">${cards}</div>
+        <div class="t-podium-grid">${blocks.map(function (block) {
+          return podiumBlockHtml(tournament, sport, block, { topOnly: true });
+        }).join('')}</div>
       </section>
     `;
   }
@@ -10565,23 +10582,31 @@
         if (typeof watch.reload === 'function') watch.reload();
       });
     });
+    shell.querySelectorAll('[data-act="theme"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        setWatchTheme(watchTheme() === 'light' ? 'dark' : 'light');
+      });
+    });
   }
 
   function renderPublicWatch() {
     const top = document.getElementById('wTop');
     const root = document.getElementById('wContent');
     if (!top || !root) return;
+    applyWatchTheme(watchTheme());
     if (!watch.ready && !watch.preview) {
       document.title = 'Live scores';
-      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + (watch.autoRefresh ? 'Live' : 'Scores') + '</span></div>';
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + (watch.autoRefresh ? 'Live' : 'Scores') + '</span></div>'
+        + watchChromeButtonsHtml();
       root.innerHTML = '<div class="w-status">Loading scores…</div>';
+      bindWatchToolbar();
       return;
     }
     if (watch.missing || watch.closed || watch.expired || watch.error || !watch.board) {
       document.title = watch.expired ? 'Link expired' : 'Live scores';
       const params = watchParams();
       top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + (watch.expired ? 'Expired' : (watch.autoRefresh ? 'Live' : 'Scores')) + '</span></div>'
-        + (watch.preview || watch.autoRefresh || !params.token ? '' : '<button type="button" class="w-copy" data-act="reload-watch">Refresh</button>');
+        + watchChromeButtonsHtml({ refresh: !watch.preview && !watch.autoRefresh && !!params.token });
       const heading = watch.expired
         ? 'This spectator link has expired'
         : 'Scores stay here';
@@ -10612,8 +10637,10 @@
       sport = (liveMatch && sports.find(function (s) { return s.id === liveMatch.sport; })) || sports[0] || null;
     }
     if (!sport) {
-      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + escapeHtml(tournament.name || 'Live') + '</span></div>';
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><span>' + escapeHtml(tournament.name || 'Live') + '</span></div>'
+        + watchChromeButtonsHtml();
       root.innerHTML = '<div class="w-status">This tournament has no sports yet.</div>';
+      bindWatchToolbar();
       return;
     }
     const divisions = sport.divisions || [];
@@ -10691,8 +10718,7 @@
     top.innerHTML = `
       <div class="w-brand"><img src="icons/smash-logo.png" alt="" /><div><b>${escapeHtml(tournament.name || 'Live')}</b><small>${escapeHtml(watchUpdatedLabel(tournament))}${modeNote}</small></div></div>
       <div class="w-pills">${sportPills}</div>
-      ${watch.preview || watch.autoRefresh ? '' : '<button type="button" class="w-copy" data-act="reload-watch">Refresh</button>'}
-      <button type="button" class="w-copy" data-act="copy">Copy link</button>
+      ${watchChromeButtonsHtml({ refresh: !watch.preview && !watch.autoRefresh, copy: true })}
     `;
 
     const matchesOn = panel === 'summary' && (!categorized || categorySummary);
