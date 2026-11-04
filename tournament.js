@@ -4844,7 +4844,7 @@
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:${sport ? sport.color : '#3b82f6'};--hero-b:#1e293b;">
         <div>
-          <h1>${escapeHtml(t.name)} <small style="opacity:.9;font-family:'Outfit',sans-serif;font-weight:500;font-size:.6em;letter-spacing:normal;text-transform:none;">${isMultiSportTournament(t) ? 'Multi sport' : 'Single sport'} · ${t.format === 'individual' ? 'Individual / Doubles' : 'Team-based'}${tournamentHasStarted(t) ? ' · Started' : ''}${isTournamentPublished(t) ? '' : ' · Unpublished'}</small></h1>
+          <h1>${escapeHtml(t.name)}</h1>
           <p>${sport ? (sport.emoji || '🏅') + ' ' + escapeHtml(sport.label) + (sport.date ? ' · ' + fmtDate(sport.date) : '') : 'Configure sports for this tournament'}</p>
         </div>
         <div class="t-emoji">${sport ? (sport.emoji || '🏆') : '🏆'}</div>
