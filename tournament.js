@@ -106,8 +106,9 @@
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
- *     missing/false → admin / lab-user testing only;
- *     true → all signed-in members
+ *     missing/false → admin / lab-user testing only; scorers still open the
+ *                     page but only see matches assigned to them
+ *     true → all signed-in members; scorers see the same full member view
  *
  *   tournament_matches/{docId}
  *     tournamentId  string
@@ -1573,6 +1574,18 @@
       && isTournamentScorer(tournament));
   }
 
+  function scorerDeskMode() {
+    return !!(hasScorerRole() && !isRealAdmin() && !tournamentOpenToEveryone());
+  }
+
+  function assignedMatchesFor(tournament) {
+    const uid = currentUid();
+    if (!tournament || !uid) return [];
+    return (state.matches || []).filter(function (match) {
+      return match && match.tournamentId === tournament.id && match.scorerUid === uid;
+    }).sort(sortMatches);
+  }
+
   function assertCanScoreMatch(match) {
     const latest = match && state.matches.find(function (item) { return item.id === match.id; });
     const target = latest || match;
@@ -1823,7 +1836,9 @@
 
   function visibleTournaments() {
     return (state.tournaments || []).filter(function (t) {
-      return canOpenTournament(t);
+      if (!canOpenTournament(t)) return false;
+      if (scorerDeskMode() && !isTournamentScorer(t)) return false;
+      return true;
     });
   }
 
@@ -4824,6 +4839,41 @@
     `;
   }
 
+  function renderScorerDesk(tournament) {
+    const container = document.getElementById('tContent');
+    const assigned = assignedMatchesFor(tournament);
+    const live = assigned.filter(function (m) { return m.status === 'in_progress'; });
+    const upcoming = assigned.filter(function (m) { return m.status === 'scheduled'; });
+    const completed = assigned.filter(function (m) { return m.status === 'completed'; });
+    function sectionHtml(id, title, note) {
+      return `
+        <section class="t-section" id="${id}" style="display:none;">
+          <div class="t-section-header"><h2 class="t-section-title">${title}${note ? '<small>' + note + '</small>' : ''}</h2></div>
+          <div class="t-match-list" id="${id}List"></div>
+        </section>`;
+    }
+    container.innerHTML = `
+      <section class="t-hero" style="--hero-a:#3b82f6;--hero-b:#1e293b;">
+        <div>
+          <h1>${escapeHtml(tournament.name)}</h1>
+          <p>Matches assigned to you. An admin starts a match before you can enter scores.</p>
+        </div>
+        <div class="t-emoji">🎯</div>
+      </section>
+      ${assigned.length ? '' : `
+        <section class="t-section">
+          <div class="t-empty">No matches are assigned to you yet. An admin assigns you as the match scorer on the match card.</div>
+        </section>
+      `}
+      ${sectionHtml('tLiveSection', '🔴 Live now', 'enter scores here')}
+      ${sectionHtml('tUpcomingSection', 'Assigned upcoming', '')}
+      ${sectionHtml('tCompletedSection', 'Completed', '')}
+    `;
+    fillMatchList('tLiveSectionList', 'tLiveSection', live, tournament);
+    fillMatchList('tUpcomingSectionList', 'tUpcomingSection', upcoming, tournament);
+    fillMatchList('tCompletedSectionList', 'tCompletedSection', completed, tournament, { compact: true });
+  }
+
   function renderTournament() {
     ensureScorerDirectoryThenRender();
     harvestScheduleEditor();
@@ -4845,6 +4895,11 @@
     if (!canOpenTournament(t)) {
       toast('This tournament is not published yet', 'error');
       navigate({ view: 'list' }, { replace: true });
+      return;
+    }
+    if (scorerDeskMode()) {
+      document.title = t.name + ' — Scoring';
+      renderScorerDesk(t);
       return;
     }
     document.title = t.name + ' — Church Tournament';
@@ -6605,6 +6660,7 @@
     const sport = getSportConfig(tournament, sportId);
     return state.matches.filter(function (m) {
       if (m.sport !== sportId) return false;
+      if (scorerDeskMode()) return isAssignedScorer(m);
       if (isAdminUi()) return true;
       if (m.categoryId || m.bracketId) return categoryMatchVisible(sport, m);
       if (m.fromSchedule || m.scheduleEntryId) return scheduleIsPublished(sport);
