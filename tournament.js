@@ -162,11 +162,31 @@
   // Ready-made templates admins can add when creating/editing a tournament.
   const SPORT_TEMPLATES = {
     badminton:   { id: 'badminton',   label: 'Badminton',    emoji: '🏸', kind: 'racket',     color: '#06b6d4', heroA: '#06b6d4', heroB: '#0e7490' },
-    pickleball:  { id: 'pickleball',  label: 'Pickleball',   emoji: '🥒', kind: 'racket',     color: '#22c55e', heroA: '#22c55e', heroB: '#15803d' },
+    pickleball:  { id: 'pickleball',  label: 'Pickleball',   emoji: '', kind: 'racket',     color: '#22c55e', heroA: '#22c55e', heroB: '#15803d' },
     tabletennis: { id: 'tabletennis', label: 'Table Tennis', emoji: '🏓', kind: 'racket',     color: '#8b5cf6', heroA: '#8b5cf6', heroB: '#5b21b6' },
     volleyball:  { id: 'volleyball',  label: 'Volleyball',   emoji: '🏐', kind: 'volleyball', color: '#d946ef', heroA: '#d946ef', heroB: '#86198f' },
     basketball:  { id: 'basketball',  label: 'Basketball',   emoji: '🏀', kind: 'basketball', color: '#f97316', heroA: '#f97316', heroB: '#c2410c' }
   };
+
+  function isPickleballSport(sport) {
+    if (!sport) return false;
+    if (sport.id === 'pickleball') return true;
+    if (sport.emoji === '🥒') return true;
+    return String(sport.label || '').toLowerCase() === 'pickleball';
+  }
+
+  function sportGlyphText(sport, fallback) {
+    if (isPickleballSport(sport)) return '';
+    return (sport && sport.emoji) || fallback || '';
+  }
+
+  function sportGlyphHtml(sport, fallback, size) {
+    if (isPickleballSport(sport)) {
+      const cls = 't-sport-icon' + (size === 'lg' ? ' lg' : '');
+      return '<img class="' + cls + '" src="icons/pickleball.svg" alt="" />';
+    }
+    return escapeHtml((sport && sport.emoji) || fallback || '🏅');
+  }
 
   const CUSTOM_KINDS = [
     { kind: 'racket',     label: 'Racket / Paddle (multi-category sets)' },
@@ -2800,7 +2820,7 @@
     grid.innerHTML = '';
     tournaments.forEach(function (t) {
       const sports = (t.sports || []).slice(0, 6).map(function (s) {
-        return `<span class="t-sport-chip">${s.emoji || '🏅'} ${escapeHtml(s.label || s.id)}</span>`;
+        return `<span class="t-sport-chip">${sportGlyphHtml(s)} ${escapeHtml(s.label || s.id)}</span>`;
       }).join('');
       const extra = (t.sports || []).length > 6 ? `<span class="t-sport-chip">+${t.sports.length - 6}</span>` : '';
       const formatLabel = (isMultiSportTournament(t) ? 'Multi sport' : 'Single sport')
@@ -2987,7 +3007,7 @@
           <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
             <select class="t-select" id="tfAddSport" style="width:auto;">
               <option value="">Add sport…</option>
-              ${Object.values(SPORT_TEMPLATES).map(function (s) { return `<option value="${s.id}">${s.emoji} ${s.label}</option>`; }).join('')}
+              ${Object.values(SPORT_TEMPLATES).map(function (s) { return `<option value="${s.id}">${(sportGlyphText(s) ? sportGlyphText(s) + ' ' : '') + s.label}</option>`; }).join('')}
               <option value="__custom__">➕ Custom sport…</option>
             </select>
             <span class="t-mode-note" id="tfAddSportNote" style="margin:0;"></span>
@@ -3219,7 +3239,7 @@
       ` : '';
       card.innerHTML = `
         <div class="t-config-sport-head">
-          <div class="label">${s.emoji || '🏅'} ${escapeHtml(s.label)}</div>
+          <div class="label">${sportGlyphHtml(s)} ${escapeHtml(s.label)}</div>
           <span class="kind-chip">${escapeHtml(s.kind)}</span>
           <button class="t-btn danger sm" data-act="remove">Remove</button>
         </div>
@@ -4291,7 +4311,7 @@
       const section = el('section', { class: 't-section' });
       section.innerHTML = `
         <div class="t-section-header">
-          <h2 class="t-section-title">${sport.emoji || '🏅'} ${escapeHtml(sport.label || 'Sport')} <small>${matches.length} match${matches.length === 1 ? '' : 'es'}</small></h2>
+          <h2 class="t-section-title">${sportGlyphHtml(sport)} ${escapeHtml(sport.label || 'Sport')} <small>${matches.length} match${matches.length === 1 ? '' : 'es'}</small></h2>
         </div>
       `;
       const groups = [
@@ -4838,16 +4858,16 @@
     const container = document.getElementById('tContent');
     const tabsHtml = (t.sports || []).map(function (s) {
       const count = visibleMatchesFor(t, s.id).length;
-      return `<button class="t-tab ${s.id === sportId ? 'active' : ''}" style="--sport-color:${s.color || 'var(--t-primary)'}" onclick="window.__tournament.navigate({view:'tournament',tournamentId:'${t.id}',sportId:'${s.id}'})">${s.emoji || '🏅'} ${escapeHtml(s.label)}${count ? '<span class="count">' + count + '</span>' : ''}</button>`;
+      return `<button class="t-tab ${s.id === sportId ? 'active' : ''}" style="--sport-color:${s.color || 'var(--t-primary)'}" onclick="window.__tournament.navigate({view:'tournament',tournamentId:'${t.id}',sportId:'${s.id}'})">${sportGlyphHtml(s)} ${escapeHtml(s.label)}${count ? '<span class="count">' + count + '</span>' : ''}</button>`;
     }).join('');
 
     container.innerHTML = `
       <section class="t-hero" style="--hero-a:${sport ? sport.color : '#3b82f6'};--hero-b:#1e293b;">
         <div>
           <h1>${escapeHtml(t.name)}</h1>
-          <p>${sport ? (sport.emoji || '🏅') + ' ' + escapeHtml(sport.label) + (sport.date ? ' · ' + fmtDate(sport.date) : '') : 'Configure sports for this tournament'}</p>
+          <p>${sport ? sportGlyphHtml(sport) + ' ' + escapeHtml(sport.label) + (sport.date ? ' · ' + fmtDate(sport.date) : '') : 'Configure sports for this tournament'}</p>
         </div>
-        <div class="t-emoji">${sport ? (sport.emoji || '🏆') : '🏆'}</div>
+        <div class="t-emoji">${sport ? sportGlyphHtml(sport, '🏆', 'lg') : '🏆'}</div>
       </section>
 
       ${renderAccessBanner()}
@@ -8224,7 +8244,7 @@
     const teams = sport ? (sport.teams || []) : [];
     const team = teams.find(function (x) { return x.id === ctx.teamId; });
     const teamLabel = team ? teamPublicName(team) : ctx.teamId;
-    const sportLabel = sport ? ((sport.emoji || '') + ' ' + sport.label) : ctx.sportId;
+    const sportLabel = sport ? ((sportGlyphText(sport) ? sportGlyphText(sport) + ' ' : '') + sport.label) : ctx.sportId;
 
     const { modal, body } = getOrCreateModal('tCaptainPicker', 'Assign captain — ' + sportLabel + ' · ' + teamLabel, { wide: false });
     const currentCaptainRow = team && (team.captainUid || team.captainName || team.captainEmail)
@@ -8535,7 +8555,7 @@
         .localeCompare([b.member.firstName, b.member.middleName, b.member.lastName].filter(Boolean).join(' '));
     });
 
-    const title = (sport.emoji || '🏅') + ' ' + (sport.label || sport.id) + ' — ' + teamPublicName(team) + ' roster';
+    const title = ((sportGlyphText(sport, '🏅') ? sportGlyphText(sport, '🏅') + ' ' : '') + (sport.label || sport.id)) + ' — ' + teamPublicName(team) + ' roster';
     const { modal, body } = getOrCreateModal('tRoster', title, { wide: true });
 
     const captainAssigned = team.captainUid || team.captainName || team.captainEmail;
@@ -9506,7 +9526,7 @@
       id: sport.id,
       label: sport.label || sport.id,
       kind: sport.kind || '',
-      emoji: sport.emoji || '🏅',
+      emoji: isPickleballSport(sport) ? '' : (sport.emoji || '🏅'),
       color: sport.color || '#3b82f6',
       date: sport.date || '',
       hasThirdPlace: sport.hasThirdPlace !== false,
@@ -10259,7 +10279,7 @@
     const when = match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time to be set';
     const kicker = [
       live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Next'),
-      sport ? ((sport.emoji || '') + ' ' + (sport.label || '')) : '',
+      sport ? ((sportGlyphText(sport) ? sportGlyphText(sport) + ' ' : '') + (sport.label || '')) : '',
       stage,
       courtOf(match)
     ].filter(Boolean).join(' · ');
@@ -10357,7 +10377,7 @@
     if (sport && String(sport.rulesText || '').trim()) {
       blocks.push(`
         <section class="w-panel">
-          <h3>${escapeHtml((sport.emoji || '') + ' ' + (sport.label || 'Sport'))} rules</h3>
+          <h3>${sportGlyphHtml(sport)} ${escapeHtml(sport.label || 'Sport')} rules</h3>
           <div class="w-rules-text">${rulesToDisplayHtml(sport.rulesText)}</div>
         </section>
       `);
@@ -10766,7 +10786,7 @@
       const n = matches.filter(function (m) {
         return m.sport === s.id && m.status === 'in_progress' && matchStageApplies(s, m);
       }).length;
-      return `<button type="button" class="w-pill ${on ? 'is-on' : ''}" style="--accent:${s.color || '#3b82f6'}" data-act="sport" data-sport="${escapeHtml(s.id)}">${escapeHtml((s.emoji || '') + ' ' + (s.label || s.id))}${n ? '<i>' + n + '</i>' : ''}</button>`;
+      return `<button type="button" class="w-pill ${on ? 'is-on' : ''}" style="--accent:${s.color || '#3b82f6'}" data-act="sport" data-sport="${escapeHtml(s.id)}">${sportGlyphHtml(s)} ${escapeHtml(s.label || s.id)}${n ? '<i>' + n + '</i>' : ''}</button>`;
     }).join('');
     const modeNote = watch.preview ? ' · Sample' : (watch.autoRefresh ? ' · Live' : ' · Refresh for latest');
     top.innerHTML = `
