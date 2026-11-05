@@ -1,70 +1,50 @@
-const CACHE_NAME = 'smash-signup-v11'; // Increment version on each deployment
+const CACHE_NAME = 'smash-signup-v12';
 
-// Install event - activate immediately
-self.addEventListener('install', (event) => {
-  console.log('Service Worker: Installing v11 with network-first strategy');
-  self.skipWaiting(); // Activate immediately
+self.addEventListener('install', function () {
+  // Do not skipWaiting(). The sign-up page used to reload on activate, so
+  // taking over immediately would keep those cached pages refreshing.
 });
 
-// Fetch event - NETWORK FIRST, cache as fallback only
-self.addEventListener('fetch', (event) => {
-  // Skip Firebase/Firestore API calls — let them pass through directly
-  const url = event.request.url;
-  if (url.includes('firestore.googleapis.com') ||
-      url.includes('firebase') ||
-      url.includes('googleapis.com/identitytoolkit') ||
-      url.includes('googleapis.com/securetoken')) {
-    return;
-  }
-
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        // Clone the response
-        const responseToCache = response.clone();
-        
-        // Only cache successful responses
-        if (response.status === 200) {
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseToCache);
-          });
-        }
-        
-        return response;
-      })
-      .catch(() => {
-        // Network failed - try cache as fallback (offline support)
-        return caches.match(event.request).then((cachedResponse) => {
-          if (cachedResponse) {
-            console.log('Service Worker: Serving from cache (offline):', event.request.url);
-            return cachedResponse;
-          }
-          // No cache available either
-          return new Response('Offline - no cached version available', {
-            status: 503,
-            statusText: 'Service Unavailable'
-          });
-        });
-      })
+self.addEventListener('activate', function (event) {
+  event.waitUntil(
+    caches.keys().then(function (names) {
+      return Promise.all(names.filter(function (name) {
+        return name !== CACHE_NAME;
+      }).map(function (name) {
+        return caches.delete(name);
+      }));
+    })
   );
 });
 
-// Activate event - clean up old caches and take control immediately
-self.addEventListener('activate', (event) => {
-  const cacheWhitelist = [CACHE_NAME];
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
-            console.log('Service Worker: Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    }).then(() => {
-      console.log('Service Worker: Activated v11, taking control of all pages');
-      return self.clients.claim(); // Take control of all pages immediately
+self.addEventListener('fetch', function (event) {
+  const request = event.request;
+  if (request.method !== 'GET') return;
+
+  let url;
+  try { url = new URL(request.url); } catch (err) { return; }
+
+  // Same-origin pages and assets only. Intercepting Google auth, the
+  // worker script, or cross-origin APIs can strand a visit in a reload loop.
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname === '/sw.js' || url.pathname.endsWith('/sw.js')) return;
+
+  event.respondWith(
+    fetch(request).then(function (response) {
+      if (response && response.status === 200 && response.type === 'basic') {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then(function (cache) {
+          return cache.put(request, copy);
+        }).catch(function () {});
+      }
+      return response;
+    }).catch(function () {
+      return caches.match(request).then(function (cached) {
+        return cached || new Response('Offline - no cached version available', {
+          status: 503,
+          statusText: 'Service Unavailable'
+        });
+      });
     })
   );
 });
