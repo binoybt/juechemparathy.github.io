@@ -215,26 +215,12 @@
 <!-- Service Worker Registration for PWA -->
 <script>
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js')
-      .then((registration) => {
-        console.log('ServiceWorker registered:', registration);
-        
-        // Check for updates every time page loads
-        registration.update();
-        
-        // When a new service worker is found
-        registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
-          newWorker.addEventListener('statechange', () => {
-            if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-              console.log('New service worker activated - reloading page');
-              window.location.reload();
-            }
-          });
-        });
-      })
-      .catch((error) => {
+  window.addEventListener('load', function () {
+    // Do not reload when a worker activates. skipWaiting + clients.claim
+    // plus location.reload races on slow phones and home-screen apps and
+    // leaves some visitors refreshing the sign-up page forever.
+    navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+      .catch(function (error) {
         console.log('ServiceWorker registration failed:', error);
       });
   });
