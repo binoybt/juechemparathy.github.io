@@ -53,11 +53,13 @@
  *         teams[]     { id, name, players[], tags[], here, hereAt, hereBy }
  *                     tags are optional short labels (seed, home side, group)
  *                     here is a registration check-in flag (team has arrived)
- *         brackets[]  { id, name, stageId, teamIds[], teamTags, schedule, complete, walkoverPoints }
+ *         brackets[]  { id, name, stageId, teamIds[], teamTags, tagsLocked, schedule, complete, walkoverPoints }
  *           stageId   which stage this bracket belongs to (missing = league)
  *           teamTags  { [teamId]: string } admin-only short scheduling tags
  *                     assigned when a team is pulled into the bracket. Not shown
  *                     on spectator, points tables, or member views.
+ *           tagsLocked  when true, those tags cannot be edited until an admin
+ *                       unlocks them on that bracket. Locked tags show in bold.
  *           walkoverPoints / walkoverScore
  *                     Walkover Score for that bracket (match score, e.g. 15 → 15–0).
  *                     The team that shows up still receives the sport's Win table points.
@@ -488,6 +490,10 @@
     return bracketTeamTags(bracket)[teamId] || '';
   }
 
+  function bracketTagsLocked(bracket) {
+    return !!(bracket && bracket.tagsLocked);
+  }
+
   function writeBracketTeamTags(bracket, tags) {
     if (!bracket) return;
     const cleaned = {};
@@ -502,10 +508,22 @@
     else delete bracket.teamTags;
   }
 
-  function scheduleTagChipHtml(tag) {
+  function scheduleTagChipHtml(tag, locked) {
     const value = normalizeScheduleTag(tag);
     if (!value || !isAdminUi()) return '';
-    return ' <span class="t-sched-tag">' + escapeHtml(value) + '</span>';
+    return ' <span class="t-sched-tag' + (locked ? ' is-locked' : '') + '">' + escapeHtml(value) + '</span>';
+  }
+
+  function bracketTeamTagControlHtml(bracket, teamId) {
+    const tag = scheduleTagOf(bracket, teamId);
+    if (bracketTagsLocked(bracket)) {
+      return tag
+        ? '<span class="t-sched-tag is-locked" title="Tags are locked on this bracket">' + escapeHtml(tag) + '</span>'
+        : '';
+    }
+    return '<input type="text" class="t-input sm t-sched-tag-input" data-bracket-tag data-bracket="'
+      + escapeHtml(bracket.id) + '" data-team="' + escapeHtml(teamId) + '" value="' + escapeHtml(tag)
+      + '" maxlength="12" placeholder="Tag" title="Short tag for scheduling" />';
   }
 
   function isAllSchedulesView(bracketId) {
@@ -5700,15 +5718,35 @@
   async function setBracketTeamTag(tournamentId, sportId, divisionId, bracketId, teamId, tag) {
     if (!isAdminUi()) return;
     try {
+      let locked = false;
       await mutateDivision(tournamentId, sportId, divisionId, function (div) {
         const target = (div.brackets || []).find(function (b) { return b.id === bracketId; });
         if (!target || (target.teamIds || []).indexOf(teamId) === -1) return;
+        if (bracketTagsLocked(target)) {
+          locked = true;
+          return;
+        }
         const tags = bracketTeamTags(target);
         const next = normalizeScheduleTag(tag);
         if (next) tags[teamId] = next;
         else delete tags[teamId];
         writeBracketTeamTags(target, tags);
       });
+      if (locked) return toast('Unlock tags on this bracket to edit them.', 'error');
+      render();
+    } catch (_) { /* toasted */ }
+  }
+
+  async function setBracketTagsLocked(tournamentId, sportId, divisionId, bracketId, locked) {
+    if (!isAdminUi()) return;
+    try {
+      await mutateDivision(tournamentId, sportId, divisionId, function (div) {
+        const target = (div.brackets || []).find(function (b) { return b.id === bracketId; });
+        if (!target) return;
+        if (locked) target.tagsLocked = true;
+        else delete target.tagsLocked;
+      });
+      toast(locked ? 'Tags locked on this bracket' : 'Tags unlocked on this bracket', 'success');
       render();
     } catch (_) { /* toasted */ }
   }
@@ -6154,16 +6192,13 @@
         const owner = bracketForTeam(division, tm.id, stageId);
         const checked = !!(owner && owner.id === b.id);
         const elsewhere = !!(owner && owner.id !== b.id);
-        const tag = checked ? scheduleTagOf(b, tm.id) : '';
         return `
           <div class="t-check-line">
             <label class="t-check-main">
               <input type="checkbox" data-bracket-team data-bracket="${escapeHtml(b.id)}" data-team="${escapeHtml(tm.id)}" ${checked ? 'checked' : ''} ${isAdminUi() && !stageLocked ? '' : 'disabled'} />
               <span>${escapeHtml(tm.name || tm.id)}${teamHereSuffix(tm)}</span>
             </label>
-            ${isAdminUi() && checked
-              ? '<input type="text" class="t-input sm t-sched-tag-input" data-bracket-tag data-bracket="' + escapeHtml(b.id) + '" data-team="' + escapeHtml(tm.id) + '" value="' + escapeHtml(tag) + '" maxlength="12" placeholder="Tag" title="Short tag for scheduling" />'
-              : ''}
+            ${isAdminUi() && checked ? bracketTeamTagControlHtml(b, tm.id) : ''}
             ${teamIsHere(tm) ? '<span class="t-badge here">Here</span>' : '<span class="t-badge not-here">Not here</span>'}
             ${elsewhere ? '<em>In ' + escapeHtml(owner.name || 'another bracket') + ' — check to pull in</em>' : ''}
           </div>
@@ -6177,6 +6212,8 @@
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="move-bracket" data-bracket="${escapeHtml(b.id)}" data-dir="-1" ${index === 0 ? 'disabled' : ''}>↑</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="move-bracket" data-bracket="${escapeHtml(b.id)}" data-dir="1" ${index === brackets.length - 1 ? 'disabled' : ''}>↓</button>` : ''}
             <button type="button" class="t-btn sm ${selected ? 'primary' : ''}" data-act="select-bracket" data-bracket="${escapeHtml(b.id)}">${selected ? 'Viewing schedule' : 'Schedule'}</button>
+            ${isAdminUi() ? `<button type="button" class="t-btn sm ${bracketTagsLocked(b) ? 'warn' : ''}" data-act="toggle-tags-lock" data-bracket="${escapeHtml(b.id)}">${bracketTagsLocked(b) ? '🔓 Unlock tags' : '🔒 Lock tags'}</button>` : ''}
+            ${bracketTagsLocked(b) ? '<span class="t-badge locked">Tags locked</span>' : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn sm" data-act="toggle-complete" data-bracket="${escapeHtml(b.id)}">${bracketIsComplete(b) ? 'Reopen' : 'Mark complete'}</button>` : ''}
             ${isAdminUi() && !stageLocked ? `<button type="button" class="t-btn sm" data-act="add-bracket-after" data-bracket="${escapeHtml(b.id)}">Add below</button>` : ''}
             ${isAdminUi() ? `<button type="button" class="t-btn danger sm" data-act="delete-bracket" data-bracket="${escapeHtml(b.id)}">Remove</button>` : ''}
@@ -6272,7 +6309,7 @@
           : (entryStage
             ? 'A team can sit in one bracket of ' + escapeHtml(stageName) + '. After this stage is marked complete, Advance sends a team to ' + escapeHtml(nextStage ? nextStage.name : 'the next stage') + ', seeded in that rank order.'
             : 'Brackets in ' + escapeHtml(stageName) + ' are filled from the teams advanced into this stage. A team can sit in one bracket here, and in a different bracket in another stage.')
-          }${isAdminUi() ? ' After you pull a team in, give it a short tag for the schedule. Tags stay on this admin page only.' : ''}</p>
+          }${isAdminUi() ? ' After you pull a team in, give it a short tag for the schedule. Lock tags on a bracket when they are set — locked tags show in bold. Tags stay on this admin page only.' : ''}</p>
         <div class="t-bracket-grid">${bracketCards || '<div class="t-empty">No brackets in ' + escapeHtml(stageName) + ' yet.' + (isAdminUi() && !stageLocked ? ' <button type="button" class="t-btn sm primary" data-act="add-bracket">➕ Create bracket in ' + escapeHtml(stageName) + '</button>' : '') + '</div>'}</div>
       </section>
       ${scheduleBlock}
@@ -6515,6 +6552,13 @@
     root.querySelectorAll('[data-act="delete-bracket"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         removeBracket(tournament.id, sport.id, division.id, btn.getAttribute('data-bracket'));
+      });
+    });
+    root.querySelectorAll('[data-act="toggle-tags-lock"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const id = btn.getAttribute('data-bracket');
+        const target = findBracket(division, id);
+        setBracketTagsLocked(tournament.id, sport.id, division.id, id, !bracketTagsLocked(target));
       });
     });
     root.querySelectorAll('[data-rename-bracket]').forEach(function (input) {
@@ -7355,7 +7399,7 @@
     const found = findEntryTeam(tournament, sport.id, teamId);
     return '<b>' + escapeHtml(displayName(tournament, sport.id, teamId)) + '</b>'
       + escapeHtml(teamHereSuffix(found && found.team))
-      + scheduleTagChipHtml(scheduleTagOf(bracket, teamId));
+      + scheduleTagChipHtml(scheduleTagOf(bracket, teamId), bracketTagsLocked(bracket));
   }
 
   function scheduleEntryMatch(entry, sport, scope) {
@@ -7419,6 +7463,9 @@
             : (published
               ? '<span class="t-badge locked">Published</span>'
               : '<span class="t-badge unlocked">Draft</span>')}
+          ${scope && scope.bracket && bracketTagsLocked(scope.bracket)
+            ? '<span class="t-badge locked">Tags locked</span>'
+            : ''}
           <button class="t-btn sm" type="button" onclick="window.__tournament.addScheduleRow(${args})">➕ Add match</button>
           ${canGenerate
             ? (ids.categoryId
