@@ -1053,7 +1053,7 @@ body.t-member-preview .t-admin-switch {
 .t-schedule-wrap { overflow-x: auto; margin-top: 8px; }
 .t-schedule-picker { display: inline-flex; align-items: center; gap: 8px; font-size: .82rem; font-weight: 700; color: var(--t-muted); }
 .t-schedule-picker .t-select { min-width: 200px; font-weight: 600; color: var(--t-fg); }
-.t-schedule-table { width: 100%; border-collapse: collapse; font-size: .88rem; min-width: 860px; }
+.t-schedule-table { width: 100%; border-collapse: collapse; font-size: .88rem; table-layout: auto; }
 .t-schedule-table th, .t-schedule-table td {
   padding: 8px 8px; border-bottom: 1px solid #f1f5f9; vertical-align: middle;
 }
@@ -1064,10 +1064,24 @@ body.t-member-preview .t-admin-switch {
 }
 .t-schedule-table .t-select,
 .t-schedule-table .t-input { width: 100%; min-width: 0; }
+.t-schedule-table .t-col-shrink {
+  width: 1%;
+  white-space: nowrap;
+}
+.t-schedule-table .t-col-teams {
+  min-width: 9rem;
+  width: 42%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.t-schedule-table .t-col-when {
+  white-space: nowrap;
+}
+.t-schedule-table .t-col-when .t-input { min-width: 11.5rem; width: auto; }
 .t-schedule-vs { font-size: .95rem; }
 .t-schedule-vs span { color: var(--t-muted); font-weight: 600; padding: 0 8px; }
 .t-schedule-vs-cell {
-  color: var(--t-muted); font-weight: 700; text-align: center; width: 36px;
+  color: var(--t-muted); font-weight: 700; text-align: center; width: 2.2rem;
   font-family: 'Barlow Condensed', sans-serif;
 }
 .t-schedule-note { color: var(--t-muted); font-size: .82rem; margin-bottom: 8px; }
@@ -1515,7 +1529,7 @@ body.t-member-preview .t-admin-switch {
   .t-match-team { justify-content: center; }
   .t-topbar { grid-template-columns: auto 1fr; padding: 8px 12px; }
   .t-nav { grid-column: 1 / -1; justify-content: center; }
-  .t-schedule-table { min-width: 640px; }
+  .t-schedule-table .t-col-teams { min-width: 7rem; }
   .t-division-row, .t-focus-grid { grid-template-columns: 1fr; }
   .t-points-grid { grid-template-columns: 1fr 1fr; }
   .t-podium-top { grid-template-columns: 1fr; }
