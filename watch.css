@@ -310,7 +310,24 @@ body.watch {
   border-radius: 14px;
   padding: 10px 12px;
 }
+.w-fix-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 2px;
+}
+.w-match-no {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 800;
+  letter-spacing: .06em;
+  font-size: .82rem;
+  color: var(--w-gold);
+  text-transform: uppercase;
+  flex: none;
+}
 .w-fix-when, .w-fix-stage { color: var(--w-muted); font-size: .75rem; }
+.w-fix-when { margin-left: auto; text-align: right; }
 .w-fix-row { display: grid; grid-template-columns: auto 1fr auto 1fr auto; gap: 8px; align-items: center; margin: 4px 0; }
 .w-fix-name { font-weight: 700; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w-fix-name.right { text-align: right; }
