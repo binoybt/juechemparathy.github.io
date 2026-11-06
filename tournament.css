@@ -1289,8 +1289,13 @@ body.t-member-preview .t-admin-switch {
   background: #f1f5f9;
   color: #334155;
   font-size: .72rem;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: .02em;
+}
+.t-sched-tag.is-locked {
+  font-weight: 800;
+  color: #0f172a;
+  background: #e2e8f0;
 }
 .t-roster-card.is-link, .t-standings-table tr.is-link { cursor: pointer; }
 .t-standings-table tr.is-link:hover td { background: #f8fafc; }
