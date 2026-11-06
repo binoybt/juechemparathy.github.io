@@ -104,14 +104,17 @@
  *                     Share URL is watch.html?s=token (one-shot read). Live display
  *                     URL is watch.html?s=token&live=1 (onSnapshot auto-refresh).
  *     publicBoard   bool — spectator link is on only while this is true
+ *     spectatorShowTime bool — when true, watch.html shows each match time.
+ *                     missing/false hides times on the spectator board only;
+ *                     admins still see times on the tournament schedule.
  *     clonedFrom    string — source tournament id when created via Clone
  *     createdAt / updatedAt / createdBy
  *
  *   Clone copies sports, scoring, table points, stage names, rules, max roster,
- *   named courts, and team shells (id / name / wards / tags), plus category
- *   teams, category stage overrides, and bracket membership. It does not copy
- *   matches, schedule, rosters, captains, lock state, or Here check-in. Clones
- *   are always unpublished.
+ *   named courts, spectator time visibility, and team shells (id / name /
+ *   wards / tags), plus category teams, category stage overrides, and bracket
+ *   membership. It does not copy matches, schedule, rosters, captains, lock
+ *   state, or Here check-in. Clones are always unpublished.
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
@@ -1023,6 +1026,27 @@
 
   function tournamentUsesCourts(tournament) {
     return tournamentCourts(tournament).length > 1;
+  }
+
+  function spectatorShowsMatchTime(tournament) {
+    return !!(tournament && tournament.spectatorShowTime);
+  }
+
+  function watchMatchTimeText(tournament, match, fallback) {
+    if (!spectatorShowsMatchTime(tournament)) return '';
+    if (match && match.scheduledAt) return fmtDateTime(match.scheduledAt);
+    return fallback || '';
+  }
+
+  function watchWhenLine(tournament, match, extras, emptyFallback) {
+    const bits = [];
+    const when = watchMatchTimeText(tournament, match, '');
+    if (when) bits.push(when);
+    (extras || []).forEach(function (bit) {
+      if (bit) bits.push(bit);
+    });
+    if (!bits.length) return emptyFallback || '';
+    return bits.join(' · ');
   }
 
   function displayCourtOf(tournament, item) {
@@ -3181,6 +3205,9 @@
               <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="When enabled, any signed-in user can view rosters that have been locked. Unlocked rosters remain visible only to team members, the team captain, and admins.">
                 <input type="checkbox" id="tfRevealLocked" ${draft.revealLockedRosters ? 'checked' : ''}/> Reveal locked rosters to everyone signed in
               </label>
+              <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="Off by default. Admins still see match times on the tournament schedule. Turn this on to show each match's time on the public spectator link.">
+                <input type="checkbox" id="tfSpectatorShowTime" ${draft.spectatorShowTime ? 'checked' : ''}/> Show match times on the spectator board
+              </label>
             </div>
           </div>
         </div>
@@ -3826,6 +3853,7 @@
     draft.archived = document.getElementById('tfArchived').checked;
     draft.published = !!(document.getElementById('tfPublished') && document.getElementById('tfPublished').checked);
     draft.revealLockedRosters = document.getElementById('tfRevealLocked').checked;
+    draft.spectatorShowTime = !!(document.getElementById('tfSpectatorShowTime') && document.getElementById('tfSpectatorShowTime').checked);
     draft.courts = harvestCourtsFromDom();
     const modeSel = document.getElementById('tfSportMode');
     if (modeSel) draft.sportMode = modeSel.value === 'multi' ? 'multi' : 'single';
@@ -3907,6 +3935,7 @@
       archived: !!draft.archived,
       published: !!draft.published,
       revealLockedRosters: !!draft.revealLockedRosters,
+      spectatorShowTime: !!draft.spectatorShowTime,
       courts: tournamentCourts(draft),
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
@@ -4014,6 +4043,7 @@
       sports: sports,
       rules: src.rules ? JSON.parse(JSON.stringify(src.rules)) : null,
       revealLockedRosters: !!src.revealLockedRosters,
+      spectatorShowTime: !!src.spectatorShowTime,
       courts: tournamentCourts(src),
       archived: false,
       published: false
@@ -9972,6 +10002,7 @@
       format: tournament.format || 'teams',
       sportMode: sportModeOf(tournament),
       courts: tournamentCourts(tournament),
+      spectatorShowTime: spectatorShowsMatchTime(tournament),
       rulesText: isMultiSportTournament(tournament) ? rulesText(tournament.rules) : '',
       sports: (tournament.sports || []).map(sanitizePublicSport),
       matches: visible.map(function (match) { return sanitizePublicMatch(match, tournament); }),
@@ -10365,7 +10396,7 @@
         match.playerB
       ];
     });
-    return JSON.stringify([tournamentCourts(board), stages, matches]);
+    return JSON.stringify([tournamentCourts(board), spectatorShowsMatchTime(board), stages, matches]);
   }
 
   function publicWatchIsOpen(data) {
@@ -10653,7 +10684,12 @@
     const live = match.status === 'in_progress';
     const kind = resultKind(match);
     const stage = stageLabelOf(sport, match.stage);
-    const when = match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time to be set';
+    const metaBits = [
+      watchMatchTimeText(tournament, match, 'Time to be set'),
+      kind === 'draw' ? 'Draw' : '',
+      kind === 'walkover' ? 'Walkover' : '',
+      kind === 'no_result' ? 'No result' : ''
+    ].filter(Boolean);
     const kicker = [
       live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Next'),
       sport ? ((sportGlyphText(sport) ? sportGlyphText(sport) + ' ' : '') + (sport.label || '')) : '',
@@ -10678,7 +10714,7 @@
           </button>
         </div>
         ${detail ? '<div class="w-detail">' + escapeHtml(detail) + '</div>' : ''}
-        <div class="w-meta">${escapeHtml(when)}${kind === 'draw' ? ' · Draw' : ''}${kind === 'walkover' ? ' · Walkover' : ''}${kind === 'no_result' ? ' · No result' : ''}</div>
+        ${metaBits.length ? '<div class="w-meta">' + escapeHtml(metaBits.join(' · ')) + '</div>' : ''}
       </article>
     `;
   }
@@ -10698,9 +10734,10 @@
     bits.push(stageLabelOf(sport, match.stage));
     if (!hideScore && resultKind(match) === 'walkover') bits.push('Walkover');
     if (!hideScore && resultKind(match) === 'no_result') bits.push('No result');
+    const whenLine = watchWhenLine(tournament, match, [displayCourtOf(tournament, match)], '');
     return `
       <div class="w-fixture">
-        <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${displayCourtOf(tournament, match) ? ' · ' + escapeHtml(displayCourtOf(tournament, match)) : ''}</div>
+        ${whenLine ? '<div class="w-fix-when">' + escapeHtml(whenLine) + '</div>' : ''}
         <div class="w-fix-row">
           <span class="w-swatch sm" style="background:${a.color}"></span>
           <span class="w-fix-name">${escapeHtml(a.name)}</span>
@@ -10868,9 +10905,13 @@
           </div>
         </div>`;
     }
+    const whenLine = watchWhenLine(tournament, match, [
+      displayCourtOf(tournament, match),
+      sport ? stageLabelOf(sport, match.stage) : ''
+    ], 'Completed');
     return `
       <article class="w-result">
-        <div class="w-result-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Completed')}${displayCourtOf(tournament, match) ? ' · ' + escapeHtml(displayCourtOf(tournament, match)) : ''}${sport ? ' · ' + escapeHtml(stageLabelOf(sport, match.stage)) : ''}</div>
+        ${whenLine ? '<div class="w-result-when">' + escapeHtml(whenLine) + '</div>' : ''}
         <div class="w-result-row">
           ${sideHtml(a, '')}
           ${setsHtml}
