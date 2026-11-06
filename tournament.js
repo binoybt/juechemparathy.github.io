@@ -22,6 +22,8 @@
  *                   multi  → several sports, tournament rules apply to all
  *                   missing → multi when more than one sport is saved, else single
  *     format        'teams' | 'individual'
+ *     courtCount    number of courts (default 1). Schedule shows a Court column
+ *                   only when this is 2 or more.
  *     started       bool — once true, members see standings, the current match,
  *                   and upcoming matches for category-based sports
  *     teams[]       { id, name, wards }             — legacy tournament-level roster
@@ -123,7 +125,7 @@
  *     teamA / teamB     — for teams format
  *     playerA / playerB — for individual format
  *     scheduledAt   ISO string
- *     court         string — optional. Blank when there is one court, or none.
+ *     court         string — used when the tournament has 2+ courts. Blank for one court.
  *     venue         string — kept equal to court so older boards still show it
  *     showUpcoming  bool — admin marks which scheduled matches appear in Upcoming
  *     status        'scheduled' | 'in_progress' | 'completed'
@@ -987,6 +989,47 @@
   function courtOf(item) {
     if (!item) return '';
     return String(item.court || item.venue || '').trim();
+  }
+
+  function courtCountOf(tournament) {
+    const n = parseInt(tournament && tournament.courtCount, 10);
+    if (!isFinite(n) || n < 1) return 1;
+    return Math.min(20, n);
+  }
+
+  function tournamentUsesCourts(tournament) {
+    return courtCountOf(tournament) > 1;
+  }
+
+  function displayCourtOf(tournament, item) {
+    if (!tournamentUsesCourts(tournament)) return '';
+    return courtOf(item);
+  }
+
+  function courtHeadHtml(tournament) {
+    return tournamentUsesCourts(tournament) ? '<th class="t-col-shrink">Court</th>' : '';
+  }
+
+  function courtSelectHtml(tournament, selected) {
+    const n = courtCountOf(tournament);
+    const cur = String(selected || '').trim();
+    const names = [];
+    for (let i = 1; i <= n; i++) names.push('Court ' + i);
+    if (cur && names.indexOf(cur) === -1) names.push(cur);
+    const opts = ['<option value="">Court…</option>'].concat(names.map(function (name) {
+      return '<option value="' + escapeHtml(name) + '"' + (name === cur ? ' selected' : '') + '>'
+        + escapeHtml(name) + '</option>';
+    }));
+    return '<select class="t-select" data-f="court">' + opts.join('') + '</select>';
+  }
+
+  function courtCellHtml(tournament, item, opts) {
+    if (!tournamentUsesCourts(tournament)) return '';
+    if (opts && opts.editable) {
+      return '<td class="t-col-shrink">' + courtSelectHtml(tournament, courtOf(item)) + '</td>';
+    }
+    const label = courtOf(item);
+    return '<td class="t-col-shrink">' + (label ? escapeHtml(label) : '—') + '</td>';
   }
 
   function scheduledAtIso(value) {
@@ -3033,6 +3076,11 @@
                   <option value="individual" ${draft.format === 'individual' ? 'selected' : ''}>Individual / Doubles</option>
                 </select>
               </div>
+              <div class="t-form-field">
+                <label>Courts</label>
+                <input type="number" min="1" max="20" class="t-input" id="tfCourtCount" value="${courtCountOf(draft)}" />
+                <p class="t-mode-note" style="margin:4px 0 0;">Default is 1. The schedule shows a Court column only when this is 2 or more.</p>
+              </div>
             </div>
             <p class="t-mode-note" id="tfSportModeNote"></p>
             <div id="tfArchivedWrap" style="margin-top:12px;display:flex;flex-direction:column;gap:8px;">
@@ -3687,6 +3735,8 @@
     draft.archived = document.getElementById('tfArchived').checked;
     draft.published = !!(document.getElementById('tfPublished') && document.getElementById('tfPublished').checked);
     draft.revealLockedRosters = document.getElementById('tfRevealLocked').checked;
+    const courtInput = document.getElementById('tfCourtCount');
+    draft.courtCount = courtCountOf({ courtCount: courtInput ? courtInput.value : 1 });
     const modeSel = document.getElementById('tfSportMode');
     if (modeSel) draft.sportMode = modeSel.value === 'multi' ? 'multi' : 'single';
     if (!draft.name) return toast('Tournament name is required', 'error');
@@ -3767,6 +3817,7 @@
       archived: !!draft.archived,
       published: !!draft.published,
       revealLockedRosters: !!draft.revealLockedRosters,
+      courtCount: courtCountOf(draft),
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
     };
@@ -3873,6 +3924,7 @@
       sports: sports,
       rules: src.rules ? JSON.parse(JSON.stringify(src.rules)) : null,
       revealLockedRosters: !!src.revealLockedRosters,
+      courtCount: courtCountOf(src),
       archived: false,
       published: false
     };
@@ -4864,12 +4916,12 @@
     root.innerHTML = `
       <div class="t-schedule-wrap"><table class="t-schedule-table t-summary-upcoming">
         <thead><tr>
-          ${split ? '<th>Category</th>' : ''}
-          <th>Bracket</th>
-          <th>Stage</th>
-          <th>Match</th>
-          <th>When</th>
-          <th>Court</th>
+          ${split ? '<th class="t-col-shrink">Category</th>' : ''}
+          <th class="t-col-shrink">Bracket</th>
+          <th class="t-col-shrink">Stage</th>
+          <th class="t-col-teams">Match</th>
+          <th class="t-col-shrink">When</th>
+          ${courtHeadHtml(tournament)}
         </tr></thead>
         <tbody>
           ${rows.map(function (match) {
@@ -4878,12 +4930,12 @@
             const bracketName = matchBracketName(tournament, match) || '—';
             return `
               <tr>
-                ${split ? '<td>' + escapeHtml((division && division.name) || 'Category') + '</td>' : ''}
-                <td>${escapeHtml(bracketName)}</td>
-                <td>${escapeHtml(stageLabelOf(sport, match.stage))}</td>
-                <td class="t-schedule-vs"><b>${escapeHtml(displayName(tournament, sport.id, people.a))}</b> <span>vs</span> <b>${escapeHtml(displayName(tournament, sport.id, people.b))}</b></td>
-                <td>${match.scheduledAt ? escapeHtml(fmtDateTime(match.scheduledAt)) : '—'}</td>
-                <td>${courtOf(match) ? escapeHtml(courtOf(match)) : '—'}</td>
+                ${split ? '<td class="t-col-shrink">' + escapeHtml((division && division.name) || 'Category') + '</td>' : ''}
+                <td class="t-col-shrink">${escapeHtml(bracketName)}</td>
+                <td class="t-col-shrink">${escapeHtml(stageLabelOf(sport, match.stage))}</td>
+                <td class="t-schedule-vs t-col-teams"><b>${escapeHtml(displayName(tournament, sport.id, people.a))}</b> <span>vs</span> <b>${escapeHtml(displayName(tournament, sport.id, people.b))}</b></td>
+                <td class="t-col-shrink t-col-when">${match.scheduledAt ? escapeHtml(fmtDateTime(match.scheduledAt)) : '—'}</td>
+                ${courtCellHtml(tournament, match)}
               </tr>
             `;
           }).join('')}
@@ -6866,7 +6918,7 @@
           <span class="t-badge status-${match.status || 'scheduled'}">${escapeHtml(STATUS_LABEL[match.status] || 'Scheduled')}</span>
           ${match.status === 'scheduled' && match.showUpcoming ? '<span class="t-badge upcoming">Upcoming</span>' : ''}
           ${match.scorerName ? '<span class="t-badge scorer">Scorer: ' + escapeHtml(match.scorerName) + '</span>' : ''}
-          ${courtOf(match) ? '<span class="t-badge">🏟 ' + escapeHtml(courtOf(match)) + '</span>' : ''}
+          ${displayCourtOf(tournament, match) ? '<span class="t-badge">🏟 ' + escapeHtml(displayCourtOf(tournament, match)) + '</span>' : ''}
           ${match.scheduledAt ? '<span class="t-badge">🕒 ' + escapeHtml(fmtDateTime(match.scheduledAt)) + '</span>' : ''}
         </div>
       </div>
@@ -7074,7 +7126,9 @@
           btns.push('<button class="t-btn primary sm" data-act="score">✏ Edit scores</button>');
           btns.push('<button class="t-btn sm" data-act="reopen">↺ Reopen</button>');
         }
-        btns.push('<button class="t-btn sm" data-act="court">' + (courtOf(match) ? 'Change court' : 'Set court') + '</button>');
+        if (tournamentUsesCourts(tournament)) {
+          btns.push('<button class="t-btn sm" data-act="court">' + (courtOf(match) ? 'Change court' : 'Set court') + '</button>');
+        }
         btns.push('<button class="t-btn sm" data-act="draw">Draw</button>');
         btns.push('<button class="t-btn sm" data-act="walkover">Walkover</button>');
         btns.push('<button class="t-btn sm" data-act="noresult">No result</button>');
@@ -7224,7 +7278,8 @@
         await mirrorMatchPlan(tournament, match, { showUpcoming: next });
         toast(next ? 'Marked as upcoming' : 'Removed from upcoming');
       } else if (act === 'court') {
-        const val = prompt('Court for this match. Leave blank when there is one court, or none.', courtOf(match));
+        if (!tournamentUsesCourts(tournament)) return toast('This tournament uses one court, so matches do not need a court label.', 'info');
+        const val = prompt('Court for this match (Court 1–' + courtCountOf(tournament) + ').', courtOf(match) || 'Court 1');
         if (val === null) return;
         const court = String(val).trim();
         await ref.update({ court: court, venue: court, updatedAt: FieldValue.serverTimestamp() });
@@ -7304,10 +7359,10 @@
       const courtEl = row.querySelector('[data-f="court"]') || row.querySelector('[data-f="venue"]');
         const upcomingEl = row.querySelector('[data-f="upcoming"]');
       const whenVal = whenEl ? whenEl.value : '';
-      const court = courtEl ? courtEl.value.trim() : '';
+      const court = courtEl ? courtEl.value.trim() : (row.getAttribute('data-court') || '');
       out.push({
         id: row.getAttribute('data-entry-id'),
-        stage: stageEl ? stageEl.value : 'league',
+        stage: stageEl ? stageEl.value : (row.getAttribute('data-stage') || 'league'),
         a: aEl ? aEl.value.trim() : '',
         b: bEl ? bEl.value.trim() : '',
         scheduledAt: whenVal ? fromDatetimeLocal(whenVal) : '',
@@ -7586,12 +7641,11 @@
       const bracket = row.bracket;
       return `
         <tr>
-          <td>${escapeHtml(bracket.name || 'Bracket')}</td>
-          <td><span class="t-badge stage-${escapeHtml(e.stage)}">${escapeHtml(stageLabelOf(sport, e.stage))}</span></td>
-          <td class="t-schedule-vs">${scheduleSideHtml(tournament, sport, e.a, bracket)} <span>vs</span> ${scheduleSideHtml(tournament, sport, e.b, bracket)}</td>
-          <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
-          <td>${courtOf(e) ? escapeHtml(courtOf(e)) : '—'}</td>
-          <td>${scheduleStatusCellHtml(tournament, sport, e, { division: division, bracket: bracket, categoryId: division.id, bracketId: bracket.id }, false)}</td>
+          <td class="t-col-shrink">${escapeHtml(bracket.name || 'Bracket')}</td>
+          <td class="t-schedule-vs t-col-teams">${scheduleSideHtml(tournament, sport, e.a, bracket)} <span>vs</span> ${scheduleSideHtml(tournament, sport, e.b, bracket)}</td>
+          <td class="t-col-shrink t-col-when">${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
+          ${courtCellHtml(tournament, e)}
+          <td class="t-col-shrink">${scheduleStatusCellHtml(tournament, sport, e, { division: division, bracket: bracket, categoryId: division.id, bracketId: bracket.id }, false)}</td>
         </tr>
       `;
     }).join('');
@@ -7599,7 +7653,7 @@
       <div class="t-schedule-note">Fixtures from every bracket in ${escapeHtml(stageLabelOf(sport, stageId))}, ordered by date and time. Tags are the short labels set on each bracket team.</div>
       <div class="t-schedule-wrap">
         <table class="t-schedule-table">
-          <thead><tr><th>Bracket</th><th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Status</th></tr></thead>
+          <thead><tr><th class="t-col-shrink">Bracket</th><th class="t-col-teams">Match</th><th class="t-col-shrink">When</th>${courtHeadHtml(tournament)}<th class="t-col-shrink">Status</th></tr></thead>
           <tbody>${tableRows}</tbody>
         </table>
       </div>
@@ -7611,7 +7665,7 @@
       return '<div class="t-schedule-empty">No fixtures in the published schedule.</div>';
     }
     const bracket = scope && scope.bracket;
-    const bracketName = bracket && bracket.name;
+    const showStage = !bracket;
     const sorted = sanitizeScheduleEntries(entries);
     const whenNote = publishedMeta && publishedMeta.publishedAt
       ? '<div class="t-schedule-note">Published ' + escapeHtml(fmtDateTime(publishedMeta.publishedAt))
@@ -7620,12 +7674,11 @@
     const rows = sorted.map(function (e) {
       return `
         <tr>
-          ${bracketName ? '<td>' + escapeHtml(bracketName) + '</td>' : ''}
-          <td><span class="t-badge stage-${escapeHtml(e.stage)}">${escapeHtml(stageLabelOf(sport, e.stage))}</span></td>
-          <td class="t-schedule-vs">${scheduleSideHtml(tournament, sport, e.a, bracket)} <span>vs</span> ${scheduleSideHtml(tournament, sport, e.b, bracket)}</td>
-          <td>${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
-          <td>${courtOf(e) ? escapeHtml(courtOf(e)) : '—'}</td>
-          <td>${scheduleStatusCellHtml(tournament, sport, e, scope, false)}</td>
+          ${showStage ? '<td class="t-col-shrink"><span class="t-badge stage-' + escapeHtml(e.stage) + '">' + escapeHtml(stageLabelOf(sport, e.stage)) + '</span></td>' : ''}
+          <td class="t-schedule-vs t-col-teams">${scheduleSideHtml(tournament, sport, e.a, bracket)} <span>vs</span> ${scheduleSideHtml(tournament, sport, e.b, bracket)}</td>
+          <td class="t-col-shrink t-col-when">${e.scheduledAt ? escapeHtml(fmtDateTime(e.scheduledAt)) : '—'}</td>
+          ${courtCellHtml(tournament, e)}
+          <td class="t-col-shrink">${scheduleStatusCellHtml(tournament, sport, e, scope, false)}</td>
         </tr>
       `;
     }).join('');
@@ -7633,7 +7686,7 @@
       ${whenNote}
       <div class="t-schedule-wrap">
         <table class="t-schedule-table">
-          <thead><tr>${bracketName ? '<th>Bracket</th>' : ''}<th>Stage</th><th>Match</th><th>When</th><th>Court</th><th>Status</th></tr></thead>
+          <thead><tr>${showStage ? '<th class="t-col-shrink">Stage</th>' : ''}<th class="t-col-teams">Match</th><th class="t-col-shrink">When</th>${courtHeadHtml(tournament)}<th class="t-col-shrink">Status</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -7670,38 +7723,38 @@
         </table>
       `;
     }
-    const bracketName = scope && scope.bracket && scope.bracket.name;
+    const inBracket = !!(scope && scope.bracket);
+    const showStage = !inBracket;
+    const showCourt = tournamentUsesCourts(tournament);
     const rows = sanitizeScheduleEntries(entries).map(function (e) {
       const stageOpts = scheduleStageOptions(sport, scope, e.stage);
       return `
-        <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}" data-upcoming="${e.showUpcoming ? '1' : '0'}">
-          ${bracketName ? '<td>' + escapeHtml(bracketName) + '</td>' : ''}
-          <td><select class="t-select" data-f="stage">${stageOpts}</select></td>
-          <td>${participantSelectHtml(tournament, sport, 'a', e.a, pool, scope && scope.bracket)}</td>
+        <tr data-entry-id="${escapeHtml(e.id)}" data-match-id="${escapeHtml(e.matchId || '')}" data-upcoming="${e.showUpcoming ? '1' : '0'}" data-stage="${escapeHtml(e.stage || 'league')}" data-court="${escapeHtml(courtOf(e))}">
+          ${showStage ? '<td class="t-col-shrink"><select class="t-select" data-f="stage">' + stageOpts + '</select></td>' : ''}
+          <td class="t-col-teams">${participantSelectHtml(tournament, sport, 'a', e.a, pool, scope && scope.bracket)}</td>
           <td class="t-schedule-vs-cell">vs</td>
-          <td>${participantSelectHtml(tournament, sport, 'b', e.b, pool, scope && scope.bracket)}</td>
-          <td><input type="datetime-local" class="t-input" data-f="when" value="${escapeHtml(toDatetimeLocal(e.scheduledAt))}" /></td>
-          <td><input type="text" class="t-input" data-f="court" value="${escapeHtml(courtOf(e))}" placeholder="Court (optional)" /></td>
-          <td class="t-schedule-flag">${scheduleStatusCellHtml(tournament, sport, e, scope, true)}</td>
-          <td><button type="button" class="t-btn danger sm" data-remove-row="${escapeHtml(e.id)}">Remove</button></td>
+          <td class="t-col-teams">${participantSelectHtml(tournament, sport, 'b', e.b, pool, scope && scope.bracket)}</td>
+          <td class="t-col-shrink t-col-when"><input type="datetime-local" class="t-input" data-f="when" value="${escapeHtml(toDatetimeLocal(e.scheduledAt))}" /></td>
+          ${courtCellHtml(tournament, e, { editable: true })}
+          <td class="t-schedule-flag t-col-shrink">${scheduleStatusCellHtml(tournament, sport, e, scope, true)}</td>
+          <td class="t-col-shrink"><button type="button" class="t-btn danger sm" data-remove-row="${escapeHtml(e.id)}">Remove</button></td>
         </tr>
       `;
     }).join('');
     return `
-      <div class="t-schedule-note">${escapeHtml(savedNote)} Court is optional — leave it blank when there is one court, or none. Rows with a time sort by date and time. Status shows Live or Completed once the match has started or has scores. Otherwise check Upcoming to list it on the Matches summary — that flag is saved right away.</div>
+      <div class="t-schedule-note">${escapeHtml(savedNote)}${showCourt ? ' Pick a court when more than one is in use.' : ''} Rows with a time sort by date and time. Status shows Live or Completed once the match has started or has scores. Otherwise check Upcoming to list it on the Matches summary — that flag is saved right away.</div>
       <div class="t-schedule-wrap">
         <table class="t-schedule-table" id="tScheduleEditor" ${attrs}>
           <thead>
             <tr>
-              ${bracketName ? '<th>Bracket</th>' : ''}
-              <th>Stage</th>
-              <th>Side A</th>
+              ${showStage ? '<th class="t-col-shrink">Stage</th>' : ''}
+              <th class="t-col-teams">Side A</th>
               <th></th>
-              <th>Side B</th>
-              <th>When</th>
-              <th>Court</th>
-              <th>Status</th>
-              <th></th>
+              <th class="t-col-teams">Side B</th>
+              <th class="t-col-shrink">When</th>
+              ${showCourt ? '<th class="t-col-shrink">Court</th>' : ''}
+              <th class="t-col-shrink">Status</th>
+              <th class="t-col-shrink"></th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
@@ -10480,7 +10533,7 @@
       live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Next'),
       sport ? ((sportGlyphText(sport) ? sportGlyphText(sport) + ' ' : '') + (sport.label || '')) : '',
       stage,
-      courtOf(match)
+      displayCourtOf(tournament, match)
     ].filter(Boolean).join(' · ');
     const center = score.note === 'vs'
       ? '<div class="w-vs">VS</div>'
@@ -10522,7 +10575,7 @@
     if (!hideScore && resultKind(match) === 'no_result') bits.push('No result');
     return `
       <div class="w-fixture">
-        <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${courtOf(match) ? ' · ' + escapeHtml(courtOf(match)) : ''}</div>
+        <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${displayCourtOf(tournament, match) ? ' · ' + escapeHtml(displayCourtOf(tournament, match)) : ''}</div>
         <div class="w-fix-row">
           <span class="w-swatch sm" style="background:${a.color}"></span>
           <span class="w-fix-name">${escapeHtml(a.name)}</span>
@@ -10692,7 +10745,7 @@
     }
     return `
       <article class="w-result">
-        <div class="w-result-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Completed')}${courtOf(match) ? ' · ' + escapeHtml(courtOf(match)) : ''}${sport ? ' · ' + escapeHtml(stageLabelOf(sport, match.stage)) : ''}</div>
+        <div class="w-result-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Completed')}${displayCourtOf(tournament, match) ? ' · ' + escapeHtml(displayCourtOf(tournament, match)) : ''}${sport ? ' · ' + escapeHtml(stageLabelOf(sport, match.stage)) : ''}</div>
         <div class="w-result-row">
           ${sideHtml(a, '')}
           ${setsHtml}
