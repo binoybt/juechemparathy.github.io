@@ -135,6 +135,12 @@ const ONBOARDING_ADMIN_PAGE = 'pending-users.html';
 //                    && resource.data.started == true;
 //         allow list: if false;
 //         allow create, update, delete: if isAdmin();
+//         match /state/{doc} {
+//           allow get: if resource.data.publicBoard == true
+//                      && resource.data.published == true
+//                      && resource.data.started == true;
+//           allow write: if isAdmin() || (isSignedIn() && myRole() == 'scorer');
+//         }
 //       }
 //     }
 //   }
