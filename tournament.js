@@ -509,6 +509,34 @@
     else delete bracket.teamTags;
   }
 
+  function compareScheduleTags(a, b) {
+    const left = normalizeScheduleTag(a);
+    const right = normalizeScheduleTag(b);
+    if (!left && !right) return 0;
+    if (!left) return 1;
+    if (!right) return -1;
+    return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' });
+  }
+
+  function sortTeamsByBracketTag(teams, bracket) {
+    const list = (teams || []).slice();
+    const tags = bracketTeamTags(bracket);
+    const order = {};
+    bracketTeamIds(bracket).forEach(function (id, i) { order[id] = i; });
+    list.sort(function (a, b) {
+      const aId = a && a.id;
+      const bId = b && b.id;
+      const aIn = Object.prototype.hasOwnProperty.call(order, aId);
+      const bIn = Object.prototype.hasOwnProperty.call(order, bId);
+      if (aIn !== bIn) return aIn ? -1 : 1;
+      const tagCmp = compareScheduleTags(tags[aId], tags[bId]);
+      if (tagCmp) return tagCmp;
+      if (aIn && bIn) return order[aId] - order[bId];
+      return 0;
+    });
+    return list;
+  }
+
   function scheduleTagChipHtml(tag, locked) {
     const value = normalizeScheduleTag(tag);
     if (!value || !isAdminUi()) return '';
@@ -1229,7 +1257,10 @@
     const bracket = findBracket(division, bracketId);
     if (!division || !bracket) return [];
     const ids = bracket.teamIds || [];
-    return (division.teams || []).filter(function (tm) { return ids.indexOf(tm.id) !== -1; });
+    return sortTeamsByBracketTag(
+      (division.teams || []).filter(function (tm) { return ids.indexOf(tm.id) !== -1; }),
+      bracket
+    );
   }
 
   function matchUsesTeams(tournament, sport) {
@@ -6201,11 +6232,11 @@
       const selected = !!(bracket && bracket.id === b.id);
       const walkoverScore = walkoverScoreForBracket(sport, b, stageId);
       const locked = bracketIsLocked(b);
-      const listedTeams = offeredTeams.filter(function (tm) {
+      const listedTeams = sortTeamsByBracketTag(offeredTeams.filter(function (tm) {
         if (!locked) return true;
         const owner = bracketForTeam(division, tm.id, stageId);
         return !!(owner && owner.id === b.id);
-      });
+      }), b);
       const checks = listedTeams.map(function (tm) {
         const owner = bracketForTeam(division, tm.id, stageId);
         const checked = !!(owner && owner.id === b.id);
