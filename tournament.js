@@ -103,10 +103,9 @@
  *     spectatorToken one unique public-board key; reused when the link is re-enabled.
  *                     Share URL is watch.html?s=token (one-shot read). Live display
  *                     URL is watch.html?s=token&live=1 (onSnapshot auto-refresh).
- *                     The parent public doc is a schedule snapshot (fixtures,
- *                     teams, courts) kept for 1 hour on the spectator client.
- *                     Scores, upcoming, and point tables come from
- *                     tournament_public/{token}/state/live, fetched every refresh.
+ *                     tournament_public/{token}/state/live is the full public
+ *                     board (fixtures, teams, scores, upcoming, completed).
+ *                     Share link and hard refresh read that one document.
  *                     Admins can force a schedule snapshot from Spectator link.
  *     publicBoard   bool — spectator link is on only while this is true
  *     spectatorShowTime bool — when true, watch.html shows each match time.
@@ -10045,15 +10044,7 @@
   }
 
   function publicLiveDocument(tournament, matches, scheduleVersion) {
-    const visible = (matches || []).filter(function (m) { return publicMatchVisible(tournament, m); });
-    return {
-      publicBoard: true,
-      published: true,
-      started: true,
-      scheduleVersion: scheduleVersion || tournament.publicScheduleVersion || 0,
-      matches: visible.map(function (match) { return sanitizePublicMatch(match, tournament); }),
-      updatedAt: FieldValue.serverTimestamp()
-    };
+    return publicBoardDocument(tournament, matches, scheduleVersion);
   }
 
   function publicLiveRef(token) {
@@ -11686,7 +11677,18 @@
       return null;
     }
 
+    function applyLiveBoard(liveData) {
+      applyWatchParentData(liveData, token);
+      watch.liveMatches = Array.isArray(liveData.matches) ? liveData.matches : [];
+      if (publicWatchIsOpen(liveData)) writeWatchScheduleCache(token, liveData);
+    }
+
     async function loadWatchSchedule(liveData) {
+      if (liveData && Array.isArray(liveData.sports)) {
+        applyWatchParentData(liveData, token);
+        if (publicWatchIsOpen(liveData)) writeWatchScheduleCache(token, liveData);
+        return;
+      }
       const liveVersion = liveData && liveData.scheduleVersion;
       const cached = readWatchScheduleCache(token);
       if (liveData && cached && watchScheduleCacheValid(cached, liveVersion) && publicWatchIsOpen(cached.board)) {
@@ -11707,13 +11709,7 @@
         watch.liveMatches = liveData.matches;
         return;
       }
-      try {
-        const matchesSnap = await db.collection('tournament_public').doc(token).collection('matches').get();
-        watch.liveMatches = liveMatchesFromSnapshot(matchesSnap);
-      } catch (err) {
-        console.warn('[watch] match docs unavailable:', err);
-        watch.liveMatches = watch.parentBoard.matches || [];
-      }
+      watch.liveMatches = watch.parentBoard.matches || [];
     }
 
     async function loadWatchOnce() {
@@ -11722,6 +11718,12 @@
       renderPublicWatch();
       try {
         const liveData = await loadWatchLiveDoc();
+        if (liveData && Array.isArray(liveData.sports)) {
+          watch.ready = true;
+          applyLiveBoard(liveData);
+          publishWatchBoard();
+          return;
+        }
         await loadWatchSchedule(liveData);
         watch.ready = true;
         await loadWatchMatches(liveData);
@@ -11748,6 +11750,11 @@
       watch.liveMatches = [];
     }
     function ensureWatchSchedule(liveData) {
+      if (liveData && Array.isArray(liveData.sports)) {
+        applyWatchParentData(liveData, token);
+        if (publicWatchIsOpen(liveData)) writeWatchScheduleCache(token, liveData);
+        return;
+      }
       const liveVersion = liveData && liveData.scheduleVersion;
       const versionOk = liveVersion == null || liveVersion === ''
         || !watch.parentBoard
