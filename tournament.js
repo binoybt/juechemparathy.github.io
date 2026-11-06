@@ -103,6 +103,11 @@
  *     spectatorToken one unique public-board key; reused when the link is re-enabled.
  *                     Share URL is watch.html?s=token (one-shot read). Live display
  *                     URL is watch.html?s=token&live=1 (onSnapshot auto-refresh).
+ *                     The parent public doc is a schedule snapshot (fixtures,
+ *                     teams, courts) kept for 1 hour on the spectator client.
+ *                     Scores, upcoming, and point tables come from
+ *                     tournament_public/{token}/state/live, fetched every refresh.
+ *                     Admins can force a schedule snapshot from Spectator link.
  *     publicBoard   bool — spectator link is on only while this is true
  *     spectatorShowTime bool — when true, watch.html shows each match time.
  *                     missing/false hides times on the spectator board only;
@@ -4485,6 +4490,7 @@
   window.__tournament.openTournamentScorers = openTournamentScorers;
   window.__tournament.shareLiveBoard = shareLiveBoard;
   window.__tournament.stopLiveBoard = stopLiveBoard;
+  window.__tournament.refreshSpectatorScheduleCache = refreshSpectatorScheduleCache;
   window.__tournament.copySpectatorLink = copySpectatorLink;
   window.__tournament.openEntryTeam = openEntryTeam;
   window.__tournament.saveTournamentRules = saveTournamentRules;
@@ -5634,7 +5640,7 @@
         disabledStages: next
       }), parseUrl().stageId || stageId);
       toast(enabled ? 'Stage restored for this category' : 'Stage hidden for this category', 'success');
-      schedulePublicBoardSync(tournamentId);
+      schedulePublicScheduleSync(tournamentId);
       navigate({
         view: 'tournament',
         tournamentId: tournamentId,
@@ -8332,6 +8338,7 @@
       await writeSchedule(t, sportId, scope.categoryId, scope.bracketId, schedule);
       persistLocalEntries(tournamentId, sportId, entries, false, scope.categoryId, scope.bracketId);
       toast(alreadyPublished ? 'Schedule changes published' : 'Schedule published', 'success');
+      syncPublicBoardNow(t.id, { schedule: true, force: true });
       render();
     } catch (_) { /* already toasted */ }
   }
@@ -8360,6 +8367,7 @@
       await writeSchedule(t, sportId, scope.categoryId, scope.bracketId, schedule);
       persistLocalEntries(tournamentId, sportId, entries, false, scope.categoryId, scope.bracketId);
       toast('Schedule unpublished', 'success');
+      syncPublicBoardNow(t.id, { schedule: true, force: true });
       render();
     } catch (_) { /* writeSportPatch already toasted */ }
   }
@@ -8408,6 +8416,7 @@
       delete scheduleEditByKey[scheduleKey(tournamentId, sportId, scope.categoryId, scope.bracketId)];
       toast('Schedule cleared', 'success');
       if (published) {
+        syncPublicBoardNow(t.id, { schedule: true, force: true });
         confirm('The published schedule was cleared. Members will no longer see those fixtures. Click OK to continue.');
       }
       render();
@@ -9813,7 +9822,18 @@
       snap.forEach(function (doc) { state.tournaments.push(Object.assign({ id: doc.id }, doc.data())); });
       state.ready.tournaments = true;
       render();
-      if (state.currentId) schedulePublicBoardSync(state.currentId);
+      if (state.currentId) {
+        const current = state.tournaments.find(function (item) { return item.id === state.currentId; });
+        if (current && current.publicBoard) {
+          const fp = publicScheduleFingerprint(current);
+          if (publicScheduleKeys[current.id] && publicScheduleKeys[current.id] !== fp) {
+            schedulePublicScheduleSync(current.id);
+          } else {
+            schedulePublicLiveSync(current.id);
+          }
+          publicScheduleKeys[current.id] = fp;
+        }
+      }
       // Refresh any live modals whose contents depend on the tournament doc.
       if (openLiveModal === 'roster') rerenderRoster();
       if (openLiveModal === 'memberPicker') rerenderMemberPicker();
@@ -9994,7 +10014,7 @@
     return true;
   }
 
-  function publicBoardDocument(tournament, matches) {
+  function publicBoardDocument(tournament, matches, scheduleVersion) {
     const visible = (matches || []).filter(function (m) { return publicMatchVisible(tournament, m); });
     return {
       publicBoard: true,
@@ -10005,6 +10025,8 @@
       sportMode: sportModeOf(tournament),
       courts: tournamentCourts(tournament),
       spectatorShowTime: spectatorShowsMatchTime(tournament),
+      scheduleVersion: scheduleVersion || tournament.publicScheduleVersion || Date.now(),
+      scheduleCachedAt: new Date().toISOString(),
       rulesText: isMultiSportTournament(tournament) ? rulesText(tournament.rules) : '',
       sports: (tournament.sports || []).map(sanitizePublicSport),
       matches: visible.map(function (match) { return sanitizePublicMatch(match, tournament); }),
@@ -10012,13 +10034,59 @@
     };
   }
 
+  function publicScheduleFingerprint(tournament) {
+    return JSON.stringify({
+      name: tournament && tournament.name,
+      format: tournament && tournament.format,
+      courts: tournamentCourts(tournament),
+      spectatorShowTime: spectatorShowsMatchTime(tournament),
+      sports: (tournament && tournament.sports || []).map(sanitizePublicSport)
+    });
+  }
+
+  function publicLiveDocument(tournament, matches, scheduleVersion) {
+    const visible = (matches || []).filter(function (m) { return publicMatchVisible(tournament, m); });
+    return {
+      publicBoard: true,
+      published: true,
+      started: true,
+      scheduleVersion: scheduleVersion || tournament.publicScheduleVersion || 0,
+      matches: visible.map(function (match) { return sanitizePublicMatch(match, tournament); }),
+      updatedAt: FieldValue.serverTimestamp()
+    };
+  }
+
+  function publicLiveRef(token) {
+    return db.collection('tournament_public').doc(token).collection('state').doc('live');
+  }
+
+  function canWritePublicLive() {
+    return isRealAdmin() || !!state.isScorer;
+  }
+
   const publicSyncKeys = {};
+  const publicLiveKeys = {};
+  const publicScheduleKeys = {};
+  const publicScheduleVersions = {};
   let publicSyncTimer = null;
+  let publicLiveTimer = null;
 
   function schedulePublicBoardSync(tournamentId) {
+    schedulePublicLiveSync(tournamentId);
+  }
+
+  function schedulePublicLiveSync(tournamentId) {
+    if (!tournamentId || !canWritePublicLive()) return;
+    clearTimeout(publicLiveTimer);
+    publicLiveTimer = setTimeout(function () { syncPublicLiveNow(tournamentId); }, 700);
+  }
+
+  function schedulePublicScheduleSync(tournamentId) {
     if (!tournamentId || !isRealAdmin()) return;
     clearTimeout(publicSyncTimer);
-    publicSyncTimer = setTimeout(function () { syncPublicBoardNow(tournamentId); }, 700);
+    publicSyncTimer = setTimeout(function () {
+      syncPublicBoardNow(tournamentId, { schedule: true, force: true });
+    }, 700);
   }
 
   async function commitPublicWrites(writes) {
@@ -10042,7 +10110,7 @@
       const ref = db.collection('tournament_public').doc(keys[i]);
       try {
         const existing = await ref.collection('matches').get();
-        const writes = [{ type: 'delete', ref: ref }];
+        const writes = [{ type: 'delete', ref: ref }, { type: 'delete', ref: ref.collection('state').doc('live') }];
         existing.forEach(function (doc) { writes.push({ type: 'delete', ref: doc.ref }); });
         await commitPublicWrites(writes);
       } catch (err) {
@@ -10077,26 +10145,62 @@
     await commitPublicWrites(writes);
   }
 
-  async function syncPublicBoardNow(tournamentId, opts) {
-    if (!isRealAdmin() || !tournamentId) return;
+  async function syncPublicLiveNow(tournamentId) {
+    if (!canWritePublicLive() || !tournamentId) return;
     const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
     if (!t) return;
     const open = !!(t.publicBoard && isTournamentPublished(t) && tournamentHasStarted(t));
-    if (!open && !(opts && opts.forceClose)) return;
+    if (!open) return;
+    if (state.currentId !== t.id || !state.ready.matches) return;
+    const token = publicBoardDocId(t);
+    if (!token) return;
+    const version = publicScheduleVersions[t.id] || t.publicScheduleVersion || 0;
+    const payload = publicLiveDocument(t, state.matches || [], version);
+    const comparable = Object.assign({}, payload);
+    delete comparable.updatedAt;
+    const key = JSON.stringify(comparable);
+    if (publicLiveKeys[t.id] === key) return;
+    try {
+      await publicLiveRef(token).set(payload);
+      publicLiveKeys[t.id] = key;
+    } catch (err) {
+      console.warn('[tournament] public live snapshot failed:', err);
+    }
+  }
+
+  async function syncPublicBoardNow(tournamentId, opts) {
+    opts = opts || {};
+    const writeSchedule = !!(opts.schedule || opts.force);
+    if (opts.forceClose && !isRealAdmin()) return;
+    if (writeSchedule && !isRealAdmin()) return;
+    if (!writeSchedule && !opts.forceClose) return syncPublicLiveNow(tournamentId);
+    if (!tournamentId) return;
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    const open = !!(t.publicBoard && isTournamentPublished(t) && tournamentHasStarted(t));
+    if (!open && !opts.forceClose) return;
     if (open && (state.currentId !== t.id || !state.ready.matches)) return;
     if (!open) {
       await deletePublicBoardDocs(t);
       publicSyncKeys[t.id] = 'closed';
+      publicLiveKeys[t.id] = 'closed';
       return;
     }
     if (!publicBoardDocId(t)) return;
     const matches = state.matches || [];
-    const payload = publicBoardDocument(t, matches);
+    const version = Date.now();
+    const payload = publicBoardDocument(t, matches, version);
     const comparable = Object.assign({}, payload);
     delete comparable.updatedAt;
     const key = JSON.stringify(comparable);
-    if (publicSyncKeys[t.id] === key && !(opts && opts.force)) return;
+    if (publicSyncKeys[t.id] === key && !opts.force) {
+      await syncPublicLiveNow(tournamentId);
+      return;
+    }
+    payload.scheduleVersion = version;
     await db.collection('tournament_public').doc(publicBoardDocId(t)).set(payload);
+    publicScheduleVersions[t.id] = version;
+    t.publicScheduleVersion = version;
     if (t.spectatorToken && t.spectatorToken !== t.id) {
       try { await deletePublicBoardDocs({ id: t.id, spectatorToken: '' }); } catch (err) {
         console.warn('[tournament] legacy public board cleanup failed:', err);
@@ -10108,6 +10212,22 @@
       console.warn('[tournament] public match docs sync failed:', err);
     }
     publicSyncKeys[t.id] = key;
+    publicScheduleKeys[t.id] = publicScheduleFingerprint(t);
+    await syncPublicLiveNow(tournamentId);
+  }
+
+  async function refreshSpectatorScheduleCache(tournamentId) {
+    if (!isAdminUi()) return toast('Admin only', 'error');
+    const t = state.tournaments.find(function (x) { return x.id === tournamentId; });
+    if (!t) return;
+    if (!t.publicBoard) return toast('Enable the spectator link first', 'error');
+    try {
+      await syncPublicBoardNow(t.id, { schedule: true, force: true });
+      toast('Spectator schedule cache refreshed. Visitors pick up the new fixtures on their next refresh.');
+    } catch (err) {
+      console.error(err);
+      toast('Could not refresh schedule cache: ' + (err.message || err.code || 'unknown'), 'error');
+    }
   }
 
   function copySpectatorLink(tournament, opts) {
@@ -10147,6 +10267,11 @@
         <a class="t-btn" href="${escapeHtml(liveUrl)}" target="_blank" rel="noopener">Open live</a>
         <button type="button" class="t-btn primary" data-copy-live>Copy live link</button>
       </div>
+      <div class="t-form-field" style="margin-top:16px;">
+        <label>Schedule cache</label>
+        <p class="t-mode-note" style="margin:4px 0 8px;">Spectators keep fixtures, teams, and match numbers for 1 hour. Live scores, upcoming, and point tables still update on every refresh. Refresh this cache after you change the schedule so the public board picks up new matches, times, or teams.</p>
+        <button type="button" class="t-btn" data-refresh-schedule>Refresh schedule cache</button>
+      </div>
       <div class="t-modal-foot" style="display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;margin-top:14px;">
         <button type="button" class="t-btn danger" data-stop-share>Disable spectator link</button>
       </div>
@@ -10158,6 +10283,7 @@
     if (liveInput) liveInput.addEventListener('focus', function () { liveInput.select(); });
     body.querySelector('[data-copy-share]').addEventListener('click', function () { copySpectatorLink(t); });
     body.querySelector('[data-copy-live]').addEventListener('click', function () { copySpectatorLink(t, { live: true }); });
+    body.querySelector('[data-refresh-schedule]').addEventListener('click', function () { refreshSpectatorScheduleCache(t.id); });
     body.querySelector('[data-stop-share]').addEventListener('click', function () { stopLiveBoard(t.id); });
   }
 
@@ -10266,11 +10392,53 @@
     preview: false,
     autoRefresh: false,
     reload: null,
+    scheduleLoadedAt: 0,
     completedOpen: {},
     completedPage: {}
   };
 
   const WATCH_THEME_KEY = 'smash-watch-theme';
+  const WATCH_SCHEDULE_TTL_MS = 60 * 60 * 1000;
+  const WATCH_SCHEDULE_CACHE_PREFIX = 'smash-watch-schedule:';
+
+  function watchScheduleCacheKey(token) {
+    return WATCH_SCHEDULE_CACHE_PREFIX + String(token || '');
+  }
+
+  function readWatchScheduleCache(token) {
+    try {
+      const raw = localStorage.getItem(watchScheduleCacheKey(token));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || !parsed.board) return null;
+      return parsed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeWatchScheduleCache(token, board) {
+    if (!token || !board) return;
+    try {
+      localStorage.setItem(watchScheduleCacheKey(token), JSON.stringify({
+        cachedAt: Date.now(),
+        scheduleVersion: board.scheduleVersion || 0,
+        board: board
+      }));
+    } catch (_) {}
+  }
+
+  function watchScheduleCacheValid(cached, liveVersion) {
+    if (!cached || !cached.board) return false;
+    if ((Date.now() - (cached.cachedAt || 0)) > WATCH_SCHEDULE_TTL_MS) return false;
+    if (liveVersion == null || liveVersion === '') return true;
+    if (cached.scheduleVersion == null) return false;
+    return String(cached.scheduleVersion) === String(liveVersion);
+  }
+
+  function watchLiveRef(token) {
+    return db.collection('tournament_public').doc(token).collection('state').doc('live');
+  }
 
   function watchTheme() {
     try {
@@ -10336,7 +10504,6 @@
         scheduledAt: pickParent(match.scheduledAt, live.scheduledAt),
         court: pickParent(match.court, live.court),
         venue: pickParent(match.venue, live.venue),
-        showUpcoming: match.showUpcoming != null ? match.showUpcoming : live.showUpcoming,
         stage: pickParent(match.stage, live.stage),
         bracketId: pickParent(match.bracketId, live.bracketId),
         categoryId: pickParent(match.categoryId, live.categoryId),
@@ -10435,15 +10602,26 @@
     return list;
   }
 
-  function applyWatchParent(snap) {
+  function applyWatchParentData(data, id) {
     watch.error = null;
-    if (!snap.exists) {
+    if (!data) {
       watch.parentBoard = null;
       watch.closed = true;
       watch.expired = true;
       return;
     }
-    watch.parentBoard = Object.assign({ id: snap.id }, snap.data() || {});
+    watch.parentBoard = Object.assign({ id: id || data.id || '' }, data);
+    watch.scheduleLoadedAt = Date.now();
+  }
+
+  function applyWatchParent(snap) {
+    if (!snap || !snap.exists) {
+      applyWatchParentData(null);
+      watch.closed = true;
+      watch.expired = true;
+      return;
+    }
+    applyWatchParentData(snap.data() || {}, snap.id);
   }
 
   function sampleWatchBoard() {
@@ -11498,20 +11676,55 @@
       watch.expired = true;
       renderPublicWatch();
     }
+    async function loadWatchLiveDoc() {
+      try {
+        const liveSnap = await watchLiveRef(token).get();
+        if (liveSnap.exists) return liveSnap.data() || null;
+      } catch (err) {
+        console.warn('[watch] live snapshot unavailable:', err);
+      }
+      return null;
+    }
+
+    async function loadWatchSchedule(liveData) {
+      const liveVersion = liveData && liveData.scheduleVersion;
+      const cached = readWatchScheduleCache(token);
+      if (liveData && cached && watchScheduleCacheValid(cached, liveVersion) && publicWatchIsOpen(cached.board)) {
+        applyWatchParentData(cached.board, token);
+        return;
+      }
+      const snap = await db.collection('tournament_public').doc(token).get();
+      applyWatchParent(snap);
+      if (publicWatchIsOpen(watch.parentBoard)) writeWatchScheduleCache(token, watch.parentBoard);
+    }
+
+    async function loadWatchMatches(liveData) {
+      if (!publicWatchIsOpen(watch.parentBoard)) {
+        watch.liveMatches = [];
+        return;
+      }
+      if (liveData && Array.isArray(liveData.matches)) {
+        watch.liveMatches = liveData.matches;
+        return;
+      }
+      try {
+        const matchesSnap = await db.collection('tournament_public').doc(token).collection('matches').get();
+        watch.liveMatches = liveMatchesFromSnapshot(matchesSnap);
+      } catch (err) {
+        console.warn('[watch] match docs unavailable:', err);
+        watch.liveMatches = watch.parentBoard.matches || [];
+      }
+    }
+
     async function loadWatchOnce() {
       watch.ready = false;
       watch.renderKey = '';
       renderPublicWatch();
       try {
-        const snap = await db.collection('tournament_public').doc(token).get();
+        const liveData = await loadWatchLiveDoc();
+        await loadWatchSchedule(liveData);
         watch.ready = true;
-        applyWatchParent(snap);
-        if (publicWatchIsOpen(watch.parentBoard)) {
-          const matchesSnap = await db.collection('tournament_public').doc(token).collection('matches').get();
-          watch.liveMatches = liveMatchesFromSnapshot(matchesSnap);
-        } else {
-          watch.liveMatches = [];
-        }
+        await loadWatchMatches(liveData);
         publishWatchBoard();
       } catch (err) {
         console.error('[watch]', err);
@@ -11525,34 +11738,64 @@
     }
     watch.ready = false;
     renderPublicWatch();
-    let unsubWatchMatches = null;
-    function stopWatchMatches() {
-      if (unsubWatchMatches) {
-        unsubWatchMatches();
-        unsubWatchMatches = null;
+    let unsubWatchLive = null;
+    let parentFetch = null;
+    function stopWatchLive() {
+      if (unsubWatchLive) {
+        unsubWatchLive();
+        unsubWatchLive = null;
       }
       watch.liveMatches = [];
     }
-    function startWatchMatches() {
-      if (unsubWatchMatches) return;
-      unsubWatchMatches = db.collection('tournament_public').doc(token).collection('matches').onSnapshot(function (snap) {
-        watch.liveMatches = liveMatchesFromSnapshot(snap);
-        if (watch.ready) publishWatchBoard();
-      }, function (err) {
-        console.warn('[watch] live matches unavailable:', err);
-        watch.liveMatches = [];
-        if (watch.ready) publishWatchBoard();
+    function ensureWatchSchedule(liveData) {
+      const liveVersion = liveData && liveData.scheduleVersion;
+      const versionOk = liveVersion == null || liveVersion === ''
+        || !watch.parentBoard
+        || String(watch.parentBoard.scheduleVersion || '') === String(liveVersion);
+      const fresh = !!(watch.parentBoard && watch.scheduleLoadedAt
+        && (Date.now() - watch.scheduleLoadedAt) < WATCH_SCHEDULE_TTL_MS);
+      if (watch.parentBoard && versionOk && fresh) return;
+      const cached = readWatchScheduleCache(token);
+      if (cached && watchScheduleCacheValid(cached, liveVersion) && publicWatchIsOpen(cached.board)) {
+        applyWatchParentData(cached.board, token);
+        return;
+      }
+      if (parentFetch) return;
+      parentFetch = db.collection('tournament_public').doc(token).get().then(function (snap) {
+        applyWatchParent(snap);
+        if (publicWatchIsOpen(watch.parentBoard)) writeWatchScheduleCache(token, watch.parentBoard);
+        publishWatchBoard();
+      }).catch(function (err) {
+        console.error('[watch]', err);
+        failWatch();
+      }).then(function () {
+        parentFetch = null;
       });
     }
-    db.collection('tournament_public').doc(token).onSnapshot(function (snap) {
+    unsubWatchLive = watchLiveRef(token).onSnapshot(function (snap) {
       watch.ready = true;
-      applyWatchParent(snap);
-      if (publicWatchIsOpen(watch.parentBoard)) startWatchMatches();
-      else stopWatchMatches();
-      publishWatchBoard();
+      if (!snap.exists) {
+        db.collection('tournament_public').doc(token).get().then(function (parentSnap) {
+          applyWatchParent(parentSnap);
+          if (publicWatchIsOpen(watch.parentBoard)) {
+            watch.liveMatches = watch.parentBoard.matches || [];
+          } else {
+            watch.liveMatches = [];
+          }
+          publishWatchBoard();
+        }).catch(function (err) {
+          console.error('[watch]', err);
+          failWatch();
+        });
+        return;
+      }
+      const liveData = snap.data() || {};
+      watch.liveMatches = Array.isArray(liveData.matches) ? liveData.matches : [];
+      ensureWatchSchedule(liveData);
+      if (watch.parentBoard) publishWatchBoard();
     }, function (err) {
       console.error('[watch]', err);
-      stopWatchMatches();
+      stopWatchLive();
       failWatch();
     });
   }
