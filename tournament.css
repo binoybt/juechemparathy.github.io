@@ -1084,6 +1084,10 @@ body.t-member-preview .t-admin-switch {
   color: var(--t-muted); font-weight: 700; text-align: center; width: 2.2rem;
   font-family: 'Barlow Condensed', sans-serif;
 }
+.t-court-list { display: flex; flex-direction: column; gap: 8px; }
+.t-court-row { display: flex; gap: 8px; align-items: center; }
+.t-court-row .t-input { flex: 1; min-width: 0; }
+.t-form-span { grid-column: 1 / -1; }
 .t-schedule-note { color: var(--t-muted); font-size: .82rem; margin-bottom: 8px; }
 .t-schedule-empty {
   padding: 20px; color: var(--t-muted); text-align: center;

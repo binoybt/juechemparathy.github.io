@@ -22,8 +22,11 @@
  *                   multi  → several sports, tournament rules apply to all
  *                   missing → multi when more than one sport is saved, else single
  *     format        'teams' | 'individual'
- *     courtCount    number of courts (default 1). Schedule shows a Court column
- *                   only when this is 2 or more.
+ *     courts[]      { id, name } — named courts for the tournament. Missing or
+ *                   fewer than two names means one court; the schedule then
+ *                   hides the Court column so team names have room. Older docs
+ *                   with courtCount 2+ are treated as Court 1, Court 2, … until
+ *                   named courts are saved.
  *     started       bool — once true, members see standings, the current match,
  *                   and upcoming matches for category-based sports
  *     teams[]       { id, name, wards }             — legacy tournament-level roster
@@ -101,13 +104,17 @@
  *                     Share URL is watch.html?s=token (one-shot read). Live display
  *                     URL is watch.html?s=token&live=1 (onSnapshot auto-refresh).
  *     publicBoard   bool — spectator link is on only while this is true
+ *     spectatorShowTime bool — when true, watch.html shows each match time.
+ *                     missing/false hides times on the spectator board only;
+ *                     admins still see times on the tournament schedule.
  *     clonedFrom    string — source tournament id when created via Clone
  *     createdAt / updatedAt / createdBy
  *
  *   Clone copies sports, scoring, table points, stage names, rules, max roster,
- *   and team shells (id / name / wards / tags), plus category teams, category
- *   stage overrides, and bracket membership. It does not copy matches, schedule,
- *   rosters, captains, lock state, or Here check-in. Clones are always unpublished.
+ *   named courts, spectator time visibility, and team shells (id / name /
+ *   wards / tags), plus category teams, category stage overrides, and bracket
+ *   membership. It does not copy matches, schedule, rosters, captains, lock
+ *   state, or Here check-in. Clones are always unpublished.
  *
  * Site-wide visibility (firebase-config.js TournamentAccess):
  *   siteConfig/tournament { openToEveryone: bool }
@@ -125,7 +132,7 @@
  *     teamA / teamB     — for teams format
  *     playerA / playerB — for individual format
  *     scheduledAt   ISO string
- *     court         string — used when the tournament has 2+ courts. Blank for one court.
+ *     court         string — named court when the tournament has 2+ courts.
  *     venue         string — kept equal to court so older boards still show it
  *     showUpcoming  bool — admin marks which scheduled matches appear in Upcoming
  *     status        'scheduled' | 'in_progress' | 'completed'
@@ -991,19 +998,66 @@
     return String(item.court || item.venue || '').trim();
   }
 
-  function courtCountOf(tournament) {
-    const n = parseInt(tournament && tournament.courtCount, 10);
-    if (!isFinite(n) || n < 1) return 1;
-    return Math.min(20, n);
+  function tournamentCourts(tournament) {
+    const raw = tournament && Array.isArray(tournament.courts) ? tournament.courts : [];
+    const out = [];
+    const seen = {};
+    raw.forEach(function (c, i) {
+      const name = String((c && (c.name || c.label)) || (typeof c === 'string' ? c : '') || '').trim().slice(0, 40);
+      if (!name) return;
+      let id = String((c && c.id) || '').trim() || ('court_' + (i + 1));
+      let unique = id;
+      let n = 2;
+      while (seen[unique]) {
+        unique = id + '_' + n;
+        n += 1;
+      }
+      seen[unique] = true;
+      out.push({ id: unique, name: name });
+    });
+    if (out.length) return out;
+    const count = parseInt(tournament && tournament.courtCount, 10);
+    if (isFinite(count) && count > 1) {
+      const n = Math.min(20, count);
+      for (let i = 1; i <= n; i++) out.push({ id: 'court_' + i, name: 'Court ' + i });
+    }
+    return out;
   }
 
   function tournamentUsesCourts(tournament) {
-    return courtCountOf(tournament) > 1;
+    return tournamentCourts(tournament).length > 1;
+  }
+
+  function spectatorShowsMatchTime(tournament) {
+    return !!(tournament && tournament.spectatorShowTime);
+  }
+
+  function watchMatchTimeText(tournament, match, fallback) {
+    if (!spectatorShowsMatchTime(tournament)) return '';
+    if (match && match.scheduledAt) return fmtDateTime(match.scheduledAt);
+    return fallback || '';
+  }
+
+  function watchWhenLine(tournament, match, extras, emptyFallback) {
+    const bits = [];
+    const when = watchMatchTimeText(tournament, match, '');
+    if (when) bits.push(when);
+    (extras || []).forEach(function (bit) {
+      if (bit) bits.push(bit);
+    });
+    if (!bits.length) return emptyFallback || '';
+    return bits.join(' · ');
   }
 
   function displayCourtOf(tournament, item) {
     if (!tournamentUsesCourts(tournament)) return '';
-    return courtOf(item);
+    const raw = courtOf(item);
+    if (!raw) return '';
+    const courts = tournamentCourts(tournament);
+    for (let i = 0; i < courts.length; i++) {
+      if (courts[i].id === raw || courts[i].name === raw) return courts[i].name;
+    }
+    return raw;
   }
 
   function courtHeadHtml(tournament) {
@@ -1011,15 +1065,18 @@
   }
 
   function courtSelectHtml(tournament, selected) {
-    const n = courtCountOf(tournament);
+    const courts = tournamentCourts(tournament);
     const cur = String(selected || '').trim();
-    const names = [];
-    for (let i = 1; i <= n; i++) names.push('Court ' + i);
-    if (cur && names.indexOf(cur) === -1) names.push(cur);
-    const opts = ['<option value="">Court…</option>'].concat(names.map(function (name) {
-      return '<option value="' + escapeHtml(name) + '"' + (name === cur ? ' selected' : '') + '>'
-        + escapeHtml(name) + '</option>';
-    }));
+    const opts = ['<option value="">Court…</option>'];
+    let matched = false;
+    courts.forEach(function (c) {
+      const selectedAttr = (c.id === cur || c.name === cur) ? ' selected' : '';
+      if (selectedAttr) matched = true;
+      opts.push('<option value="' + escapeHtml(c.name) + '"' + selectedAttr + '>' + escapeHtml(c.name) + '</option>');
+    });
+    if (cur && !matched) {
+      opts.push('<option value="' + escapeHtml(cur) + '" selected>' + escapeHtml(cur) + '</option>');
+    }
     return '<select class="t-select" data-f="court">' + opts.join('') + '</select>';
   }
 
@@ -1028,9 +1085,58 @@
     if (opts && opts.editable) {
       return '<td class="t-col-shrink">' + courtSelectHtml(tournament, courtOf(item)) + '</td>';
     }
-    const label = courtOf(item);
+    const label = displayCourtOf(tournament, item);
     return '<td class="t-col-shrink">' + (label ? escapeHtml(label) : '—') + '</td>';
   }
+
+  function harvestCourtsFromDom() {
+    const list = document.getElementById('tfCourtList');
+    if (!list) return [];
+    const out = [];
+    list.querySelectorAll('[data-court-id]').forEach(function (row) {
+      const input = row.querySelector('[data-court-name]');
+      const name = input ? String(input.value || '').trim().slice(0, 40) : '';
+      if (!name) return;
+      out.push({
+        id: row.getAttribute('data-court-id') || newId('court'),
+        name: name
+      });
+    });
+    return tournamentCourts({ courts: out });
+  }
+
+  function paintCourtList(draft) {
+    const list = document.getElementById('tfCourtList');
+    if (!list || !draft) return;
+    draft.courts = tournamentCourts(draft);
+    if (!draft.courts.length) {
+      list.innerHTML = '<p class="t-mode-note" style="margin:0;">No named courts yet — treated as one court, hidden on the schedule.</p>';
+      return;
+    }
+    list.innerHTML = draft.courts.map(function (c) {
+      return '<div class="t-court-row" data-court-id="' + escapeHtml(c.id) + '">'
+        + '<input type="text" class="t-input" data-court-name maxlength="40" placeholder="Court name" value="' + escapeHtml(c.name || '') + '" />'
+        + '<button type="button" class="t-btn sm danger" data-remove-court>Remove</button>'
+        + '</div>';
+    }).join('');
+    list.querySelectorAll('[data-court-name]').forEach(function (input) {
+      input.addEventListener('input', function () {
+        const row = input.closest('[data-court-id]');
+        const id = row && row.getAttribute('data-court-id');
+        const found = (draft.courts || []).find(function (c) { return c.id === id; });
+        if (found) found.name = input.value;
+      });
+    });
+    list.querySelectorAll('[data-remove-court]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const row = btn.closest('[data-court-id]');
+        const id = row && row.getAttribute('data-court-id');
+        draft.courts = (draft.courts || []).filter(function (c) { return c.id !== id; });
+        paintCourtList(draft);
+      });
+    });
+  }
+
 
   function scheduledAtIso(value) {
     if (!value) return '';
@@ -3040,9 +3146,10 @@
       });
       delete draft.teams;
     } else {
-      draft = { name: '', format: 'teams', sportMode: 'single', sports: [], archived: false, published: false };
+      draft = { name: '', format: 'teams', sportMode: 'single', sports: [], courts: [], archived: false, published: false };
     }
     draft.sportMode = sportModeOf(draft);
+    draft.courts = tournamentCourts(draft);
     editState.draft = draft;
 
     container.innerHTML = `
@@ -3076,10 +3183,11 @@
                   <option value="individual" ${draft.format === 'individual' ? 'selected' : ''}>Individual / Doubles</option>
                 </select>
               </div>
-              <div class="t-form-field">
+              <div class="t-form-field t-form-span">
                 <label>Courts</label>
-                <input type="number" min="1" max="20" class="t-input" id="tfCourtCount" value="${courtCountOf(draft)}" />
-                <p class="t-mode-note" style="margin:4px 0 0;">Default is 1. The schedule shows a Court column only when this is 2 or more.</p>
+                <p class="t-mode-note" style="margin:4px 0 8px;">Default is one unnamed court. Add two or more named courts to show a Court column on the schedule.</p>
+                <div class="t-court-list" id="tfCourtList"></div>
+                <button type="button" class="t-btn sm" id="tfAddCourt" style="margin-top:8px;">➕ Add court</button>
               </div>
             </div>
             <p class="t-mode-note" id="tfSportModeNote"></p>
@@ -3096,6 +3204,9 @@
               `}
               <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="When enabled, any signed-in user can view rosters that have been locked. Unlocked rosters remain visible only to team members, the team captain, and admins.">
                 <input type="checkbox" id="tfRevealLocked" ${draft.revealLockedRosters ? 'checked' : ''}/> Reveal locked rosters to everyone signed in
+              </label>
+              <label style="display:inline-flex;align-items:center;gap:6px;color:var(--t-muted);font-size:.85rem;" title="Off by default. Admins still see match times on the tournament schedule. Turn this on to show each match's time on the public spectator link.">
+                <input type="checkbox" id="tfSpectatorShowTime" ${draft.spectatorShowTime ? 'checked' : ''}/> Show match times on the spectator board
               </label>
             </div>
           </div>
@@ -3139,6 +3250,13 @@
       </section>
     `;
 
+    paintCourtList(draft);
+    document.getElementById('tfAddCourt').addEventListener('click', function () {
+      draft.courts = harvestCourtsFromDom();
+      if (draft.courts.length >= 20) return toast('You can add up to 20 courts', 'error');
+      draft.courts.push({ id: newId('court'), name: 'Court ' + (draft.courts.length + 1) });
+      paintCourtList(draft);
+    });
     document.getElementById('tfFormat').addEventListener('change', function (e) {
       draft.format = e.target.value;
       paintSports(draft);
@@ -3735,8 +3853,8 @@
     draft.archived = document.getElementById('tfArchived').checked;
     draft.published = !!(document.getElementById('tfPublished') && document.getElementById('tfPublished').checked);
     draft.revealLockedRosters = document.getElementById('tfRevealLocked').checked;
-    const courtInput = document.getElementById('tfCourtCount');
-    draft.courtCount = courtCountOf({ courtCount: courtInput ? courtInput.value : 1 });
+    draft.spectatorShowTime = !!(document.getElementById('tfSpectatorShowTime') && document.getElementById('tfSpectatorShowTime').checked);
+    draft.courts = harvestCourtsFromDom();
     const modeSel = document.getElementById('tfSportMode');
     if (modeSel) draft.sportMode = modeSel.value === 'multi' ? 'multi' : 'single';
     if (!draft.name) return toast('Tournament name is required', 'error');
@@ -3817,7 +3935,8 @@
       archived: !!draft.archived,
       published: !!draft.published,
       revealLockedRosters: !!draft.revealLockedRosters,
-      courtCount: courtCountOf(draft),
+      spectatorShowTime: !!draft.spectatorShowTime,
+      courts: tournamentCourts(draft),
       updatedAt: FieldValue.serverTimestamp(),
       updatedBy: (state.user && state.user.email) || ''
     };
@@ -3924,7 +4043,8 @@
       sports: sports,
       rules: src.rules ? JSON.parse(JSON.stringify(src.rules)) : null,
       revealLockedRosters: !!src.revealLockedRosters,
-      courtCount: courtCountOf(src),
+      spectatorShowTime: !!src.spectatorShowTime,
+      courts: tournamentCourts(src),
       archived: false,
       published: false
     };
@@ -7279,7 +7399,8 @@
         toast(next ? 'Marked as upcoming' : 'Removed from upcoming');
       } else if (act === 'court') {
         if (!tournamentUsesCourts(tournament)) return toast('This tournament uses one court, so matches do not need a court label.', 'info');
-        const val = prompt('Court for this match (Court 1–' + courtCountOf(tournament) + ').', courtOf(match) || 'Court 1');
+        const names = tournamentCourts(tournament).map(function (c) { return c.name; });
+        const val = prompt('Court for this match (' + names.join(', ') + ').', displayCourtOf(tournament, match) || names[0] || '');
         if (val === null) return;
         const court = String(val).trim();
         await ref.update({ court: court, venue: court, updatedAt: FieldValue.serverTimestamp() });
@@ -9880,6 +10001,8 @@
       name: tournament.name || 'Tournament',
       format: tournament.format || 'teams',
       sportMode: sportModeOf(tournament),
+      courts: tournamentCourts(tournament),
+      spectatorShowTime: spectatorShowsMatchTime(tournament),
       rulesText: isMultiSportTournament(tournament) ? rulesText(tournament.rules) : '',
       sports: (tournament.sports || []).map(sanitizePublicSport),
       matches: visible.map(function (match) { return sanitizePublicMatch(match, tournament); }),
@@ -9977,12 +10100,10 @@
         console.warn('[tournament] legacy public board cleanup failed:', err);
       }
     }
-    if (opts && opts.force) {
-      try {
-        await syncPublicMatchDocs(t, matches, true);
-      } catch (err) {
-        console.warn('[tournament] public match docs sync failed:', err);
-      }
+    try {
+      await syncPublicMatchDocs(t, matches, true);
+    } catch (err) {
+      console.warn('[tournament] public match docs sync failed:', err);
     }
     publicSyncKeys[t.id] = key;
   }
@@ -10188,15 +10309,45 @@
 
   function mergeWatchMatches(parent, liveMatches) {
     if (!parent) return parent;
+    const liveById = {};
+    (liveMatches || []).forEach(function (match) {
+      if (match && match.id) liveById[match.id] = match;
+    });
     const byId = {};
     const order = [];
+    function pickParent(parentVal, liveVal) {
+      return parentVal !== undefined && parentVal !== null ? parentVal : liveVal;
+    }
     function put(match) {
       if (!match || !match.id) return;
       if (!byId[match.id]) order.push(match.id);
-      byId[match.id] = Object.assign({}, byId[match.id] || {}, match);
+      const live = liveById[match.id];
+      if (!live) {
+        byId[match.id] = match;
+        return;
+      }
+      byId[match.id] = Object.assign({}, match, live, {
+        teamA: pickParent(match.teamA, live.teamA),
+        teamB: pickParent(match.teamB, live.teamB),
+        playerA: pickParent(match.playerA, live.playerA),
+        playerB: pickParent(match.playerB, live.playerB),
+        scheduledAt: pickParent(match.scheduledAt, live.scheduledAt),
+        court: pickParent(match.court, live.court),
+        venue: pickParent(match.venue, live.venue),
+        showUpcoming: match.showUpcoming != null ? match.showUpcoming : live.showUpcoming,
+        stage: pickParent(match.stage, live.stage),
+        bracketId: pickParent(match.bracketId, live.bracketId),
+        categoryId: pickParent(match.categoryId, live.categoryId),
+        sport: pickParent(match.sport, live.sport)
+      });
     }
     (parent.matches || []).forEach(put);
-    (liveMatches || []).forEach(put);
+    (liveMatches || []).forEach(function (match) {
+      if (!match || !match.id || byId[match.id]) return;
+      if (Array.isArray(parent.matches) && match.status === 'scheduled') return;
+      order.push(match.id);
+      byId[match.id] = match;
+    });
     return Object.assign({}, parent, {
       matches: order.map(function (id) { return byId[id]; })
     });
@@ -10237,10 +10388,15 @@
         match.court,
         match.venue,
         match.stage,
-        match.categoryId
+        match.categoryId,
+        match.bracketId,
+        match.teamA,
+        match.teamB,
+        match.playerA,
+        match.playerB
       ];
     });
-    return JSON.stringify([stages, matches]);
+    return JSON.stringify([tournamentCourts(board), spectatorShowsMatchTime(board), stages, matches]);
   }
 
   function publicWatchIsOpen(data) {
@@ -10528,7 +10684,12 @@
     const live = match.status === 'in_progress';
     const kind = resultKind(match);
     const stage = stageLabelOf(sport, match.stage);
-    const when = match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time to be set';
+    const metaBits = [
+      watchMatchTimeText(tournament, match, 'Time to be set'),
+      kind === 'draw' ? 'Draw' : '',
+      kind === 'walkover' ? 'Walkover' : '',
+      kind === 'no_result' ? 'No result' : ''
+    ].filter(Boolean);
     const kicker = [
       live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Next'),
       sport ? ((sportGlyphText(sport) ? sportGlyphText(sport) + ' ' : '') + (sport.label || '')) : '',
@@ -10553,7 +10714,7 @@
           </button>
         </div>
         ${detail ? '<div class="w-detail">' + escapeHtml(detail) + '</div>' : ''}
-        <div class="w-meta">${escapeHtml(when)}${kind === 'draw' ? ' · Draw' : ''}${kind === 'walkover' ? ' · Walkover' : ''}${kind === 'no_result' ? ' · No result' : ''}</div>
+        ${metaBits.length ? '<div class="w-meta">' + escapeHtml(metaBits.join(' · ')) + '</div>' : ''}
       </article>
     `;
   }
@@ -10573,9 +10734,10 @@
     bits.push(stageLabelOf(sport, match.stage));
     if (!hideScore && resultKind(match) === 'walkover') bits.push('Walkover');
     if (!hideScore && resultKind(match) === 'no_result') bits.push('No result');
+    const whenLine = watchWhenLine(tournament, match, [displayCourtOf(tournament, match)], '');
     return `
       <div class="w-fixture">
-        <div class="w-fix-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Time TBD')}${displayCourtOf(tournament, match) ? ' · ' + escapeHtml(displayCourtOf(tournament, match)) : ''}</div>
+        ${whenLine ? '<div class="w-fix-when">' + escapeHtml(whenLine) + '</div>' : ''}
         <div class="w-fix-row">
           <span class="w-swatch sm" style="background:${a.color}"></span>
           <span class="w-fix-name">${escapeHtml(a.name)}</span>
@@ -10743,9 +10905,13 @@
           </div>
         </div>`;
     }
+    const whenLine = watchWhenLine(tournament, match, [
+      displayCourtOf(tournament, match),
+      sport ? stageLabelOf(sport, match.stage) : ''
+    ], 'Completed');
     return `
       <article class="w-result">
-        <div class="w-result-when">${escapeHtml(match.scheduledAt ? fmtDateTime(match.scheduledAt) : 'Completed')}${displayCourtOf(tournament, match) ? ' · ' + escapeHtml(displayCourtOf(tournament, match)) : ''}${sport ? ' · ' + escapeHtml(stageLabelOf(sport, match.stage)) : ''}</div>
+        ${whenLine ? '<div class="w-result-when">' + escapeHtml(whenLine) + '</div>' : ''}
         <div class="w-result-row">
           ${sideHtml(a, '')}
           ${setsHtml}
