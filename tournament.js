@@ -9953,6 +9953,8 @@
     if (match.teamB) out.teamB = match.teamB;
     if (match.playerA) out.playerA = match.playerA;
     if (match.playerB) out.playerB = match.playerB;
+    if (match.scheduleEntryId) out.scheduleEntryId = match.scheduleEntryId;
+    if (match.fromSchedule) out.fromSchedule = true;
     if (Array.isArray(match.sets) && match.sets.length) {
       out.sets = match.sets.map(function (s) { return { a: s.a || 0, b: s.b || 0 }; });
     }
@@ -10338,7 +10340,9 @@
         stage: pickParent(match.stage, live.stage),
         bracketId: pickParent(match.bracketId, live.bracketId),
         categoryId: pickParent(match.categoryId, live.categoryId),
-        sport: pickParent(match.sport, live.sport)
+        sport: pickParent(match.sport, live.sport),
+        scheduleEntryId: pickParent(match.scheduleEntryId, live.scheduleEntryId),
+        fromSchedule: match.fromSchedule || live.fromSchedule
       });
     }
     (parent.matches || []).forEach(put);
@@ -10676,6 +10680,50 @@
     `;
   }
 
+  function watchMatchGroupKey(tournament, match) {
+    if (!match) return '';
+    const sport = getSportConfig(tournament, match.sport);
+    if (sport && usesRegistrationCategories(sport) && match.categoryId) {
+      return String(match.sport || '') + '|' + match.categoryId;
+    }
+    return String(match.sport || '');
+  }
+
+  function watchMatchNumberMap(tournament) {
+    const groups = {};
+    (tournament && tournament.matches || []).forEach(function (match) {
+      if (!match || !match.id) return;
+      const key = watchMatchGroupKey(tournament, match);
+      if (!key) return;
+      (groups[key] = groups[key] || []).push(match);
+    });
+    const byId = {};
+    Object.keys(groups).forEach(function (key) {
+      groups[key].slice().sort(function (a, b) {
+        const timed = sortByScheduledTime(a, b);
+        if (timed) return timed;
+        return String(a.scheduleEntryId || a.id).localeCompare(String(b.scheduleEntryId || b.id));
+      }).forEach(function (match, i) {
+        byId[match.id] = i + 1;
+      });
+    });
+    return byId;
+  }
+
+  function watchMatchNo(tournament, match) {
+    if (!tournament || !match || !match.id) return 0;
+    if (!watch.numberMap || watch.numberBoard !== tournament) {
+      watch.numberMap = watchMatchNumberMap(tournament);
+      watch.numberBoard = tournament;
+    }
+    return watch.numberMap[match.id] || 0;
+  }
+
+  function watchMatchNoLabel(tournament, match) {
+    const n = watchMatchNo(tournament, match);
+    return n ? ('Match ' + n) : '';
+  }
+
   function watchScoreboardHtml(match, tournament, featured) {
     const sport = getSportConfig(tournament, match.sport);
     const p = participantsOf(match, tournament);
@@ -10691,6 +10739,7 @@
       kind === 'no_result' ? 'No result' : ''
     ].filter(Boolean);
     const kicker = [
+      watchMatchNoLabel(tournament, match),
       live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Next'),
       sport ? ((sportGlyphText(sport) ? sportGlyphText(sport) + ' ' : '') + (sport.label || '')) : '',
       stage,
@@ -10734,10 +10783,14 @@
     bits.push(stageLabelOf(sport, match.stage));
     if (!hideScore && resultKind(match) === 'walkover') bits.push('Walkover');
     if (!hideScore && resultKind(match) === 'no_result') bits.push('No result');
+    const noLabel = watchMatchNoLabel(tournament, match);
     const whenLine = watchWhenLine(tournament, match, [displayCourtOf(tournament, match)], '');
     return `
       <div class="w-fixture">
-        ${whenLine ? '<div class="w-fix-when">' + escapeHtml(whenLine) + '</div>' : ''}
+        ${noLabel || whenLine ? '<div class="w-fix-head">'
+          + (noLabel ? '<div class="w-match-no">' + escapeHtml(noLabel) + '</div>' : '')
+          + (whenLine ? '<div class="w-fix-when">' + escapeHtml(whenLine) + '</div>' : '')
+          + '</div>' : ''}
         <div class="w-fix-row">
           <span class="w-swatch sm" style="background:${a.color}"></span>
           <span class="w-fix-name">${escapeHtml(a.name)}</span>
@@ -10905,10 +10958,11 @@
           </div>
         </div>`;
     }
-    const whenLine = watchWhenLine(tournament, match, [
+    const rest = watchWhenLine(tournament, match, [
       displayCourtOf(tournament, match),
       sport ? stageLabelOf(sport, match.stage) : ''
-    ], 'Completed');
+    ], '');
+    const whenLine = [watchMatchNoLabel(tournament, match), rest].filter(Boolean).join(' · ') || 'Completed';
     return `
       <article class="w-result">
         ${whenLine ? '<div class="w-result-when">' + escapeHtml(whenLine) + '</div>' : ''}
