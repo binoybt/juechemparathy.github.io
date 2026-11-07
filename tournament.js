@@ -143,6 +143,8 @@
  *     showUpcoming  bool — admin marks which scheduled matches appear in Upcoming
  *     status        'scheduled' | 'in_progress' | 'completed'
  *     winner        'A' | 'B' | 'tie' | null
+ *     sidesSwapped  bool — score card (and live display) has left/right sides exchanged
+ *                     with names, scores, and other details. teamA/teamB stay the same.
  *     scorerUid / scorerName / scorerEmail — admin-assigned match scorer
  *     captainAUid / captainAEmail / captainBUid / captainBEmail
  *                     captain of each side, copied from the team
@@ -9400,6 +9402,10 @@
     };
   }
 
+  function matchSidesSwapped(match) {
+    return !!(match && match.sidesSwapped);
+  }
+
   function scoreCardHeaderEl(match, tournament) {
     const p = participantsOf(match, tournament);
     const a = teamMeta(tournament, match.sport, p.a);
@@ -9411,6 +9417,7 @@
         <b>${escapeHtml(a.name)}</b>
         ${matchSideAckHtml(match, tournament, 'A')}
       </div>
+      <button type="button" class="t-btn sm t-swap-sides" data-act="swap-sides" title="Move the left side to the right and the right side to the left">Switch sides</button>
       <div class="t-score-card-team">
         <span class="t-team-swatch" style="--team-color:${b.color}"></span>
         <b>${escapeHtml(b.name)}</b>
@@ -9419,6 +9426,26 @@
     `;
     bindMatchAckButtons(head, match, tournament);
     return head;
+  }
+
+  function bindScoreCardSideSwitch(wrap, match, tournament, autoSave) {
+    if (!wrap) return;
+    wrap.classList.toggle('is-swapped', matchSidesSwapped(match));
+    const btn = wrap.querySelector('[data-act="swap-sides"]');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      match.sidesSwapped = !matchSidesSwapped(match);
+      const live = (state.matches || []).find(function (item) { return item.id === match.id; });
+      if (live) live.sidesSwapped = match.sidesSwapped;
+      wrap.classList.toggle('is-swapped', matchSidesSwapped(match));
+      autoSave(function () {
+        assertCanScoreMatch(match);
+        return updateMatchAndPublicScore(match, tournament, {
+          sidesSwapped: !!match.sidesSwapped,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      });
+    });
   }
 
   function openScorer(match, tournament) {
@@ -9459,6 +9486,7 @@
     const wrap = el('div', { class: 't-score-card' });
     wrap.appendChild(scoreCardHeaderEl(match, tournament));
     const autoSave = createScoreAutosaver();
+    bindScoreCardSideSwitch(wrap, match, tournament, autoSave);
 
     function queueGamesSave() {
       games.forEach(function (game) {
@@ -9494,7 +9522,7 @@
           <span class="t-badge status-${game.status || 'pending'}">${STATUS_LABEL[game.status] || 'Pending'}</span>
         </div>
         <div class="t-card-body">
-          <div class="t-form-grid" style="margin-bottom:12px;">
+          <div class="t-form-grid t-score-sides" style="margin-bottom:12px;">
             <div class="t-form-field">
               <label>${escapeHtml(aName)} players</label>
               ${playersReadOnly
@@ -9609,6 +9637,7 @@
     const body = el('div', { class: 't-card-body' });
     wrap.appendChild(body);
     const autoSave = createScoreAutosaver();
+    bindScoreCardSideSwitch(wrap, match, tournament, autoSave);
     const setsBox = el('div'); body.appendChild(setsBox);
     let controls = null;
     if (canChangeStructure) {
@@ -9712,7 +9741,8 @@
     const body = el('div', { class: 't-card-body' });
     wrap.appendChild(body);
     const autoSave = createScoreAutosaver();
-    const totalsBox = el('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '18px', margin: '8px 0 12px', fontFamily: 'Barlow Condensed, sans-serif' } });
+    bindScoreCardSideSwitch(wrap, match, tournament, autoSave);
+    const totalsBox = el('div', { class: 't-score-totals' });
     body.appendChild(totalsBox);
     const quartersBox = el('div'); body.appendChild(quartersBox);
     let controls = null;
@@ -9982,6 +10012,7 @@
     if (match.playerB) out.playerB = match.playerB;
     if (match.scheduleEntryId) out.scheduleEntryId = match.scheduleEntryId;
     if (match.fromSchedule) out.fromSchedule = true;
+    if (match.sidesSwapped) out.sidesSwapped = true;
     if (Array.isArray(match.sets) && match.sets.length) {
       out.sets = match.sets.map(function (s) { return { a: s.a || 0, b: s.b || 0 }; });
     }
@@ -10595,7 +10626,8 @@
         match.teamA,
         match.teamB,
         match.playerA,
-        match.playerB
+        match.playerB,
+        match.sidesSwapped
       ];
     });
     return JSON.stringify([tournamentCourts(board), spectatorShowsMatchTime(board), stages, matches]);
@@ -10939,11 +10971,24 @@
     return n ? ('Match ' + n) : '';
   }
 
+  function watchFlipScoreLine(line) {
+    if (line == null || line === '') return line;
+    return String(line).replace(/(\d+)\s*[–-]\s*(\d+)/g, '$2–$1');
+  }
+
   function watchScoreboardHtml(match, tournament, featured) {
     const sport = getSportConfig(tournament, match.sport);
     const p = participantsOf(match, tournament);
+    const swapped = matchSidesSwapped(match);
+    const leftId = swapped ? p.b : p.a;
+    const rightId = swapped ? p.a : p.b;
     const score = watchScoreText(match, tournament);
-    const detail = watchDetailLine(match, tournament);
+    const leftScore = swapped ? score.b : score.a;
+    const rightScore = swapped ? score.a : score.b;
+    const scoreLine = swapped && score.line ? watchFlipScoreLine(score.line) : score.line;
+    const detail = swapped
+      ? watchFlipScoreLine(watchDetailLine(match, tournament))
+      : watchDetailLine(match, tournament);
     const live = match.status === 'in_progress';
     const kind = resultKind(match);
     const stage = stageLabelOf(sport, match.stage);
@@ -10962,9 +11007,9 @@
     ].filter(Boolean).join(' · ');
     const center = score.note === 'vs'
       ? '<div class="w-vs">VS</div>'
-      : (score.line
-        ? '<div class="w-score-num w-score-sets"><b>' + escapeHtml(score.line) + '</b></div>'
-        : '<div class="w-score-num"><b>' + escapeHtml(score.a) + '</b><span>–</span><b>' + escapeHtml(score.b) + '</b></div>');
+      : (scoreLine
+        ? '<div class="w-score-num w-score-sets"><b>' + escapeHtml(scoreLine) + '</b></div>'
+        : '<div class="w-score-num"><b>' + escapeHtml(leftScore) + '</b><span>–</span><b>' + escapeHtml(rightScore) + '</b></div>');
     const maxBtn = live
       ? '<button type="button" class="w-max-btn" data-act="max-match" data-match="'
         + escapeHtml(match.id || '')
@@ -10974,12 +11019,12 @@
       <article class="w-scoreboard ${live ? 'is-live' : ''} ${featured ? 'is-featured' : ''} ${match.status === 'completed' ? 'is-done' : ''}" data-match="${escapeHtml(match.id || '')}">
         <div class="w-kicker">${live ? '<span class="w-live-dot"></span>' : ''}<span class="w-kicker-text">${escapeHtml(kicker)}</span>${maxBtn}</div>
         <div class="w-score-row">
-          <button type="button" class="w-side-btn" data-act="team" data-team="${escapeHtml(p.a || '')}" data-sport="${escapeHtml(match.sport || '')}">
-            ${watchSideHtml(tournament, match.sport, p.a, match.winner === 'A')}
+          <button type="button" class="w-side-btn" data-act="team" data-team="${escapeHtml(leftId || '')}" data-sport="${escapeHtml(match.sport || '')}">
+            ${watchSideHtml(tournament, match.sport, leftId, match.winner === (swapped ? 'B' : 'A'))}
           </button>
           ${center}
-          <button type="button" class="w-side-btn right" data-act="team" data-team="${escapeHtml(p.b || '')}" data-sport="${escapeHtml(match.sport || '')}">
-            ${watchSideHtml(tournament, match.sport, p.b, match.winner === 'B')}
+          <button type="button" class="w-side-btn right" data-act="team" data-team="${escapeHtml(rightId || '')}" data-sport="${escapeHtml(match.sport || '')}">
+            ${watchSideHtml(tournament, match.sport, rightId, match.winner === (swapped ? 'A' : 'B'))}
           </button>
         </div>
         ${detail ? '<div class="w-detail">' + escapeHtml(detail) + '</div>' : ''}
@@ -10988,11 +11033,11 @@
     `;
   }
 
-  function watchMaximizedSideHtml(match, tournament, side) {
+  function watchMaximizedSideHtml(match, tournament, side, alignRight) {
     const info = watchSideLines(match, tournament, side);
     const meta = teamMeta(tournament, match.sport, info.id);
     return `
-      <div class="w-max-side ${info.winner ? 'is-winner' : ''} ${side === 'B' ? 'right' : ''}">
+      <div class="w-max-side ${info.winner ? 'is-winner' : ''} ${alignRight ? 'right' : ''}">
         <span class="w-swatch" style="background:${info.color}"></span>
         <div>
           <div class="w-max-name">${escapeHtml(info.name)}</div>
@@ -11098,7 +11143,21 @@
   function watchMaximizedMatchHtml(match, tournament) {
     const sport = getSportConfig(tournament, match.sport);
     const division = sport ? findDivision(sport, match.categoryId) : null;
+    const swapped = matchSidesSwapped(match);
+    const leftSide = swapped ? 'B' : 'A';
+    const rightSide = swapped ? 'A' : 'B';
     const score = watchMaximizedScore(match, tournament);
+    if (swapped) {
+      const pointsLeft = score.pointsA;
+      score.pointsA = score.pointsB;
+      score.pointsB = pointsLeft;
+      const setsLeft = score.setsA;
+      score.setsA = score.setsB;
+      score.setsB = setsLeft;
+      if (score.extras && score.extras.length) {
+        score.extras = score.extras.map(watchFlipScoreLine);
+      }
+    }
     const live = match.status === 'in_progress';
     const kind = resultKind(match);
     const kicker = [
@@ -11133,9 +11192,9 @@
       <article class="w-max-board ${live ? 'is-live' : ''} ${match.status === 'completed' ? 'is-done' : ''}">
         <div class="w-max-kicker">${live ? '<span class="w-live-dot"></span>' : ''}${escapeHtml(kicker)}</div>
         <div class="w-max-row">
-          ${watchMaximizedSideHtml(match, tournament, 'A')}
+          ${watchMaximizedSideHtml(match, tournament, leftSide, false)}
           ${center}
-          ${watchMaximizedSideHtml(match, tournament, 'B')}
+          ${watchMaximizedSideHtml(match, tournament, rightSide, true)}
         </div>
         ${extras}
         ${note ? '<div class="w-max-meta">' + escapeHtml(note) + '</div>' : ''}
@@ -11146,11 +11205,14 @@
   function watchFixtureHtml(match, tournament, opts) {
     const sport = getSportConfig(tournament, match.sport);
     const p = participantsOf(match, tournament);
-    const a = teamMeta(tournament, match.sport, p.a);
-    const b = teamMeta(tournament, match.sport, p.b);
+    const swapped = matchSidesSwapped(match);
+    const a = teamMeta(tournament, match.sport, swapped ? p.b : p.a);
+    const b = teamMeta(tournament, match.sport, swapped ? p.a : p.b);
     const hideScore = !!(opts && opts.hideScore) || (match.status !== 'in_progress' && match.status !== 'completed');
     const score = hideScore ? null : watchScoreText(match, tournament);
-    const mid = hideScore ? 'vs' : (score.note === 'vs' ? 'vs' : (score.line || (score.a + '–' + score.b)));
+    const mid = hideScore ? 'vs' : (score.note === 'vs' ? 'vs' : (score.line
+      ? (swapped ? watchFlipScoreLine(score.line) : score.line)
+      : ((swapped ? score.b : score.a) + '–' + (swapped ? score.a : score.b))));
     const division = findDivision(sport, match.categoryId);
     const showCategory = !!(opts && opts.showCategory && division);
     const bits = [];
@@ -11312,9 +11374,10 @@
   }
 
   function watchCompletedMatchHtml(match, tournament) {
-    const a = watchSideLines(match, tournament, 'A');
-    const b = watchSideLines(match, tournament, 'B');
-    const sets = watchSetScores(match, tournament);
+    const swapped = matchSidesSwapped(match);
+    const a = watchSideLines(match, tournament, swapped ? 'B' : 'A');
+    const b = watchSideLines(match, tournament, swapped ? 'A' : 'B');
+    const sets = (swapped ? watchSetScores(match, tournament).map(watchFlipScoreLine) : watchSetScores(match, tournament));
     const winner = watchWinnerText(match, tournament);
     const sport = getSportConfig(tournament, match.sport);
     const kind = resultKind(match);
