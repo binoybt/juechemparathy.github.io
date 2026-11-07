@@ -6119,6 +6119,8 @@
         const ids = skippedStageIds(div).filter(function (id) { return id !== stageId; });
         if (turningOff) ids.push(stageId);
         div.skippedStages = ids;
+        if (ids.length) div.disabledStages = ids.slice();
+        else delete div.disabledStages;
         if (turningOff) {
           const moving = advancedTeamIds(div, stageId);
           const record = advancedRecord(div);
@@ -6140,6 +6142,7 @@
           div.advanced = record;
         }
       });
+      schedulePublicScheduleSync(tournamentId);
       toast(turningOff ? label + ' skipped for ' + catName : label + ' included for ' + catName, 'success');
       render();
     } catch (_) { /* toasted */ }
@@ -9937,8 +9940,11 @@
           maxPlayers: clampMaxPlayers(d.maxPlayers),
           teams: (d.teams || []).map(sanitizePublicTeam).filter(Boolean),
           skippedStages: skippedStageIds(d),
+          disabledStages: skippedStageIds(d),
           advanced: advancedRecord(d),
-          brackets: (d.brackets || []).map(function (b) {
+          brackets: (d.brackets || []).filter(function (b) {
+            return !stageIsSkipped(d, bracketStageId(b));
+          }).map(function (b) {
             return {
               id: b.id,
               name: b.name || 'Bracket',
@@ -10610,6 +10616,11 @@
     }
     const open = publicWatchIsOpen(data);
     const next = open ? mergeWatchMatches(data, watch.liveMatches) : null;
+    if (next && Array.isArray(next.matches)) {
+      next.matches = next.matches.filter(function (match) {
+        return matchStageApplies(getSportConfig(next, match.sport), match);
+      });
+    }
     const nextKey = (open ? 'open:' : (data.expired || data.publicBoard === false ? 'expired:' : 'closed:')) + watchBoardKey(next);
     watch.closed = !open;
     watch.expired = !open && (data.expired === true || data.publicBoard === false);
@@ -11300,8 +11311,10 @@
 
   function completedMatchesForCategory(matches, sport, categoryId) {
     const sportId = sport && sport.id;
+    const division = sport ? findDivision(sport, categoryId) : null;
     return (matches || []).filter(function (m) {
       if (m.sport !== sportId || m.status !== 'completed' || m.categoryId !== categoryId) return false;
+      if (division && stageIsSkipped(division, m.stage || 'league')) return false;
       return matchStageApplies(sport, m);
     }).sort(sortMatches).reverse();
   }
