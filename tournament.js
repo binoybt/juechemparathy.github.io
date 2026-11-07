@@ -12,6 +12,8 @@
  *   /watch.html?s=<token>&live=1              → spectator board with live listeners (venue screens)
  *                                             one unique token per tournament; disabled
  *                                             links do not read public score data
+ *   /watch.html?s=<token>&m=<matchId>         → one current match, maximized for a screen
+ *   /watch.html?s=<token>&live=1&m=<matchId>  → same match, auto-refresh
  *   /watch.html?s=<token>&cat=<id>&panel=teams → category Teams tab (name, players, team tags)
  *
  * Firestore layout:
@@ -10383,6 +10385,7 @@
     preview: false,
     autoRefresh: false,
     reload: null,
+    maxKeysBound: false,
     scheduleLoadedAt: 0,
     completedOpen: {},
     completedPage: {}
@@ -10464,8 +10467,39 @@
     opts = opts || {};
     const bits = [watchThemeToggleHtml()];
     if (opts.refresh) bits.push('<button type="button" class="w-copy" data-act="reload-watch">Refresh</button>');
-    if (opts.copy) bits.push('<button type="button" class="w-copy" data-act="copy">Copy link</button>');
-    return bits.join('');
+    if (opts.copy) bits.push('<button type="button" class="w-copy" data-act="copy">' + escapeHtml(opts.copyLabel || 'Copy link') + '</button>');
+    if (opts.fullscreen) bits.push('<button type="button" class="w-copy" data-act="fullscreen">Full screen</button>');
+    if (opts.closeMax) bits.push('<button type="button" class="w-copy" data-act="close-max">Close</button>');
+    return '<div class="w-chrome">' + bits.join('') + '</div>';
+  }
+
+  function watchFullscreenEl() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+
+  function watchRequestFullscreen() {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!req) return;
+    try {
+      const result = req.call(el);
+      if (result && typeof result.catch === 'function') result.catch(function () {});
+    } catch (_) {}
+  }
+
+  function watchExitFullscreen() {
+    if (!watchFullscreenEl()) return;
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    if (!exit) return;
+    try {
+      const result = exit.call(document);
+      if (result && typeof result.catch === 'function') result.catch(function () {});
+    } catch (_) {}
+  }
+
+  function watchToggleFullscreen() {
+    if (watchFullscreenEl()) watchExitFullscreen();
+    else watchRequestFullscreen();
   }
 
   function mergeWatchMatches(parent, liveMatches) {
@@ -10751,6 +10785,7 @@
       stageId: params.get('st') || '',
       categoryId: params.get('cat') || '',
       teamId: params.get('team') || '',
+      matchId: params.get('m') || '',
       live: params.get('live') === '1'
     };
   }
@@ -10761,7 +10796,7 @@
     const liveOn = Object.prototype.hasOwnProperty.call(next, 'live')
       ? !!next.live
       : params.get('live') === '1';
-    ['sport', 'panel', 'st', 'cat', 'team'].forEach(function (key) {
+    ['sport', 'panel', 'st', 'cat', 'team', 'm'].forEach(function (key) {
       if (next[key]) params.set(key, next[key]);
       else params.delete(key);
     });
@@ -10919,9 +10954,14 @@
       : (score.line
         ? '<div class="w-score-num w-score-sets"><b>' + escapeHtml(score.line) + '</b></div>'
         : '<div class="w-score-num"><b>' + escapeHtml(score.a) + '</b><span>–</span><b>' + escapeHtml(score.b) + '</b></div>');
+    const maxBtn = live
+      ? '<button type="button" class="w-max-btn" data-act="max-match" data-match="'
+        + escapeHtml(match.id || '')
+        + '" title="Maximize this match on a screen">Maximize</button>'
+      : '';
     return `
-      <article class="w-scoreboard ${live ? 'is-live' : ''} ${featured ? 'is-featured' : ''} ${match.status === 'completed' ? 'is-done' : ''}">
-        <div class="w-kicker">${live ? '<span class="w-live-dot"></span>' : ''}${escapeHtml(kicker)}</div>
+      <article class="w-scoreboard ${live ? 'is-live' : ''} ${featured ? 'is-featured' : ''} ${match.status === 'completed' ? 'is-done' : ''}" data-match="${escapeHtml(match.id || '')}">
+        <div class="w-kicker">${live ? '<span class="w-live-dot"></span>' : ''}<span class="w-kicker-text">${escapeHtml(kicker)}</span>${maxBtn}</div>
         <div class="w-score-row">
           <button type="button" class="w-side-btn" data-act="team" data-team="${escapeHtml(p.a || '')}" data-sport="${escapeHtml(match.sport || '')}">
             ${watchSideHtml(tournament, match.sport, p.a, match.winner === 'A')}
@@ -10933,6 +10973,67 @@
         </div>
         ${detail ? '<div class="w-detail">' + escapeHtml(detail) + '</div>' : ''}
         ${metaBits.length ? '<div class="w-meta">' + escapeHtml(metaBits.join(' · ')) + '</div>' : ''}
+      </article>
+    `;
+  }
+
+  function watchMaximizedSideHtml(match, tournament, side) {
+    const info = watchSideLines(match, tournament, side);
+    const meta = teamMeta(tournament, match.sport, info.id);
+    return `
+      <div class="w-max-side ${info.winner ? 'is-winner' : ''} ${side === 'B' ? 'right' : ''}">
+        <span class="w-swatch" style="background:${info.color}"></span>
+        <div>
+          <div class="w-max-name">${escapeHtml(info.name)}</div>
+          ${info.players
+            ? '<div class="w-max-players">' + escapeHtml(info.players) + '</div>'
+            : (meta.wards ? '<div class="w-max-players">' + escapeHtml(meta.wards) + '</div>' : '')}
+          ${teamTagsHtml(meta.tags, 'watch')}
+        </div>
+      </div>`;
+  }
+
+  function watchMaximizedMatchHtml(match, tournament) {
+    const sport = getSportConfig(tournament, match.sport);
+    const division = sport ? findDivision(sport, match.categoryId) : null;
+    const score = watchScoreText(match, tournament);
+    const live = match.status === 'in_progress';
+    const kind = resultKind(match);
+    const sets = watchSetScores(match, tournament);
+    const kicker = [
+      live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Match'),
+      watchMatchNoLabel(tournament, match),
+      sport ? ((sportGlyphText(sport) ? sportGlyphText(sport) + ' ' : '') + (sport.label || '')) : '',
+      division ? (division.name || '') : '',
+      stageLabelOf(sport, match.stage),
+      displayCourtOf(tournament, match)
+    ].filter(Boolean).join(' · ');
+    const center = score.note === 'vs'
+      ? '<div class="w-max-vs">VS</div>'
+      : '<div class="w-max-score"><b>' + escapeHtml(score.a) + '</b><span>–</span><b>' + escapeHtml(score.b) + '</b></div>';
+    const lastLine = score.a + '–' + score.b;
+    const extraSets = sets.filter(function (s) { return s !== lastLine; });
+    const setPills = extraSets.length
+      ? '<div class="w-max-sets">' + extraSets.map(function (s) {
+        return '<span>' + escapeHtml(s) + '</span>';
+      }).join('') + '</div>'
+      : '';
+    const note = [
+      kind === 'draw' ? 'Draw' : '',
+      kind === 'walkover' ? 'Walkover' : '',
+      kind === 'no_result' ? 'No result' : '',
+      watchMatchTimeText(tournament, match, '')
+    ].filter(Boolean).join(' · ');
+    return `
+      <article class="w-max-board ${live ? 'is-live' : ''} ${match.status === 'completed' ? 'is-done' : ''}">
+        <div class="w-max-kicker">${live ? '<span class="w-live-dot"></span>' : ''}${escapeHtml(kicker)}</div>
+        <div class="w-max-row">
+          ${watchMaximizedSideHtml(match, tournament, 'A')}
+          ${center}
+          ${watchMaximizedSideHtml(match, tournament, 'B')}
+        </div>
+        ${setPills}
+        ${note ? '<div class="w-max-meta">' + escapeHtml(note) + '</div>' : ''}
       </article>
     `;
   }
@@ -11290,6 +11391,22 @@
       </section>`;
   }
 
+  function closeWatchMatch() {
+    watchExitFullscreen();
+    const params = watchParams();
+    const board = watch.board;
+    const sport = ((board && board.sports) || []).find(function (s) { return s.id === params.sportId; });
+    const categorized = !!(sport && usesRegistrationCategories(sport));
+    setWatchParams({
+      sport: params.sportId,
+      panel: 'summary',
+      st: categorized ? '' : params.stageId,
+      cat: '',
+      team: '',
+      m: ''
+    });
+  }
+
   function bindWatchToolbar(scope) {
     const shell = scope || document.body;
     shell.querySelectorAll('[data-act="reload-watch"]').forEach(function (btn) {
@@ -11302,12 +11419,61 @@
         setWatchTheme(watchTheme() === 'light' ? 'dark' : 'light');
       });
     });
+    shell.querySelectorAll('[data-act="copy"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const url = location.href;
+        const original = btn.textContent;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () {
+            btn.textContent = 'Copied';
+            setTimeout(function () { btn.textContent = original; }, 1600);
+          }).catch(function () { prompt('Copy this link', url); });
+        } else prompt('Copy this link', url);
+      });
+    });
+    shell.querySelectorAll('[data-act="max-match"]').forEach(function (btn) {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const id = btn.getAttribute('data-match');
+        const board = watch.board;
+        const match = ((board && board.matches) || []).find(function (m) {
+          return String(m.id) === String(id);
+        });
+        if (!match) return;
+        watchRequestFullscreen();
+        setWatchParams({
+          sport: match.sport || '',
+          panel: 'summary',
+          st: match.stage || '',
+          cat: match.categoryId || '',
+          team: '',
+          m: match.id
+        });
+      });
+    });
+    shell.querySelectorAll('[data-act="close-max"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { closeWatchMatch(); });
+    });
+    shell.querySelectorAll('[data-act="fullscreen"]').forEach(function (btn) {
+      btn.addEventListener('click', function () { watchToggleFullscreen(); });
+    });
+    if (!watch.maxKeysBound) {
+      watch.maxKeysBound = true;
+      document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        if (watchFullscreenEl()) return;
+        if (!watchParams().matchId) return;
+        closeWatchMatch();
+      });
+    }
   }
 
   function renderPublicWatch() {
     const top = document.getElementById('wTop');
     const root = document.getElementById('wContent');
     if (!top || !root) return;
+    document.body.classList.remove('is-match-max');
     applyWatchTheme(watchTheme());
     if (!watch.ready && !watch.preview) {
       document.title = 'Live scores';
@@ -11345,6 +11511,38 @@
     const tournament = watch.board;
     const matches = tournament.matches || [];
     const params = watchParams();
+    if (params.matchId) {
+      const focused = matches.find(function (m) { return String(m.id) === String(params.matchId); });
+      document.body.classList.add('is-match-max');
+      const chrome = watchChromeButtonsHtml({
+        refresh: !watch.preview && !watch.autoRefresh,
+        copy: true,
+        copyLabel: 'Copy match link',
+        fullscreen: true,
+        closeMax: true
+      });
+      if (!focused) {
+        document.title = (tournament.name || 'Live') + ' — Match';
+        top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><div><b>'
+          + escapeHtml(tournament.name || 'Live') + '</b><small>Match not on the board</small></div></div>'
+          + chrome;
+        root.innerHTML = '<section class="w-closed"><h1>This match is no longer on the board</h1><p>It may have finished and dropped off, or the organizer changed the schedule. Close to return to the live board.</p></section>';
+        bindWatchToolbar();
+        return;
+      }
+      const p = participantsOf(focused, tournament);
+      const aName = teamMeta(tournament, focused.sport, p.a).name;
+      const bName = teamMeta(tournament, focused.sport, p.b).name;
+      document.title = aName + ' vs ' + bName + ' — ' + (tournament.name || 'Live');
+      const modeNote = watch.preview ? 'Sample' : (watch.autoRefresh ? 'Live' : 'Refresh for latest');
+      top.innerHTML = '<div class="w-brand"><img src="icons/smash-logo.png" alt="" /><div><b>'
+        + escapeHtml(tournament.name || 'Live') + '</b><small>'
+        + escapeHtml(watchUpdatedLabel(tournament)) + ' · ' + modeNote + '</small></div></div>'
+        + chrome;
+      root.innerHTML = watchMaximizedMatchHtml(focused, tournament);
+      bindWatchToolbar();
+      return;
+    }
     const sports = tournament.sports || [];
     let sport = sports.find(function (s) { return s.id === params.sportId; }) || null;
     if (!sport) {
@@ -11622,17 +11820,6 @@
     });
     bindWatchCompletedControls(root);
     bindWatchToolbar(shell);
-    shell.querySelectorAll('[data-act="copy"]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        const url = location.href;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(url).then(function () {
-            btn.textContent = 'Copied';
-            setTimeout(function () { btn.textContent = 'Copy link'; }, 1600);
-          }).catch(function () { prompt('Copy this link', url); });
-        } else prompt('Copy this link', url);
-      });
-    });
   }
 
   function initPublicWatch() {
