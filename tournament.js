@@ -11004,13 +11004,103 @@
       </div>`;
   }
 
+  function watchLatestSetPair(sets) {
+    const list = sets || [];
+    let set = list[0] || { a: 0, b: 0 };
+    for (let i = list.length - 1; i >= 0; i--) {
+      if ((list[i].a || 0) > 0 || (list[i].b || 0) > 0 || i === 0) {
+        set = list[i];
+        break;
+      }
+    }
+    return { a: set.a || 0, b: set.b || 0 };
+  }
+
+  function watchSetsWonFrom(sets, winnerFn) {
+    let a = 0;
+    let b = 0;
+    (sets || []).forEach(function (set, index) {
+      const winner = winnerFn(set, index);
+      if (winner === 'A') a++;
+      else if (winner === 'B') b++;
+    });
+    return { a: a, b: b };
+  }
+
+  function watchMaximizedScore(match, tournament) {
+    const sport = getSportConfig(tournament, match && match.sport);
+    const kind = resultKind(match);
+    if (!sport || kind === 'no_result') {
+      return { vs: false, pointsA: '–', pointsB: '–', showSets: false };
+    }
+    if (match.status !== 'in_progress' && match.status !== 'completed') {
+      return { vs: true, showSets: false };
+    }
+    const cfg = getStageScoring(tournament, match.sport, match.stage);
+    if (sport.kind === 'racket') {
+      const games = racketGamesForMatch(match, tournament, sport);
+      let game = games[games.length - 1] || { sets: [] };
+      for (let i = 0; i < games.length; i++) {
+        if (!games[i].winner) {
+          game = games[i];
+          break;
+        }
+      }
+      const points = watchLatestSetPair(game.sets);
+      const won = watchSetsWonFrom(game.sets, function (set) {
+        return racketSetWinner(set, cfg);
+      });
+      return {
+        vs: false,
+        pointsA: String(points.a),
+        pointsB: String(points.b),
+        setsA: String(won.a),
+        setsB: String(won.b),
+        showSets: true,
+        setsLabel: 'Sets'
+      };
+    }
+    if (sport.kind === 'volleyball') {
+      const bestOf = (cfg && cfg.bestOf) || 3;
+      const points = watchLatestSetPair(match.sets);
+      const won = watchSetsWonFrom(match.sets, function (set, index) {
+        return volleyballSetWinner(set, cfg, index === bestOf - 1);
+      });
+      return {
+        vs: false,
+        pointsA: String(points.a),
+        pointsB: String(points.b),
+        setsA: String(won.a),
+        setsB: String(won.b),
+        showSets: true,
+        setsLabel: 'Sets'
+      };
+    }
+    if (sport.kind === 'basketball') {
+      const totals = basketballTotals(match);
+      return {
+        vs: false,
+        pointsA: String(totals.a),
+        pointsB: String(totals.b),
+        showSets: false,
+        extras: watchSetScores(match, tournament)
+      };
+    }
+    const score = watchScoreText(match, tournament);
+    return {
+      vs: score.note === 'vs',
+      pointsA: score.a,
+      pointsB: score.b,
+      showSets: false
+    };
+  }
+
   function watchMaximizedMatchHtml(match, tournament) {
     const sport = getSportConfig(tournament, match.sport);
     const division = sport ? findDivision(sport, match.categoryId) : null;
-    const score = watchScoreText(match, tournament);
+    const score = watchMaximizedScore(match, tournament);
     const live = match.status === 'in_progress';
     const kind = resultKind(match);
-    const sets = watchSetScores(match, tournament);
     const kicker = [
       live ? 'On now' : (match.status === 'completed' ? 'Final' : 'Match'),
       watchMatchNoLabel(tournament, match),
@@ -11019,13 +11109,17 @@
       stageLabelOf(sport, match.stage),
       displayCourtOf(tournament, match)
     ].filter(Boolean).join(' · ');
-    const center = score.note === 'vs'
+    const center = score.vs
       ? '<div class="w-max-vs">VS</div>'
-      : '<div class="w-max-score"><b>' + escapeHtml(score.a) + '</b><span>–</span><b>' + escapeHtml(score.b) + '</b></div>';
-    const lastLine = score.a + '–' + score.b;
-    const extraSets = sets.filter(function (s) { return s !== lastLine; });
-    const setPills = extraSets.length
-      ? '<div class="w-max-sets">' + extraSets.map(function (s) {
+      : '<div class="w-max-center">'
+        + '<div class="w-max-score"><b>' + escapeHtml(score.pointsA) + '</b><span>–</span><b>' + escapeHtml(score.pointsB) + '</b></div>'
+        + (score.showSets
+          ? '<div class="w-max-sets-won"><small>' + escapeHtml(score.setsLabel || 'Sets') + '</small><b>'
+            + escapeHtml(score.setsA) + '</b><span>–</span><b>' + escapeHtml(score.setsB) + '</b></div>'
+          : '')
+        + '</div>';
+    const extras = (!score.vs && score.extras && score.extras.length)
+      ? '<div class="w-max-sets">' + score.extras.map(function (s) {
         return '<span>' + escapeHtml(s) + '</span>';
       }).join('') + '</div>'
       : '';
@@ -11043,7 +11137,7 @@
           ${center}
           ${watchMaximizedSideHtml(match, tournament, 'B')}
         </div>
-        ${setPills}
+        ${extras}
         ${note ? '<div class="w-max-meta">' + escapeHtml(note) + '</div>' : ''}
       </article>
     `;

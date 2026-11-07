@@ -710,6 +710,13 @@ body.watch.is-match-max .w-main {
   font-weight: 650;
   margin-top: 8px;
 }
+.w-max-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
 .w-max-score {
   font-family: 'Barlow Condensed', sans-serif;
   font-size: clamp(4rem, 12vw, 9rem);
@@ -722,6 +729,27 @@ body.watch.is-match-max .w-main {
   justify-content: center;
 }
 .w-max-score span { color: var(--w-muted); font-size: .55em; }
+.w-max-sets-won {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: clamp(1.6rem, 4vw, 3rem);
+  font-weight: 800;
+  letter-spacing: .04em;
+  color: var(--w-text);
+}
+.w-max-sets-won small {
+  font-family: 'Outfit', sans-serif;
+  font-size: .42em;
+  font-weight: 700;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--w-muted);
+  margin-right: 4px;
+}
+.w-max-sets-won span { color: var(--w-muted); font-size: .7em; }
 .w-max-vs {
   font-family: 'Barlow Condensed', sans-serif;
   font-size: clamp(2rem, 5vw, 3.5rem);
