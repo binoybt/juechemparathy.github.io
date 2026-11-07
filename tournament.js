@@ -154,8 +154,8 @@
  *                     have ackAUid / ackBUid; those are no longer written.
  *     scoringConfig snapshot of the stage's scoring rules at match-creation time
  *
- *     Racket sports:  games[]  { category, playersA, playersB, sets[{a,b}], status, winner }
- *     Volleyball:     sets[]   { a, b }
+ *     Racket sports:  games[]  { category, playersA, playersB, sets[{a,b,complete}], status, winner }
+ *     Volleyball:     sets[]   { a, b, complete }
  *     Basketball:     quarters[] { a, b }
  */
 
@@ -2391,7 +2391,22 @@
   // SCORING LOGIC
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function serializeSetScore(set) {
+    const out = { a: (set && set.a) || 0, b: (set && set.b) || 0 };
+    if (set && set.complete) out.complete = true;
+    return out;
+  }
+
+  function setScoreLeader(set) {
+    const a = (set && set.a) || 0;
+    const b = (set && set.b) || 0;
+    if (a > b) return 'A';
+    if (b > a) return 'B';
+    return null;
+  }
+
   function racketSetWinner(set, cfg) {
+    if (set && set.complete) return setScoreLeader(set);
     const target = (cfg && cfg.target) || 21;
     const cap = (cfg && cfg.cap) || (target + 4);
     const a = set.a || 0, b = set.b || 0;
@@ -2482,6 +2497,7 @@
   }
 
   function volleyballSetWinner(set, cfg, isDeciding) {
+    if (set && set.complete) return setScoreLeader(set);
     const target = isDeciding ? (cfg.decidingTarget || 15) : (cfg.target || 21);
     const cap = isDeciding ? (cfg.decidingCap || 20) : (cfg.cap || 25);
     const a = set.a || 0, b = set.b || 0;
@@ -7331,7 +7347,7 @@
         if (sport.kind === 'racket' && (!match.games || !match.games.length)) {
           const bestOf = (getStageScoring(tournament, match.sport, match.stage) || {}).bestOf || 1;
           update.games = racketGamesForMatch(match, tournament, sport).map(function (game) {
-            const sets = (game.sets || []).map(function (set) { return { a: set.a || 0, b: set.b || 0 }; });
+            const sets = (game.sets || []).map(serializeSetScore);
             while (sets.length < bestOf) sets.push({ a: 0, b: 0 });
             return Object.assign({}, game, { sets: sets });
           });
@@ -9448,6 +9464,36 @@
     });
   }
 
+  function setPeriodControlsHtml(set, winner, index) {
+    if (set && set.complete) {
+      return '<button type="button" class="t-btn sm t-set-complete" data-act="reopen-set" data-set="' + index + '">Reopen set</button>';
+    }
+    if (winner) return '';
+    return '<button type="button" class="t-btn sm t-set-complete" data-act="complete-set" data-set="' + index + '">Complete set</button>';
+  }
+
+  function bindSetCompleteButtons(row, sets, apply) {
+    if (!row) return;
+    row.querySelectorAll('[data-act="complete-set"], [data-act="reopen-set"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const idx = +btn.getAttribute('data-set');
+        const set = sets[idx];
+        if (!set) return;
+        if (btn.getAttribute('data-act') === 'reopen-set') {
+          set.complete = false;
+          apply();
+          return;
+        }
+        if (!setScoreLeader(set)) {
+          toast('Give one side more points before completing the set', 'error');
+          return;
+        }
+        set.complete = true;
+        apply();
+      });
+    });
+  }
+
   function openScorer(match, tournament) {
     assertCanScoreMatch(match);
     const sport = getSportConfig(tournament, match.sport);
@@ -9498,7 +9544,7 @@
           category: game.category,
           playersA: game.playersA || '',
           playersB: game.playersB || '',
-          sets: game.sets.map(function (set) { return { a: set.a || 0, b: set.b || 0 }; }),
+          sets: game.sets.map(serializeSetScore),
           status: game.status,
           winner: game.winner || null
         };
@@ -9549,9 +9595,9 @@
         container.innerHTML = '';
         game.sets.forEach(function (set, si) {
           const w = racketSetWinner(set, cfg);
-          const row = el('div', { class: 't-scorer', style: { marginBottom: '8px' } });
+          const row = el('div', { class: 't-scorer' + (w ? ' is-complete' : ''), style: { marginBottom: '8px' } });
           row.innerHTML = `
-            <div class="t-scorer-period">Set ${si + 1}${w ? ' · ' + w : ''}</div>
+            <div class="t-scorer-period"><span>Set ${si + 1}${w ? ' · ' + w : ''}</span>${setPeriodControlsHtml(set, w, si)}</div>
             <div class="side">
               <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
               <div class="t-score-stepper">
@@ -9588,6 +9634,10 @@
               game.sets[idx][key] = Math.max(0, parseInt(inp.value, 10) || 0);
               queueGamesSave();
             });
+          });
+          bindSetCompleteButtons(row, game.sets, function () {
+            repaint();
+            queueGamesSave();
           });
           container.appendChild(row);
         });
@@ -9650,7 +9700,7 @@
     }
 
     function queueScoreSave() {
-      const snapshot = sets.map(function (set) { return { a: set.a || 0, b: set.b || 0 }; });
+      const snapshot = sets.map(serializeSetScore);
       const winner = volleyballMatchWinner({ sets: snapshot }, cfg);
       const patch = Object.assign({
         sets: snapshot,
@@ -9667,9 +9717,9 @@
       sets.forEach(function (s, i) {
         const isDeciding = i === bestOf - 1;
         const w = volleyballSetWinner(s, cfg, isDeciding);
-        const row = el('div', { class: 't-scorer', style: { marginBottom: '8px' } });
+        const row = el('div', { class: 't-scorer' + (w ? ' is-complete' : ''), style: { marginBottom: '8px' } });
         row.innerHTML = `
-          <div class="t-scorer-period">Set ${i + 1}${w ? ' · ' + w : ''}${isDeciding ? ' (deciding)' : ''}</div>
+          <div class="t-scorer-period"><span>Set ${i + 1}${w ? ' · ' + w : ''}${isDeciding ? ' (deciding)' : ''}</span>${setPeriodControlsHtml(s, w, i)}</div>
           <div class="side">
             <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
             <div class="t-score-stepper">
@@ -9706,6 +9756,10 @@
             sets[idx][key] = Math.max(0, parseInt(inp.value, 10) || 0);
             queueScoreSave();
           });
+        });
+        bindSetCompleteButtons(row, sets, function () {
+          paint();
+          queueScoreSave();
         });
         setsBox.appendChild(row);
       });
@@ -10014,7 +10068,7 @@
     if (match.fromSchedule) out.fromSchedule = true;
     if (match.sidesSwapped) out.sidesSwapped = true;
     if (Array.isArray(match.sets) && match.sets.length) {
-      out.sets = match.sets.map(function (s) { return { a: s.a || 0, b: s.b || 0 }; });
+      out.sets = match.sets.map(serializeSetScore);
     }
     if (Array.isArray(match.quarters) && match.quarters.length) {
       out.quarters = match.quarters.map(function (q) { return { a: q.a || 0, b: q.b || 0 }; });
@@ -10030,7 +10084,7 @@
           playersA: g.playersA || '',
           playersB: g.playersB || '',
           winner: g.winner || null,
-          sets: (g.sets || []).map(function (s) { return { a: s.a || 0, b: s.b || 0 }; })
+          sets: (g.sets || []).map(serializeSetScore)
         };
       });
     }
