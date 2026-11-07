@@ -526,12 +526,25 @@ body.t-member-preview .t-admin-switch {
 }
 .t-scorer-period {
   grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
   text-align: center;
   color: var(--t-muted);
   font-size: .8rem;
   font-weight: 800;
   text-transform: uppercase;
   letter-spacing: .05em;
+}
+.t-scorer.is-complete {
+  background: #ecfdf5;
+}
+.t-set-complete {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 700;
 }
 .t-scorer .side {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
