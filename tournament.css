@@ -673,9 +673,38 @@ body.t-member-preview .t-admin-switch {
 }
 .t-score-card-head {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   gap: 8px;
   padding: 10px 10px 8px;
+  align-items: start;
+}
+.t-swap-sides {
+  align-self: center;
+  white-space: nowrap;
+  margin-top: 4px;
+}
+.t-score-sides {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.t-score-totals {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin: 8px 0 12px;
+  font-family: 'Barlow Condensed', sans-serif;
+}
+.t-score-card.is-swapped .t-score-card-head,
+.t-score-card.is-swapped .t-scorer,
+.t-score-card.is-swapped .t-score-sides,
+.t-score-card.is-swapped .t-score-totals {
+  direction: rtl;
+}
+.t-score-card.is-swapped .t-score-card-head > *,
+.t-score-card.is-swapped .t-scorer > *,
+.t-score-card.is-swapped .t-score-sides > *,
+.t-score-card.is-swapped .t-score-totals > * {
+  direction: ltr;
 }
 .t-score-card-team {
   display: flex;
