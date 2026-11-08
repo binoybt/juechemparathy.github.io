@@ -154,8 +154,8 @@
  *                     have ackAUid / ackBUid; those are no longer written.
  *     scoringConfig snapshot of the stage's scoring rules at match-creation time
  *
- *     Racket sports:  games[]  { category, playersA, playersB, sets[{a,b,complete}], status, winner }
- *     Volleyball:     sets[]   { a, b, complete }
+ *     Racket sports:  games[]  { category, playersA, playersB, sets[{a,b,complete,winner}], status, winner }
+ *     Volleyball:     sets[]   { a, b, complete, winner }
  *     Basketball:     quarters[] { a, b }
  */
 
@@ -2393,7 +2393,11 @@
 
   function serializeSetScore(set) {
     const out = { a: (set && set.a) || 0, b: (set && set.b) || 0 };
-    if (set && set.complete) out.complete = true;
+    if (set && set.complete) {
+      out.complete = true;
+      const winner = (set.winner === 'A' || set.winner === 'B') ? set.winner : setScoreLeader(set);
+      if (winner) out.winner = winner;
+    }
     return out;
   }
 
@@ -2405,8 +2409,26 @@
     return null;
   }
 
+  function setForcedWinner(set) {
+    if (!set || !set.complete) return null;
+    if (set.winner === 'A' || set.winner === 'B') return set.winner;
+    return setScoreLeader(set);
+  }
+
+  function setsWonFrom(sets, winnerFn) {
+    let a = 0;
+    let b = 0;
+    (sets || []).forEach(function (set, index) {
+      const winner = winnerFn(set, index);
+      if (winner === 'A') a++;
+      else if (winner === 'B') b++;
+    });
+    return { a: a, b: b };
+  }
+
   function racketSetWinner(set, cfg) {
-    if (set && set.complete) return setScoreLeader(set);
+    const forced = setForcedWinner(set);
+    if (forced) return forced;
     const target = (cfg && cfg.target) || 21;
     const cap = (cfg && cfg.cap) || (target + 4);
     const a = set.a || 0, b = set.b || 0;
@@ -2420,13 +2442,11 @@
   function racketGameWinner(game, cfg) {
     const bestOf = (cfg && cfg.bestOf) || 1;
     const need = Math.ceil(bestOf / 2);
-    let a = 0, b = 0;
-    (game.sets || []).forEach(function (s) {
-      const w = racketSetWinner(s, cfg);
-      if (w === 'A') a++; else if (w === 'B') b++;
+    const won = setsWonFrom(game && game.sets, function (set) {
+      return racketSetWinner(set, cfg);
     });
-    if (a >= need) return 'A';
-    if (b >= need) return 'B';
+    if (won.a >= need) return 'A';
+    if (won.b >= need) return 'B';
     return null;
   }
 
@@ -2472,24 +2492,29 @@
     }
     const playersA = finalizedPlayersForSide(tournament, match, 'A');
     const playersB = finalizedPlayersForSide(tournament, match, 'B');
+    const cfg = getStageScoring(tournament, match && match.sport, match && match.stage);
     return games.map(function (game) {
+      const sets = game.sets && game.sets.length ? game.sets : [{ a: 0, b: 0 }];
+      const winner = racketGameWinner({ sets: sets }, cfg) || null;
       return Object.assign({}, game, {
         playersA: playersA || game.playersA || '',
         playersB: playersB || game.playersB || '',
-        sets: game.sets && game.sets.length ? game.sets : [{ a: 0, b: 0 }],
-        status: game.status || 'pending',
-        winner: game.winner || null
+        sets: sets,
+        status: winner ? 'completed' : (sets.some(function (set) { return set.a || set.b || set.complete; }) ? 'in_progress' : (game.status || 'pending')),
+        winner: winner
       });
     });
   }
 
   function racketMatchWinner(match, tournament) {
     const sportCfg = getSportConfig(tournament, match.sport);
+    const cfg = getStageScoring(tournament, match.sport, match.stage);
     const cats = racketCategoriesForMatch(tournament, sportCfg, match);
     const need = Math.ceil(cats.length / 2);
     let a = 0, b = 0;
     racketGamesForMatch(match, tournament, sportCfg).forEach(function (g) {
-      if (g.winner === 'A') a++; else if (g.winner === 'B') b++;
+      const w = racketGameWinner(g, cfg);
+      if (w === 'A') a++; else if (w === 'B') b++;
     });
     if (a >= need) return 'A';
     if (b >= need) return 'B';
@@ -2497,9 +2522,10 @@
   }
 
   function volleyballSetWinner(set, cfg, isDeciding) {
-    if (set && set.complete) return setScoreLeader(set);
-    const target = isDeciding ? (cfg.decidingTarget || 15) : (cfg.target || 21);
-    const cap = isDeciding ? (cfg.decidingCap || 20) : (cfg.cap || 25);
+    const forced = setForcedWinner(set);
+    if (forced) return forced;
+    const target = isDeciding ? ((cfg && cfg.decidingTarget) || 15) : ((cfg && cfg.target) || 21);
+    const cap = isDeciding ? ((cfg && cfg.decidingCap) || 20) : ((cfg && cfg.cap) || 25);
     const a = set.a || 0, b = set.b || 0;
     if (a >= target && a - b >= 2) return 'A';
     if (b >= target && b - a >= 2) return 'B';
@@ -2511,15 +2537,11 @@
   function volleyballMatchWinner(match, cfg) {
     const bestOf = (cfg && cfg.bestOf) || 3;
     const need = Math.ceil(bestOf / 2);
-    let a = 0, b = 0;
-    const sets = match.sets || [];
-    sets.forEach(function (s, i) {
-      const isDeciding = i === bestOf - 1;
-      const w = volleyballSetWinner(s, cfg, isDeciding);
-      if (w === 'A') a++; else if (w === 'B') b++;
+    const won = setsWonFrom(match && match.sets, function (set, i) {
+      return volleyballSetWinner(set, cfg, i === bestOf - 1);
     });
-    if (a >= need) return 'A';
-    if (b >= need) return 'B';
+    if (won.a >= need) return 'A';
+    if (won.b >= need) return 'B';
     return null;
   }
 
@@ -2595,26 +2617,30 @@
     const sc = getSportConfig(tournament, match.sport);
     if (!sc) return { a: '—', b: '—' };
     if (sc.kind === 'racket') {
+      const cfg = getStageScoring(tournament, match.sport, match.stage);
       if (usesRacketSetPoints(match, tournament)) {
+        const games = racketGamesForMatch(match, tournament, sc);
+        const game = games[0] || { sets: [] };
+        const won = setsWonFrom(game.sets, function (set) { return racketSetWinner(set, cfg); });
+        if (won.a || won.b) return { a: String(won.a), b: String(won.b), label: 'Sets' };
         const set = latestRacketSet(match, tournament);
         return { a: String(set.a), b: String(set.b), label: 'Points' };
       }
       let a = 0, b = 0;
       racketGamesForMatch(match, tournament, sc).forEach(function (g) {
-        if (g.winner === 'A') a++;
-        else if (g.winner === 'B') b++;
+        const w = racketGameWinner(g, cfg);
+        if (w === 'A') a++;
+        else if (w === 'B') b++;
       });
       return { a: String(a), b: String(b), label: 'Games' };
     }
     if (sc.kind === 'volleyball') {
       const cfg = getStageScoring(tournament, match.sport, match.stage);
       const bestOf = (cfg && cfg.bestOf) || 3;
-      let a = 0, b = 0;
-      (match.sets || []).forEach(function (s, i) {
-        const w = volleyballSetWinner(s, cfg, i === bestOf - 1);
-        if (w === 'A') a++; else if (w === 'B') b++;
+      const won = setsWonFrom(match.sets, function (s, i) {
+        return volleyballSetWinner(s, cfg, i === bestOf - 1);
       });
-      return { a: String(a), b: String(b), label: 'Sets' };
+      return { a: String(won.a), b: String(won.b), label: 'Sets' };
     }
     if (sc.kind === 'basketball') {
       const t = basketballTotals(match);
@@ -9472,6 +9498,14 @@
     return '<button type="button" class="t-btn sm t-set-complete" data-act="complete-set" data-set="' + index + '">Complete set</button>';
   }
 
+  function setsWonSummaryHtml(aName, bName, won) {
+    return '<div class="t-score-totals t-sets-won" aria-label="Sets won">'
+      + '<div class="t-sets-won-side"><b>' + (won.a || 0) + '</b><small>' + escapeHtml(aName) + '</small></div>'
+      + '<div class="t-sets-won-mid">Sets</div>'
+      + '<div class="t-sets-won-side"><b>' + (won.b || 0) + '</b><small>' + escapeHtml(bName) + '</small></div>'
+      + '</div>';
+  }
+
   function bindSetCompleteButtons(row, sets, apply) {
     if (!row) return;
     row.querySelectorAll('[data-act="complete-set"], [data-act="reopen-set"]').forEach(function (btn) {
@@ -9481,14 +9515,17 @@
         if (!set) return;
         if (btn.getAttribute('data-act') === 'reopen-set') {
           set.complete = false;
+          delete set.winner;
           apply();
           return;
         }
-        if (!setScoreLeader(set)) {
+        const leader = setScoreLeader(set);
+        if (!leader) {
           toast('Give one side more points before completing the set', 'error');
           return;
         }
         set.complete = true;
+        set.winner = leader;
         apply();
       });
     });
@@ -9582,6 +9619,7 @@
                 : `<input type="text" class="t-input" data-players="B" value="${escapeHtml(game.playersB || '')}" />`}
             </div>
           </div>
+          <div data-sets-won></div>
           <div data-sets></div>
           ${canChangeStructure ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
             <button class="t-btn sm" data-act="add-set">+ Add set</button>
@@ -9591,6 +9629,19 @@
       `;
 
       function repaint() {
+        game.winner = racketGameWinner(game, cfg);
+        game.status = game.winner ? 'completed' : (game.sets.some(function (set) { return set.a || set.b || set.complete; }) ? 'in_progress' : 'pending');
+        const badge = gameWrap.querySelector('.t-badge');
+        if (badge) {
+          badge.className = 't-badge status-' + (game.status || 'pending');
+          badge.textContent = STATUS_LABEL[game.status] || 'Pending';
+        }
+        const wonBox = gameWrap.querySelector('[data-sets-won]');
+        if (wonBox) {
+          wonBox.innerHTML = setsWonSummaryHtml(aName, bName, setsWonFrom(game.sets, function (set) {
+            return racketSetWinner(set, cfg);
+          }));
+        }
         const container = gameWrap.querySelector('[data-sets]');
         container.innerHTML = '';
         game.sets.forEach(function (set, si) {
@@ -9688,6 +9739,7 @@
     wrap.appendChild(body);
     const autoSave = createScoreAutosaver();
     bindScoreCardSideSwitch(wrap, match, tournament, autoSave);
+    const wonBox = el('div'); body.appendChild(wonBox);
     const setsBox = el('div'); body.appendChild(setsBox);
     let controls = null;
     if (canChangeStructure) {
@@ -9713,6 +9765,9 @@
     }
 
     function paint() {
+      wonBox.innerHTML = setsWonSummaryHtml(aName, bName, setsWonFrom(sets, function (set, i) {
+        return volleyballSetWinner(set, cfg, i === bestOf - 1);
+      }));
       setsBox.innerHTML = '';
       sets.forEach(function (s, i) {
         const isDeciding = i === bestOf - 1;
@@ -11103,27 +11158,19 @@
       </div>`;
   }
 
-  function watchLatestSetPair(sets) {
+  function watchLatestSetPair(sets, winnerFn) {
     const list = sets || [];
-    let set = list[0] || { a: 0, b: 0 };
-    for (let i = list.length - 1; i >= 0; i--) {
-      if ((list[i].a || 0) > 0 || (list[i].b || 0) > 0 || i === 0) {
-        set = list[i];
-        break;
-      }
+    if (!list.length) return { a: 0, b: 0 };
+    for (let i = 0; i < list.length; i++) {
+      if (typeof winnerFn === 'function' && winnerFn(list[i], i)) continue;
+      return { a: list[i].a || 0, b: list[i].b || 0 };
     }
+    const set = list[list.length - 1];
     return { a: set.a || 0, b: set.b || 0 };
   }
 
   function watchSetsWonFrom(sets, winnerFn) {
-    let a = 0;
-    let b = 0;
-    (sets || []).forEach(function (set, index) {
-      const winner = winnerFn(set, index);
-      if (winner === 'A') a++;
-      else if (winner === 'B') b++;
-    });
-    return { a: a, b: b };
+    return setsWonFrom(sets, winnerFn);
   }
 
   function watchMaximizedScore(match, tournament) {
@@ -11145,10 +11192,9 @@
           break;
         }
       }
-      const points = watchLatestSetPair(game.sets);
-      const won = watchSetsWonFrom(game.sets, function (set) {
-        return racketSetWinner(set, cfg);
-      });
+      const wonFn = function (set) { return racketSetWinner(set, cfg); };
+      const points = watchLatestSetPair(game.sets, wonFn);
+      const won = watchSetsWonFrom(game.sets, wonFn);
       return {
         vs: false,
         pointsA: String(points.a),
@@ -11161,10 +11207,11 @@
     }
     if (sport.kind === 'volleyball') {
       const bestOf = (cfg && cfg.bestOf) || 3;
-      const points = watchLatestSetPair(match.sets);
-      const won = watchSetsWonFrom(match.sets, function (set, index) {
+      const wonFn = function (set, index) {
         return volleyballSetWinner(set, cfg, index === bestOf - 1);
-      });
+      };
+      const points = watchLatestSetPair(match.sets, wonFn);
+      const won = watchSetsWonFrom(match.sets, wonFn);
       return {
         vs: false,
         pointsA: String(points.a),
