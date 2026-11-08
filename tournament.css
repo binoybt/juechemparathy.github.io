@@ -521,11 +521,16 @@ body.t-member-preview .t-admin-switch {
 
 /* Score stepper */
 .t-scorer {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; align-items: center;
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px 12px; align-items: center;
   padding: 10px; border-radius: var(--t-r-sm); background: #f8fafc;
 }
+.t-scorer-sides {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.t-scorer-sides .side { flex: 1; min-width: 0; }
 .t-scorer-period {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -685,20 +690,22 @@ body.t-member-preview .t-admin-switch {
   box-shadow: none;
 }
 .t-score-card-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
   gap: 8px;
   padding: 10px 10px 8px;
   align-items: start;
 }
+.t-score-card-head .t-score-card-team { flex: 1; }
 .t-swap-sides {
   align-self: center;
   white-space: nowrap;
   margin-top: 4px;
 }
 .t-score-sides {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  gap: 12px;
 }
+.t-score-sides > * { flex: 1; min-width: 0; }
 .t-score-totals {
   display: flex;
   align-items: center;
@@ -740,16 +747,10 @@ body.t-member-preview .t-admin-switch {
   letter-spacing: .06em;
 }
 .t-score-card.is-swapped .t-score-card-head,
-.t-score-card.is-swapped .t-scorer,
+.t-score-card.is-swapped .t-scorer-sides,
 .t-score-card.is-swapped .t-score-sides,
 .t-score-card.is-swapped .t-score-totals {
-  direction: rtl;
-}
-.t-score-card.is-swapped .t-score-card-head > *,
-.t-score-card.is-swapped .t-scorer > *,
-.t-score-card.is-swapped .t-score-sides > *,
-.t-score-card.is-swapped .t-score-totals > * {
-  direction: ltr;
+  flex-direction: row-reverse;
 }
 .t-score-card-team {
   display: flex;

@@ -9475,7 +9475,9 @@
     wrap.classList.toggle('is-swapped', matchSidesSwapped(match));
     const btn = wrap.querySelector('[data-act="swap-sides"]');
     if (!btn) return;
-    btn.addEventListener('click', function () {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
       match.sidesSwapped = !matchSidesSwapped(match);
       const live = (state.matches || []).find(function (item) { return item.id === match.id; });
       if (live) live.sidesSwapped = match.sidesSwapped;
@@ -9506,10 +9508,18 @@
       + '</div>';
   }
 
+  function paintSetsWonBox(container, aName, bName, sets, winnerFn) {
+    const box = container && container.querySelector('[data-sets-won]');
+    if (!box) return;
+    box.innerHTML = setsWonSummaryHtml(aName, bName, setsWonFrom(sets, winnerFn));
+  }
+
   function bindSetCompleteButtons(row, sets, apply) {
     if (!row) return;
     row.querySelectorAll('[data-act="complete-set"], [data-act="reopen-set"]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
+      btn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
         const idx = +btn.getAttribute('data-set');
         const set = sets[idx];
         if (!set) return;
@@ -9649,31 +9659,40 @@
           const row = el('div', { class: 't-scorer' + (w ? ' is-complete' : ''), style: { marginBottom: '8px' } });
           row.innerHTML = `
             <div class="t-scorer-period"><span>Set ${si + 1}${w ? ' · ' + w : ''}</span>${setPeriodControlsHtml(set, w, si)}</div>
-            <div class="side">
-              <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
-              <div class="t-score-stepper">
-                <button class="t-score-button" data-inc="A" data-set="${si}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
-                <input type="number" min="0" class="t-input t-score-input" value="${set.a || 0}" data-side="A" data-set="${si}" />
-                <button class="t-score-button add" data-inc="A" data-set="${si}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
+            <div class="t-scorer-sides">
+              <div class="side">
+                <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
+                <div class="t-score-stepper">
+                  <button type="button" class="t-score-button" data-inc="A" data-set="${si}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
+                  <input type="number" min="0" class="t-input t-score-input" value="${set.a || 0}" data-side="A" data-set="${si}" />
+                  <button type="button" class="t-score-button add" data-inc="A" data-set="${si}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
+                </div>
               </div>
-            </div>
-            <div class="side">
-              <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
-              <div class="t-score-stepper">
-                <button class="t-score-button" data-inc="B" data-set="${si}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
-                <input type="number" min="0" class="t-input t-score-input" value="${set.b || 0}" data-side="B" data-set="${si}" />
-                <button class="t-score-button add" data-inc="B" data-set="${si}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
+              <div class="side">
+                <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
+                <div class="t-score-stepper">
+                  <button type="button" class="t-score-button" data-inc="B" data-set="${si}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
+                  <input type="number" min="0" class="t-input t-score-input" value="${set.b || 0}" data-side="B" data-set="${si}" />
+                  <button type="button" class="t-score-button add" data-inc="B" data-set="${si}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
+                </div>
               </div>
             </div>
           `;
           row.querySelectorAll('[data-inc]').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            btn.addEventListener('click', function (e) {
+              e.preventDefault();
+              e.stopPropagation();
               const side = btn.getAttribute('data-inc');
               const idx = +btn.getAttribute('data-set');
               const delta = +btn.getAttribute('data-delta');
               const key = side === 'A' ? 'a' : 'b';
               game.sets[idx][key] = Math.max(0, (game.sets[idx][key] || 0) + delta);
-              repaint();
+              const input = row.querySelector('input[data-side="' + side + '"][data-set="' + idx + '"]');
+              if (input) input.value = game.sets[idx][key];
+              row.classList.toggle('is-complete', !!racketSetWinner(game.sets[idx], cfg));
+              paintSetsWonBox(gameWrap, aName, bName, game.sets, function (set) {
+                return racketSetWinner(set, cfg);
+              });
               queueGamesSave();
             });
           });
@@ -9775,31 +9794,41 @@
         const row = el('div', { class: 't-scorer' + (w ? ' is-complete' : ''), style: { marginBottom: '8px' } });
         row.innerHTML = `
           <div class="t-scorer-period"><span>Set ${i + 1}${w ? ' · ' + w : ''}${isDeciding ? ' (deciding)' : ''}</span>${setPeriodControlsHtml(s, w, i)}</div>
-          <div class="side">
-            <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
-            <div class="t-score-stepper">
-              <button class="t-score-button" data-inc="A" data-set="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
-              <input type="number" min="0" class="t-input t-score-input" value="${s.a || 0}" data-side="A" data-set="${i}" />
-              <button class="t-score-button add" data-inc="A" data-set="${i}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
+          <div class="t-scorer-sides">
+            <div class="side">
+              <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
+              <div class="t-score-stepper">
+                <button type="button" class="t-score-button" data-inc="A" data-set="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
+                <input type="number" min="0" class="t-input t-score-input" value="${s.a || 0}" data-side="A" data-set="${i}" />
+                <button type="button" class="t-score-button add" data-inc="A" data-set="${i}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
+              </div>
             </div>
-          </div>
-          <div class="side">
-            <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
-            <div class="t-score-stepper">
-              <button class="t-score-button" data-inc="B" data-set="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
-              <input type="number" min="0" class="t-input t-score-input" value="${s.b || 0}" data-side="B" data-set="${i}" />
-              <button class="t-score-button add" data-inc="B" data-set="${i}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
+            <div class="side">
+              <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
+              <div class="t-score-stepper">
+                <button type="button" class="t-score-button" data-inc="B" data-set="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
+                <input type="number" min="0" class="t-input t-score-input" value="${s.b || 0}" data-side="B" data-set="${i}" />
+                <button type="button" class="t-score-button add" data-inc="B" data-set="${i}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
+              </div>
             </div>
           </div>
         `;
         row.querySelectorAll('[data-inc]').forEach(function (btn) {
-          btn.addEventListener('click', function () {
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             const side = btn.getAttribute('data-inc');
             const idx = +btn.getAttribute('data-set');
             const delta = +btn.getAttribute('data-delta');
             const key = side === 'A' ? 'a' : 'b';
             sets[idx][key] = Math.max(0, (sets[idx][key] || 0) + delta);
-            paint();
+            const input = row.querySelector('input[data-side="' + side + '"][data-set="' + idx + '"]');
+            if (input) input.value = sets[idx][key];
+            const isDecidingRow = idx === bestOf - 1;
+            row.classList.toggle('is-complete', !!volleyballSetWinner(sets[idx], cfg, isDecidingRow));
+            wonBox.innerHTML = setsWonSummaryHtml(aName, bName, setsWonFrom(sets, function (set, setIdx) {
+              return volleyballSetWinner(set, cfg, setIdx === bestOf - 1);
+            }));
             queueScoreSave();
           });
         });
@@ -9877,7 +9906,7 @@
       });
     }
 
-    function paint() {
+    function paintTotals() {
       const totals = quarters.reduce(function (acc, q) { return { a: acc.a + (q.a || 0), b: acc.b + (q.b || 0) }; }, { a: 0, b: 0 });
       totalsBox.innerHTML = `
         <div style="text-align:center;">
@@ -9890,6 +9919,10 @@
           <div style="font-size:2.2rem;font-weight:800;color:${bColor};">${totals.b}</div>
         </div>
       `;
+    }
+
+    function paint() {
+      paintTotals();
       quartersBox.innerHTML = '';
       quarters.forEach(function (q, i) {
         const row = el('div', { class: 't-card', style: { marginBottom: '8px' } });
@@ -9897,33 +9930,39 @@
           <div class="t-card-body">
             <div class="t-scorer">
               <div class="t-scorer-period">Quarter ${i + 1}</div>
-              <div class="side">
-                <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
-                <div class="t-score-stepper">
-                  <button class="t-score-button" data-inc="A" data-q="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
-                  <input type="number" min="0" class="t-input t-score-input" value="${q.a || 0}" data-side="A" data-q="${i}" />
-                  <button class="t-score-button add" data-inc="A" data-q="${i}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
+              <div class="t-scorer-sides">
+                <div class="side">
+                  <div class="team-name"><span class="t-team-swatch" style="--team-color:${aColor};width:6px;height:16px;"></span>${escapeHtml(aName)}</div>
+                  <div class="t-score-stepper">
+                    <button type="button" class="t-score-button" data-inc="A" data-q="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(aName)} score">−</button>
+                    <input type="number" min="0" class="t-input t-score-input" value="${q.a || 0}" data-side="A" data-q="${i}" />
+                    <button type="button" class="t-score-button add" data-inc="A" data-q="${i}" data-delta="1" aria-label="Increase ${escapeHtml(aName)} score">+</button>
+                  </div>
                 </div>
-              </div>
-              <div class="side">
-                <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
-                <div class="t-score-stepper">
-                  <button class="t-score-button" data-inc="B" data-q="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
-                  <input type="number" min="0" class="t-input t-score-input" value="${q.b || 0}" data-side="B" data-q="${i}" />
-                  <button class="t-score-button add" data-inc="B" data-q="${i}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
+                <div class="side">
+                  <div class="team-name"><span class="t-team-swatch" style="--team-color:${bColor};width:6px;height:16px;"></span>${escapeHtml(bName)}</div>
+                  <div class="t-score-stepper">
+                    <button type="button" class="t-score-button" data-inc="B" data-q="${i}" data-delta="-1" aria-label="Decrease ${escapeHtml(bName)} score">−</button>
+                    <input type="number" min="0" class="t-input t-score-input" value="${q.b || 0}" data-side="B" data-q="${i}" />
+                    <button type="button" class="t-score-button add" data-inc="B" data-q="${i}" data-delta="1" aria-label="Increase ${escapeHtml(bName)} score">+</button>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         `;
         row.querySelectorAll('[data-inc]').forEach(function (btn) {
-          btn.addEventListener('click', function () {
+          btn.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
             const side = btn.getAttribute('data-inc');
             const idx = +btn.getAttribute('data-q');
             const delta = +btn.getAttribute('data-delta');
             const key = side === 'A' ? 'a' : 'b';
             quarters[idx][key] = Math.max(0, (quarters[idx][key] || 0) + delta);
-            paint();
+            const input = row.querySelector('input[data-side="' + side + '"][data-q="' + idx + '"]');
+            if (input) input.value = quarters[idx][key];
+            paintTotals();
             queueScoreSave();
           });
         });
